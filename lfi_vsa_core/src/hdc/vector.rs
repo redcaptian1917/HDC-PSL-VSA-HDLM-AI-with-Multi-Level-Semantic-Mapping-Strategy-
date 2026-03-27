@@ -29,20 +29,36 @@ impl BipolarVector {
     // ====================================================
 
     /// Initialize a random bipolar hypervector using system RNG.
+    /// Uses `rand::thread_rng()` which delegates to the OS CSPRNG.
+    /// The vector is constructed by:
+    ///   1. Allocating ceil(10000/8) = 1250 random bytes
+    ///   2. Converting to a BitVec
+    ///   3. Truncating to exactly 10,000 bits
     pub fn new_random() -> Result<Self, HdcError> {
+        debuglog!("new_random: entry, target dim={}", HD_DIMENSIONS);
+
+        // We need ceil(DIM/8) bytes to cover all 10,000 bits.
+        // The extra bits in the last byte are truncated below.
         let byte_count = (HD_DIMENSIONS + 7) / 8;
+        debuglog!("new_random: allocating {} bytes for {} bits", byte_count, HD_DIMENSIONS);
+
         let mut bytes = vec![0u8; byte_count];
         rand::thread_rng().fill_bytes(&mut bytes);
+        debuglog!("new_random: RNG fill complete, {} bytes written", bytes.len());
 
+        // Convert byte vec to bitvec, then truncate to exact dimension.
+        // from_vec may produce byte_count*8 bits, which could be up to 7 more than needed.
         let mut data = BitVec::<u8, Lsb0>::from_vec(bytes);
+        let pre_truncate_len = data.len();
         data.truncate(HD_DIMENSIONS);
-
-        debuglog!("new_random: dim={}", data.len());
+        debuglog!("new_random: truncated {} -> {} bits", pre_truncate_len, data.len());
 
         if data.len() == HD_DIMENSIONS {
+            debuglog!("new_random: SUCCESS, dim={}, ones={}", data.len(), data.count_ones());
             Ok(Self { data })
         } else {
-            debuglog!("new_random FAIL: dim={} != {}", data.len(), HD_DIMENSIONS);
+            // This should never happen given the math above, but we check defensively.
+            debuglog!("new_random: FAIL - dim={} != expected {}", data.len(), HD_DIMENSIONS);
             Err(HdcError::InitializationFailed {
                 reason: format!("expected {} bits, got {}", HD_DIMENSIONS, data.len()),
             })
@@ -50,11 +66,15 @@ impl BipolarVector {
     }
 
     /// Construct from an existing BitVec. Enforces exact dimensionality.
+    /// Use this when you have pre-computed bit data (e.g., from deserialization
+    /// or from an external computation that has been PSL-audited).
     pub fn from_bitvec(data: BitVec<u8, Lsb0>) -> Result<Self, HdcError> {
-        debuglog!("from_bitvec: input dim={}", data.len());
+        debuglog!("from_bitvec: entry, input dim={}", data.len());
         if data.len() == HD_DIMENSIONS {
+            debuglog!("from_bitvec: SUCCESS, dim={}", data.len());
             Ok(Self { data })
         } else {
+            debuglog!("from_bitvec: FAIL - dim={} != expected {}", data.len(), HD_DIMENSIONS);
             Err(HdcError::DimensionMismatch {
                 expected: HD_DIMENSIONS,
                 actual: data.len(),
@@ -80,24 +100,38 @@ impl BipolarVector {
     // Accessors
     // ====================================================
 
-    /// Number of dimensions.
+    /// Number of dimensions. Should always be HD_DIMENSIONS (10,000)
+    /// for a properly constructed vector. If this returns anything else,
+    /// the vector was corrupted or constructed outside normal paths.
     pub fn dim(&self) -> usize {
-        self.data.len()
+        let d = self.data.len();
+        debuglog!("dim: {}", d);
+        d
     }
 
     /// Read-only access to the underlying bit-slice.
+    /// Used by external code that needs to inspect individual bits.
+    /// Bit 0 = bipolar -1, Bit 1 = bipolar +1.
     pub fn bits(&self) -> &BitSlice<u8, Lsb0> {
+        debuglog!("bits: returning slice of len={}", self.data.len());
         &self.data
     }
 
     /// Count of +1 components (bits set to 1).
+    /// For a random vector, this should be approximately HD_DIMENSIONS/2 = 5000.
+    /// A significant deviation suggests initialization bias.
     pub fn count_ones(&self) -> usize {
-        self.data.count_ones()
+        let c = self.data.count_ones();
+        debuglog!("count_ones: {} out of {} total", c, self.data.len());
+        c
     }
 
     /// Count of -1 components (bits set to 0).
+    /// Complementary to count_ones: count_ones + count_neg_ones == dim.
     pub fn count_neg_ones(&self) -> usize {
-        self.data.count_zeros()
+        let c = self.data.count_zeros();
+        debuglog!("count_neg_ones: {} out of {} total", c, self.data.len());
+        c
     }
 
     // ====================================================
@@ -113,11 +147,22 @@ impl BipolarVector {
     /// Properties: commutative, associative, self-inverse, dimension-preserving.
     /// Produces a vector quasi-orthogonal to both inputs.
     pub fn bind(&self, other: &BipolarVector) -> Result<BipolarVector, HdcError> {
+        debuglog!("bind: entry, self.dim={}, other.dim={}", self.data.len(), other.data.len());
+
+        // Validate both operands have correct dimensionality.
+        // This catches corrupted vectors before they produce garbage output.
         self.check_dim()?;
         other.check_dim()?;
 
+        // XOR is the core binding operation. In bipolar space, XOR on the
+        // binary encoding produces a vector that is:
+        //   - quasi-orthogonal to both inputs
+        //   - self-inverse (A XOR A = identity)
+        //   - the association/pairing of the two vectors
         let result_bits = self.data.clone() ^ &other.data;
-        debuglog!("bind: completed, result dim={}", result_bits.len());
+
+        debuglog!("bind: completed, result dim={}, result ones={}",
+            result_bits.len(), result_bits.count_ones());
         Ok(BipolarVector { data: result_bits })
     }
 
@@ -132,14 +177,19 @@ impl BipolarVector {
     ///
     /// Properties: commutative, produces vector similar to all inputs.
     pub fn bundle(vectors: &[&BipolarVector]) -> Result<BipolarVector, HdcError> {
+        debuglog!("bundle: entry, vector_count={}", vectors.len());
+
+        // Guard: bundling zero vectors is meaningless.
         if vectors.is_empty() {
-            debuglog!("bundle: EmptyBundle");
+            debuglog!("bundle: FAIL - EmptyBundle, no vectors provided");
             return Err(HdcError::EmptyBundle);
         }
 
+        // Validate all input vectors have correct dimensionality.
+        // A single bad vector would corrupt the entire bundle.
         for (i, v) in vectors.iter().enumerate() {
             if v.data.len() != HD_DIMENSIONS {
-                debuglog!("bundle: DimensionMismatch at index={}, dim={}", i, v.data.len());
+                debuglog!("bundle: FAIL - DimensionMismatch at index={}, dim={}", i, v.data.len());
                 return Err(HdcError::DimensionMismatch {
                     expected: HD_DIMENSIONS,
                     actual: v.data.len(),
@@ -147,21 +197,45 @@ impl BipolarVector {
             }
         }
 
-        // Accumulate in i32 scratch space to handle arbitrary bundle sizes
+        debuglog!("bundle: all {} vectors passed dimension check, starting accumulation", vectors.len());
+
+        // Phase 1: Accumulate bipolar sums in i32 scratch space.
+        // We need i32 (not i8) because we might bundle thousands of vectors
+        // and the sum per dimension can range from -N to +N.
         let mut sums = vec![0i32; HD_DIMENSIONS];
-        for v in vectors {
+        for (vi, v) in vectors.iter().enumerate() {
             for (i, bit) in v.data.iter().enumerate() {
+                // Convert bit to bipolar: 1 -> +1, 0 -> -1
                 sums[i] += if *bit { 1 } else { -1 };
+            }
+            debuglog!("bundle: accumulated vector {}/{}", vi + 1, vectors.len());
+        }
+
+        // Phase 2: Clip to bipolar via majority vote.
+        // Strictly positive sum -> bit=1 (+1 in bipolar)
+        // Zero or negative sum -> bit=0 (-1 in bipolar)
+        // NOTE: ties (sum==0) break to -1. This is a deterministic convention.
+        let mut result = BitVec::<u8, Lsb0>::with_capacity(HD_DIMENSIONS);
+        let mut positive_count = 0usize;
+        let mut negative_count = 0usize;
+        let mut tie_count = 0usize;
+        for s in &sums {
+            if *s > 0 {
+                result.push(true);
+                positive_count += 1;
+            } else {
+                result.push(false);
+                negative_count += 1;
+                if *s == 0 {
+                    tie_count += 1;
+                }
             }
         }
 
-        // Clip: strictly positive -> 1, zero or negative -> 0
-        let mut result = BitVec::<u8, Lsb0>::with_capacity(HD_DIMENSIONS);
-        for s in &sums {
-            result.push(*s > 0);
-        }
-
-        debuglog!("bundle: merged {} vectors, result dim={}", vectors.len(), result.len());
+        debuglog!(
+            "bundle: merged {} vectors, result dim={}, positives={}, negatives={}, ties={}",
+            vectors.len(), result.len(), positive_count, negative_count, tie_count
+        );
         Ok(BipolarVector { data: result })
     }
 
@@ -174,21 +248,33 @@ impl BipolarVector {
     /// preserves Hamming weight, produces quasi-orthogonal vector
     /// for non-trivial shifts.
     pub fn permute(&self, shift: usize) -> Result<BipolarVector, HdcError> {
+        debuglog!("permute: entry, raw_shift={}, self.dim={}", shift, self.data.len());
+
+        // Validate dimensionality before performing any operation.
         self.check_dim()?;
 
+        // Reduce shift modulo DIM. A shift of DIM or 2*DIM is identity.
         let effective = shift % HD_DIMENSIONS;
+        debuglog!("permute: effective_shift={} (raw {} mod {})", effective, shift, HD_DIMENSIONS);
+
         if effective == 0 {
-            debuglog!("permute: shift=0, returning clone");
+            // No-op: shift by 0 (or any multiple of DIM) returns the same vector.
+            debuglog!("permute: shift=0 after modulo, returning clone (identity)");
             return Ok(self.clone());
         }
 
+        // Cyclic left shift: new[i] = old[(i + shift) % DIM]
+        // This creates a quasi-orthogonal vector for non-trivial shifts because
+        // shifting a random bit sequence by even 1 position destroys the
+        // correlation between original and shifted positions.
         let mut new_data = BitVec::<u8, Lsb0>::with_capacity(HD_DIMENSIONS);
         for i in 0..HD_DIMENSIONS {
             let src = (i + effective) % HD_DIMENSIONS;
             new_data.push(self.data[src]);
         }
 
-        debuglog!("permute: shift={}, result dim={}", effective, new_data.len());
+        debuglog!("permute: completed, shift={}, result dim={}, ones={}",
+            effective, new_data.len(), new_data.count_ones());
         Ok(BipolarVector { data: new_data })
     }
 
@@ -205,26 +291,39 @@ impl BipolarVector {
     ///    0.0 = orthogonal (expected for random pairs in high D)
     ///   -1.0 = anti-correlated (bitwise complement)
     pub fn similarity(&self, other: &BipolarVector) -> Result<f64, HdcError> {
+        debuglog!("similarity: entry, self.dim={}, other.dim={}", self.data.len(), other.data.len());
+
+        // Validate dimensions before computing similarity.
         self.check_dim()?;
         other.check_dim()?;
 
+        // XOR gives the disagreement mask: bits that differ between A and B.
+        // Count of 1s in XOR result = number of disagreements.
         let xor_bits = self.data.clone() ^ &other.data;
         let disagreements = xor_bits.count_ones();
         let agreements = HD_DIMENSIONS - disagreements;
 
+        // Bipolar cosine similarity formula:
+        //   cos(A, B) = (agreements - disagreements) / DIM
+        //             = (2 * agreements - DIM) / DIM
+        // Range: [-1.0, 1.0] where +1=identical, 0=orthogonal, -1=complement
         let sim = (2.0 * agreements as f64 - HD_DIMENSIONS as f64) / HD_DIMENSIONS as f64;
         debuglog!("similarity: agree={}, disagree={}, cos={:.6}", agreements, disagreements, sim);
         Ok(sim)
     }
 
     /// Hamming distance: count of positions where bits differ.
+    /// Related to cosine similarity by: hamming = DIM * (1 - cos) / 2
     pub fn hamming_distance(&self, other: &BipolarVector) -> Result<usize, HdcError> {
+        debuglog!("hamming_distance: entry, self.dim={}, other.dim={}", self.data.len(), other.data.len());
+
         self.check_dim()?;
         other.check_dim()?;
 
+        // XOR gives disagreement positions. Count of 1s = distance.
         let xor_bits = self.data.clone() ^ &other.data;
         let dist = xor_bits.count_ones();
-        debuglog!("hamming_distance: {}", dist);
+        debuglog!("hamming_distance: dist={} out of {} dimensions", dist, HD_DIMENSIONS);
         Ok(dist)
     }
 
@@ -232,13 +331,18 @@ impl BipolarVector {
     // Internal helpers
     // ====================================================
 
+    /// Validate that this vector has exactly HD_DIMENSIONS bits.
+    /// Called at the start of every operation to catch corrupted vectors early.
+    /// This is a defensive check — properly constructed vectors should always pass.
     fn check_dim(&self) -> Result<(), HdcError> {
         if self.data.len() != HD_DIMENSIONS {
+            debuglog!("check_dim: FAIL - dim={} != expected {}", self.data.len(), HD_DIMENSIONS);
             Err(HdcError::DimensionMismatch {
                 expected: HD_DIMENSIONS,
                 actual: self.data.len(),
             })
         } else {
+            debuglog!("check_dim: OK dim={}", self.data.len());
             Ok(())
         }
     }

@@ -79,7 +79,7 @@ impl AxiomVerdict {
 ///
 /// Beta (The Auditor) defines concrete implementations.
 /// Alpha provides only the structural interface.
-pub trait Axiom {
+pub trait Axiom: Send + Sync {
     /// Unique identifier for this axiom (e.g., "Axiom:Dimensionality_Constraint").
     fn id(&self) -> &str;
 
