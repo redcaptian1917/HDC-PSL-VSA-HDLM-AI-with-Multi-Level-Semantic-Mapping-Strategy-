@@ -553,8 +553,12 @@ impl CognitiveCore {
         // 3. Generate response based on detected intent.
         let mut response_text = self.generate_response(input, &thought)?;
 
-        // Add reasoning scratchpad only if it contains useful info
-        if thought.mode == CognitiveMode::Deep && !thought.reasoning_scratchpad.is_empty() {
+        // Add reasoning scratchpad only for actionable intents (not Explain/Converse which are self-contained)
+        let is_self_contained = matches!(
+            thought.intent,
+            Some(Intent::Explain { .. }) | Some(Intent::Converse { .. })
+        );
+        if thought.mode == CognitiveMode::Deep && !thought.reasoning_scratchpad.is_empty() && !is_self_contained {
             response_text.push_str("\n\n[Deep reasoning active]");
             if let Some(ref plan) = thought.plan {
                 response_text.push_str(&format!(
@@ -784,6 +788,27 @@ impl CognitiveCore {
 
         if has_word("yes") {
             return "Confirmed. Proceeding. What's the task?".to_string();
+        }
+
+        // --- "What do you know about X" ---
+        if text_lower.contains("know about") || text_lower.contains("tell me about") ||
+            text_lower.contains("what about") {
+            // Extract the topic after the phrase
+            let topic = if let Some(pos) = text_lower.find("know about") {
+                Some(input[pos + 10..].trim().trim_end_matches('?'))
+            } else if let Some(pos) = text_lower.find("tell me about") {
+                Some(input[pos + 13..].trim().trim_end_matches('?'))
+            } else if let Some(pos) = text_lower.find("what about") {
+                Some(input[pos + 10..].trim().trim_end_matches('?'))
+            } else { None };
+
+            if let Some(topic) = topic {
+                if !topic.is_empty() {
+                    if let Ok(explanation) = self.derive_honest_explanation(topic) {
+                        return explanation;
+                    }
+                }
+            }
         }
 
         // --- Questions the AI can't answer ---

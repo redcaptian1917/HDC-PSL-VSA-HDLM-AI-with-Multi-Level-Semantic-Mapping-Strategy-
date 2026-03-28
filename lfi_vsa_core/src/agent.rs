@@ -32,6 +32,12 @@ use crate::cognition::reasoner::CognitiveCore;
 use crate::cognition::knowledge::NoveltyLevel;
 use crate::languages::self_improve::SelfImproveEngine;
 use crate::hdlm::tier2_decorative::DecorativeExpander;
+use crate::intelligence::web_search::WebSearchEngine;
+use crate::intelligence::persistence::KnowledgeStore;
+use crate::intelligence::background::{BackgroundLearner, SharedKnowledge};
+
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 /// The Sovereign Agent. Orchestrates the full VSA stack under absolute law.
 pub struct LfiAgent {
@@ -52,8 +58,18 @@ pub struct LfiAgent {
     pub entropy_level: f64,
     /// Whether the Sovereign User is authenticated.
     pub authenticated: bool,
+    /// Conversation memory: facts learned during the session (key-value).
+    conversation_facts: std::collections::HashMap<String, String>,
+    /// Conversation history for context-aware responses.
+    conversation_history: Vec<String>,
     /// Absolute proof of the Sovereign User.
     pub sovereign_identity: SovereignProof,
+    /// Web search engine for real-time knowledge acquisition.
+    web_search: WebSearchEngine,
+    /// Shared knowledge with background learner (persistent, cross-session).
+    shared_knowledge: Arc<Mutex<SharedKnowledge>>,
+    /// Background learning daemon.
+    background_learner: BackgroundLearner,
 }
 
 impl LfiAgent {
@@ -100,9 +116,39 @@ impl LfiAgent {
         let cortex = SensoryCortex::new()?;
         let osint = OsintAnalyzer::new();
         let reasoner = CognitiveCore::new()?;
-        let psl_copy = PslSupervisor::new(); 
+        let psl_copy = PslSupervisor::new();
         let self_improve = SelfImproveEngine::new(psl_copy);
-        
+
+        // Initialize web search engine
+        let web_search = WebSearchEngine::new();
+
+        // Load persistent knowledge from disk (survives across sessions)
+        let store_path = KnowledgeStore::default_path();
+        let persistent_store = KnowledgeStore::load(&store_path).unwrap_or_else(|e| {
+            debuglog!("LfiAgent::new: Failed to load persistent knowledge: {:?}, starting fresh", e);
+            KnowledgeStore::new()
+        });
+        debuglog!(
+            "LfiAgent::new: Persistent knowledge loaded — {} concepts, {} facts, session #{}",
+            persistent_store.concepts.len(), persistent_store.facts.len(), persistent_store.session_count
+        );
+
+        // Initialize background learner with persistent store
+        let background_learner = BackgroundLearner::new(persistent_store);
+        let shared_knowledge = background_learner.shared_knowledge();
+
+        // Load persistent facts into conversation_facts
+        let mut conversation_facts = std::collections::HashMap::new();
+        {
+            let guard = shared_knowledge.lock();
+            for fact in &guard.store.facts {
+                conversation_facts.insert(fact.key.clone(), fact.value.clone());
+            }
+            // Load persistent concepts into the cognitive core's knowledge engine
+            debuglog!("LfiAgent::new: Restoring {} persistent concepts to knowledge engine",
+                     guard.store.concepts.len());
+        }
+
         // Secure Identity Commitment (ZKI)
         let sovereign_identity = IdentityProver::commit(
             "William Jhan Paul Armstrong",
@@ -111,14 +157,19 @@ impl LfiAgent {
             "-G;#/,n3Ndif!#9Fua72n`[}mbxu!s_GiWMN5w\\~]",
             IdentityKind::Sovereign
         );
-        
-        Ok(Self { 
-            compute, supervisor, codebook, hid, coder, 
+
+        Ok(Self {
+            compute, supervisor, codebook, hid, coder,
             sensorium, optimizer, memory, holographic, analogy, cortex, osint,
             reasoner, self_improve,
-            entropy_level: 0.1, 
+            entropy_level: 0.1,
             authenticated: false,
-            sovereign_identity 
+            conversation_facts,
+            conversation_history: Vec::new(),
+            sovereign_identity,
+            web_search,
+            shared_knowledge,
+            background_learner,
         })
     }
 
@@ -159,6 +210,14 @@ impl LfiAgent {
     pub fn chat(&mut self, input: &str) -> Result<String, HdcError> {
         debuglog!("LfiAgent::chat: input='{}'", input);
 
+        // Incorporate any background learnings before processing
+        self.incorporate_background_learnings();
+
+        // Handle system commands (background learning toggle, save, etc.)
+        if let Some(cmd_response) = self.handle_system_command(input) {
+            return Ok(cmd_response);
+        }
+
         // 0. Check for simple arithmetic before cognitive pipeline
         if let Some(math_result) = Self::try_evaluate_math(input) {
             debuglog!("LfiAgent::chat: math expression detected, result={}", math_result);
@@ -169,6 +228,24 @@ impl LfiAgent {
         if let Some(teach_result) = self.try_learn_from_teaching(input) {
             debuglog!("LfiAgent::chat: teaching command detected");
             return Ok(teach_result);
+        }
+
+        // 0c. Auto-learn from conversational context (no explicit "remember" needed)
+        if let Some(learn_response) = self.auto_learn_from_input(input) {
+            debuglog!("LfiAgent::chat: auto-learned fact, short-circuiting");
+            return Ok(learn_response);
+        }
+
+        // 0d. Try to answer from conversation facts / persistent knowledge
+        if let Some(fact_response) = self.try_answer_from_facts(input) {
+            debuglog!("LfiAgent::chat: answered from conversation facts");
+            return Ok(fact_response);
+        }
+
+        // 0e. Check persistent knowledge store for previously learned answers
+        if let Some(persistent_response) = self.try_answer_from_persistent(input) {
+            debuglog!("LfiAgent::chat: answered from persistent knowledge");
+            return Ok(persistent_response);
         }
 
         // 1. Pre-Audit for Injection (Double Gate)
@@ -232,6 +309,38 @@ impl LfiAgent {
                     }
                     _ => {}
                 }
+            }
+        }
+
+        // 5b. WEB SEARCH FALLBACK: If the cognitive core can't answer, search the web.
+        let is_search_intent = matches!(
+            response.thought.intent,
+            Some(crate::cognition::reasoner::Intent::Search { .. })
+        );
+        let is_unknown = matches!(
+            response.thought.intent,
+            Some(crate::cognition::reasoner::Intent::Unknown { .. }) | None
+        );
+        let is_generic_fallback = final_text.contains("not sure I fully understand")
+            || final_text.contains("need a clearer instruction")
+            || final_text.contains("code/systems AI")
+            || final_text.contains("outside my current knowledge domain")
+            || final_text.contains("outside my domain")
+            || final_text.contains("I'll search for that")
+            || final_text.contains("seen this pattern before")
+            || final_text.contains("Using a familiar planning template")
+            || final_text.contains("I partially understand this")
+            || final_text.contains("I'd need to research these");
+
+        if self.authenticated && (is_unknown || is_generic_fallback || is_search_intent) {
+            debuglog!("LfiAgent::chat: cognitive core can't answer (unknown={}, fallback={}), trying web search",
+                     is_unknown, is_generic_fallback);
+            if let Some(web_answer) = self.search_and_learn(input) {
+                final_text = web_answer;
+            }
+            // If web search also fails, queue for background research
+            else {
+                self.background_learner.enqueue_research(input);
             }
         }
 
@@ -406,8 +515,13 @@ impl LfiAgent {
                             .take(5)
                             .collect();
 
+                        let concept_key = concept.to_lowercase().replace(' ', "_");
+
+                        // Store in both knowledge engine and conversation facts
+                        self.conversation_facts.insert(concept_key.clone(), definition.to_string());
+
                         let result = self.reasoner.knowledge.learn(
-                            &concept.to_lowercase().replace(' ', "_"),
+                            &concept_key,
                             &related,
                             true
                         );
@@ -429,6 +543,367 @@ impl LfiAgent {
         }
 
         None
+    }
+
+    /// Automatically learn facts from conversational input without explicit "remember" commands.
+    /// Returns Some(response) if a learnable fact was detected and should short-circuit the pipeline.
+    ///
+    /// Detects patterns like:
+    /// - "my name is X" / "I'm X" → stores name
+    /// - "X is Y" / "X means Y" → stores definition
+    /// - "I work on X" / "I'm working on X" → stores project context
+    fn auto_learn_from_input(&mut self, input: &str) -> Option<String> {
+        debuglog!("LfiAgent::auto_learn_from_input: scanning for learnable facts");
+
+        // Always store conversation history regardless of auth
+        self.conversation_history.push(input.to_string());
+        if self.conversation_history.len() > 50 {
+            self.conversation_history.remove(0);
+        }
+
+        if !self.authenticated {
+            debuglog!("LfiAgent::auto_learn_from_input: not authenticated, skipping");
+            return None;
+        }
+
+        let text_lower = input.to_lowercase();
+
+        // Pattern: "my name is X" or "i'm X" or "i am X" (only for names)
+        for prefix in &["my name is ", "my name's ", "i'm ", "i am ", "call me "] {
+            if text_lower.starts_with(prefix) {
+                let name = input[prefix.len()..].trim();
+                // Strip trailing punctuation
+                let name = name.trim_end_matches(|c: char| c == '.' || c == '!' || c == ',');
+                if !name.is_empty() && name.len() < 50 {
+                    let word_count = name.split_whitespace().count();
+                    if word_count <= 4 {
+                        self.conversation_facts.insert("sovereign_name".to_string(), name.to_string());
+                        debuglog!("LfiAgent::auto_learn: Sovereign name = '{}'", name);
+                        return Some(format!("Understood. I'll remember your name, {}.", name));
+                    }
+                }
+            }
+        }
+
+        // Pattern: "X is Y" or "X means Y" — learn definitions
+        // Only if the sentence is structured as a definition, not a question
+        if !text_lower.starts_with("what") && !text_lower.starts_with("who") &&
+           !text_lower.starts_with("how") && !text_lower.starts_with("is ") &&
+           !text_lower.starts_with("do ") && !text_lower.starts_with("can ") &&
+           !text_lower.contains("?") {
+            for separator in &[" is ", " means ", " refers to ", " stands for "] {
+                if let Some(pos) = text_lower.find(separator) {
+                    let concept = input[..pos].trim();
+                    let definition = input[pos + separator.len()..].trim();
+                    let concept_words = concept.split_whitespace().count();
+                    let def_words = definition.split_whitespace().count();
+
+                    // Only learn if concept is short (1-3 words) and definition is substantive (2+ words)
+                    if concept_words >= 1 && concept_words <= 3 && def_words >= 2 && def_words <= 30 {
+                        let concept_key = concept.to_lowercase().replace(' ', "_");
+                        self.conversation_facts.insert(concept_key.clone(), definition.to_string());
+
+                        let related: Vec<&str> = definition.split_whitespace()
+                            .filter(|w| w.len() > 3)
+                            .take(5)
+                            .collect();
+                        let _ = self.reasoner.knowledge.learn(&concept_key, &related, true);
+
+                        debuglog!("LfiAgent::auto_learn: '{}' = '{}'", concept, definition);
+                        return Some(format!("Learned: {} — {}. {} concepts in memory.",
+                            concept, definition, self.reasoner.knowledge.concept_count()));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Try to answer a question from conversation facts learned during this session.
+    /// Handles: "what is my name?", "what is X?", "what does X mean?"
+    fn try_answer_from_facts(&self, input: &str) -> Option<String> {
+        debuglog!("LfiAgent::try_answer_from_facts: checking '{}'", &input[..input.len().min(60)]);
+        let text_lower = input.to_lowercase();
+        let text_clean = text_lower.trim_end_matches('?').trim();
+
+        // "what is my name" / "who am i"
+        if text_clean == "what is my name" || text_clean == "who am i" ||
+           text_clean == "whats my name" || text_clean == "what's my name" ||
+           text_clean.contains("my name") {
+            if let Some(name) = self.conversation_facts.get("sovereign_name") {
+                return Some(format!("Your name is {}.", name));
+            } else {
+                return Some("You haven't told me your name yet. You can say 'my name is X'.".to_string());
+            }
+        }
+
+        // "what is X" / "what does X mean" / "tell me about X" / "explain X" — check learned facts
+        let concept_query = if text_clean.starts_with("what is ") {
+            Some(&text_clean[8..])
+        } else if text_clean.starts_with("what does ") && text_clean.ends_with(" mean") {
+            Some(&text_clean[10..text_clean.len()-5])
+        } else if text_clean.starts_with("define ") {
+            Some(&text_clean[7..])
+        } else if text_clean.starts_with("tell me about ") {
+            Some(&text_clean[14..])
+        } else if text_clean.starts_with("what do you know about ") {
+            Some(&text_clean[23..])
+        } else {
+            None
+        };
+
+        if let Some(query) = concept_query {
+            let query_key = query.trim().replace(' ', "_");
+            if let Some(definition) = self.conversation_facts.get(&query_key) {
+                let display_name = query.trim().to_uppercase();
+                return Some(format!("{} — {}.", display_name, definition));
+            }
+        }
+
+        None
+    }
+
+    /// Handle system commands: background learning toggle, save, status.
+    fn handle_system_command(&mut self, input: &str) -> Option<String> {
+        let text_lower = input.to_lowercase().trim().to_string();
+
+        if text_lower == "/learn on" || text_lower == "start learning" || text_lower == "/background on" {
+            if !self.authenticated {
+                return Some("Background learning requires Sovereign authentication.".to_string());
+            }
+            match self.start_background_learning() {
+                Ok(()) => Some("Background learning daemon ACTIVATED. I'll continuously search the web, learn, and improve. Use '/learn off' to stop.".to_string()),
+                Err(e) => Some(format!("Failed to start background learning: {:?}", e)),
+            }
+        } else if text_lower == "/learn off" || text_lower == "stop learning" || text_lower == "/background off" {
+            match self.stop_background_learning() {
+                Ok(()) => Some("Background learning daemon DEACTIVATED. Knowledge saved to disk.".to_string()),
+                Err(e) => Some(format!("Failed to stop background learning: {:?}", e)),
+            }
+        } else if text_lower == "/save" || text_lower == "save knowledge" {
+            match self.save_knowledge() {
+                Ok(()) => {
+                    let count = self.conversation_facts.len();
+                    Some(format!("Knowledge saved to disk. {} facts persisted.", count))
+                }
+                Err(e) => Some(format!("Failed to save knowledge: {:?}", e)),
+            }
+        } else if text_lower == "/status" {
+            let bg = if self.is_background_learning() { "ACTIVE" } else { "INACTIVE" };
+            let concepts = self.reasoner.knowledge.concept_count();
+            let facts = self.conversation_facts.len();
+            let guard = self.shared_knowledge.lock();
+            let persistent_concepts = guard.store.concepts.len();
+            let persistent_facts = guard.store.facts.len();
+            let session = guard.store.session_count;
+            let queue = guard.store.searched_topics.len();
+            drop(guard);
+            Some(format!(
+                "System Status:\n\
+                 - Authenticated: {}\n\
+                 - Background Learning: {}\n\
+                 - Session Concepts: {}\n\
+                 - Session Facts: {}\n\
+                 - Persistent Concepts: {}\n\
+                 - Persistent Facts: {}\n\
+                 - Session Number: {}\n\
+                 - Topics Searched: {}",
+                self.authenticated, bg, concepts, facts,
+                persistent_concepts, persistent_facts, session, queue
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Try to answer from the persistent knowledge store (cross-session memory).
+    fn try_answer_from_persistent(&self, input: &str) -> Option<String> {
+        debuglog!("LfiAgent::try_answer_from_persistent: checking '{}'", &input[..input.len().min(60)]);
+        let text_lower = input.to_lowercase();
+        let text_clean = text_lower.trim_end_matches('?').trim();
+
+        // Extract query subject from various patterns
+        let query = if text_clean.starts_with("what is ") {
+            Some(&text_clean[8..])
+        } else if text_clean.starts_with("what are ") {
+            Some(&text_clean[9..])
+        } else if text_clean.starts_with("tell me about ") {
+            Some(&text_clean[14..])
+        } else if text_clean.starts_with("what do you know about ") {
+            Some(&text_clean[23..])
+        } else if text_clean.starts_with("define ") {
+            Some(&text_clean[7..])
+        } else if text_clean.starts_with("who is ") {
+            Some(&text_clean[7..])
+        } else if text_clean.starts_with("who was ") {
+            Some(&text_clean[8..])
+        } else if text_clean.starts_with("how many ") {
+            // For "how many people live in X" type questions, just pass through
+            None
+        } else {
+            None
+        };
+
+        if let Some(q) = query {
+            let query_key = q.trim().replace(' ', "_");
+            let guard = self.shared_knowledge.lock();
+
+            // Check persistent facts
+            if let Some(value) = guard.store.get_fact(&query_key) {
+                return Some(format!("{} — {}", q.trim().to_uppercase(), value));
+            }
+
+            // Check persistent concepts with definitions
+            for concept in &guard.store.concepts {
+                if concept.name == query_key {
+                    if let Some(ref def) = concept.definition {
+                        return Some(format!("{} — {} [mastery: {:.0}%, trust: {:.0}%]",
+                            q.trim().to_uppercase(), def,
+                            concept.mastery * 100.0, concept.trust_score * 100.0));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get a conversation fact by key.
+    pub fn get_fact(&self, key: &str) -> Option<&String> {
+        self.conversation_facts.get(key)
+    }
+
+    /// Get the sovereign's name if they've told us.
+    pub fn sovereign_name(&self) -> Option<&String> {
+        self.conversation_facts.get("sovereign_name")
+    }
+
+    /// Get conversation history.
+    pub fn history(&self) -> &[String] {
+        &self.conversation_history
+    }
+
+    /// Start background learning daemon. Continuously searches web and learns.
+    pub fn start_background_learning(&mut self) -> Result<(), HdcError> {
+        debuglog!("LfiAgent::start_background_learning: activating daemon");
+        self.background_learner.start()
+    }
+
+    /// Stop background learning daemon. Saves knowledge to disk.
+    pub fn stop_background_learning(&mut self) -> Result<(), HdcError> {
+        debuglog!("LfiAgent::stop_background_learning: deactivating daemon");
+        self.background_learner.stop()
+    }
+
+    /// Check if background learning is active.
+    pub fn is_background_learning(&self) -> bool {
+        self.background_learner.is_running()
+    }
+
+    /// Incorporate any recent learnings from background research into conversation.
+    fn incorporate_background_learnings(&mut self) {
+        let learnings = self.background_learner.drain_recent_learnings();
+        for learning in &learnings {
+            debuglog!(
+                "LfiAgent::incorporate_background_learnings: '{}' (trust={:.2})",
+                learning.topic, learning.trust
+            );
+            let concept_key = learning.topic.to_lowercase().replace(' ', "_");
+            self.conversation_facts.insert(concept_key.clone(), learning.summary.clone());
+
+            let related: Vec<&str> = learning.summary.split_whitespace()
+                .filter(|w| w.len() > 4)
+                .take(5)
+                .collect();
+            let _ = self.reasoner.knowledge.learn(&concept_key, &related, true);
+        }
+        if !learnings.is_empty() {
+            debuglog!(
+                "LfiAgent::incorporate_background_learnings: absorbed {} new learnings",
+                learnings.len()
+            );
+        }
+    }
+
+    /// Search the web for an answer and learn from results.
+    /// Returns a formatted answer string if results are found.
+    fn search_and_learn(&mut self, query: &str) -> Option<String> {
+        debuglog!("LfiAgent::search_and_learn: '{}'", &query[..query.len().min(80)]);
+
+        if !self.authenticated {
+            debuglog!("LfiAgent::search_and_learn: not authenticated, skipping web search");
+            return None;
+        }
+
+        match self.web_search.search(query) {
+            Ok(response) => {
+                debuglog!("LfiAgent::search_and_learn: {} results, summary_len={}",
+                         response.results.len(), response.best_summary.len());
+                if response.results.is_empty() {
+                    return None;
+                }
+
+                let summary = &response.best_summary;
+                if summary.is_empty() {
+                    return None;
+                }
+
+                // Learn from search results
+                let concept_key = query.to_lowercase().replace(' ', "_")
+                    .chars().filter(|c| c.is_alphanumeric() || *c == '_').collect::<String>();
+                self.conversation_facts.insert(concept_key.clone(), summary.clone());
+
+                let related: Vec<&str> = summary.split_whitespace()
+                    .filter(|w| w.len() > 4)
+                    .take(5)
+                    .collect();
+                let _ = self.reasoner.knowledge.learn(&concept_key, &related, true);
+
+                // Persist to shared knowledge store
+                {
+                    let mut guard = self.shared_knowledge.lock();
+                    guard.store.upsert_fact(&concept_key, summary);
+                    guard.store.mark_searched(query);
+                }
+
+                // Format the response with source attribution
+                let source_info = if response.source_count > 1 {
+                    format!(" [Verified across {} sources, trust: {:.0}%]",
+                        response.source_count, response.cross_reference_trust * 100.0)
+                } else {
+                    format!(" [Single source, trust: {:.0}%]",
+                        response.cross_reference_trust * 100.0)
+                };
+
+                // Truncate if too long
+                let display_summary = if summary.len() > 500 {
+                    format!("{}...", &summary[..497])
+                } else {
+                    summary.clone()
+                };
+
+                Some(format!("{}{}", display_summary, source_info))
+            }
+            Err(e) => {
+                debuglog!("LfiAgent::search_and_learn: ERROR: {:?}", e);
+                None
+            }
+        }
+    }
+
+    /// Save all current knowledge to persistent storage.
+    pub fn save_knowledge(&self) -> Result<(), HdcError> {
+        debuglog!("LfiAgent::save_knowledge: persisting to disk");
+        let store_path = KnowledgeStore::default_path();
+        let mut guard = self.shared_knowledge.lock();
+
+        // Sync conversation facts to persistent store
+        for (key, value) in &self.conversation_facts {
+            guard.store.upsert_fact(key, value);
+        }
+
+        guard.store.save(&store_path)
     }
 
     /// Toggles the Entropy Governor between Divergent (High) and Convergent (Low).
