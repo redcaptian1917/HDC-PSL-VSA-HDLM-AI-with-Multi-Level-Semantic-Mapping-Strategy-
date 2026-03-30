@@ -33,6 +33,8 @@ pub mod inference_engine;
 pub mod data_ingestor;
 pub mod qos;
 pub mod crypto_epistemology;
+pub mod diag;
+pub mod data_ingestion;
 
 // Re-export core public types
 pub use hdc::vector::BipolarVector;

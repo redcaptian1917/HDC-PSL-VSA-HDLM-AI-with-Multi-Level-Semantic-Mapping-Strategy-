@@ -286,7 +286,22 @@ async fn search_handler(
 async fn qos_handler() -> impl IntoResponse {
     info!("// AUDIT: QoS compliance report requested.");
     let auditor = crate::qos::QosAuditor::new();
-    let report = auditor.audit(1.0); // TODO: wire to real axiom history
+    // Probe PSL axiom pass rate against a fresh random vector
+    let probe = crate::memory_bus::HyperMemory::generate_seed(crate::memory_bus::DIM_PROLETARIAT);
+    let probe_bv = crate::hdc::vector::BipolarVector::from_bitvec(probe.export_raw_bitvec());
+    let axiom_rate = match probe_bv {
+        Ok(bv) => {
+            let mut sup = crate::psl::supervisor::PslSupervisor::new();
+            sup.register_axiom(Box::new(crate::psl::axiom::DimensionalityAxiom));
+            sup.register_axiom(Box::new(crate::psl::axiom::StatisticalEquilibriumAxiom { tolerance: 0.05 }));
+            match sup.audit(&crate::psl::axiom::AuditTarget::Vector(bv)) {
+                Ok(v) => v.confidence,
+                Err(_) => 0.5,
+            }
+        },
+        Err(_) => 0.5,
+    };
+    let report = auditor.audit(axiom_rate);
     Json(serde_json::to_value(&report).unwrap_or(json!({ "error": "serialization failed" })))
 }
 
@@ -294,10 +309,13 @@ async fn qos_handler() -> impl IntoResponse {
 // Router Construction
 // ============================================================
 
-pub fn create_router() -> Router {
+pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     let (tx, _) = broadcast::channel(100);
 
-    let agent = LfiAgent::new().expect("Failed to initialize LfiAgent for API");
+    let agent = LfiAgent::new().map_err(|e| -> Box<dyn std::error::Error> {
+        tracing::error!("// CRITICAL: LfiAgent initialization failed: {}", e);
+        format!("LfiAgent init failed: {}", e).into()
+    })?;
     let state = Arc::new(AppState {
         tx,
         agent: Mutex::new(agent),
@@ -306,7 +324,7 @@ pub fn create_router() -> Router {
 
     let cors = CorsLayer::permissive();
 
-    Router::new()
+    Ok(Router::new()
         .route("/ws/telemetry", get(telemetry_handler))
         .route("/ws/chat", get(chat_handler))
         .route("/api/auth", post(auth_handler))
@@ -315,5 +333,5 @@ pub fn create_router() -> Router {
         .route("/api/search", post(search_handler))
         .route("/api/qos", get(qos_handler))
         .layer(cors)
-        .with_state(state)
+        .with_state(state))
 }

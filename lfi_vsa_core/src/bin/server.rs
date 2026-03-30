@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("// AUDIT: Starting Sovereign Command Console (SCC) Backend on ws://0.0.0.0:3000...");
     
-    let app = create_router();
+    let app = create_router()?;
     let listener = TcpListener::bind("0.0.0.0:3000").await?;
     
     axum::serve(listener, app).await?;

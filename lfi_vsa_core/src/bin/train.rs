@@ -29,35 +29,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let file_name = path.file_name().unwrap().to_str().unwrap();
+            let file_name = match path.file_name().and_then(|f| f.to_str()) {
+                Some(name) => name.to_string(),
+                None => {
+                    warn!("// AUDIT: Skipping path with non-UTF8 filename: {:?}", path);
+                    continue;
+                }
+            };
+            let path_str = match path.to_str() {
+                Some(s) => s.to_string(),
+                None => {
+                    warn!("// AUDIT: Skipping path with non-UTF8 path: {:?}", path);
+                    continue;
+                }
+            };
+
             info!("// AUDIT: Rotating to Dataset: {}", file_name);
 
-            match file_name {
+            match file_name.as_str() {
                 "swe_bench.json" | "mbpp.json" => {
                     info!("// AUDIT: Ingesting Code Forensics & Synthesis...");
-                    trainer.train_on_code(path.to_str().unwrap())?;
+                    trainer.train_on_code(&path_str)?;
                 }
                 "spider.json" => {
                     info!("// AUDIT: Ingesting Semantic Logic (SQL Mapping)...");
-                    trainer.train_on_spider(path.to_str().unwrap())?;
+                    trainer.train_on_spider(&path_str)?;
                 }
                 "ifeval.json" => {
                     info!("// AUDIT: Ingesting Literalism & Constraint Associations...");
-                    trainer.train_on_ifeval(path.to_str().unwrap())?;
+                    trainer.train_on_ifeval(&path_str)?;
                 }
                 "natural_questions.json" => {
                     info!("// AUDIT: Ingesting Research Contexts...");
-                    trainer.train_on_intents(path.to_str().unwrap())?;
+                    trainer.train_on_intents(&path_str)?;
                 }
                 f if f.starts_with("lean") && f.ends_with(".json") => {
                     info!("// AUDIT: Ingesting Lean4/Mathlib Formal Proofs...");
-                    trainer.train_on_lean(path.to_str().unwrap())?;
+                    trainer.train_on_lean(&path_str)?;
                 }
                 _ => {
                     warn!("// AUDIT: Unrecognized domain for {}. Defaulting to generic binding.", file_name);
-                    trainer.train_on_intents(path.to_str().unwrap())?;
+                    trainer.train_on_intents(&path_str)?;
                 }
             }
             dataset_count += 1;

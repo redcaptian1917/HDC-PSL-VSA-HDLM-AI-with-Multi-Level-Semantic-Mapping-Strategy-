@@ -30,7 +30,9 @@
 //   the agent's epistemic state.
 // ============================================================
 
-use crate::memory_bus::{HyperMemory, DIM_PROLETARIAT};
+use crate::memory_bus::HyperMemory;
+#[cfg(test)]
+use crate::memory_bus::DIM_PROLETARIAT;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
 use tracing::info;
