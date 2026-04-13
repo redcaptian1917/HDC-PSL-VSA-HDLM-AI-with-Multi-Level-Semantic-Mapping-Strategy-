@@ -367,6 +367,37 @@ impl TrainingDataGenerator {
         ]
     }
 
+    // ================================================================
+    // MULTI-STEP REASONING (harder — requires chaining knowledge)
+    // ================================================================
+    pub fn reasoning_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("reasoning", "If A implies B, and B implies C, and A is true, is C true?", "yes — by transitivity (A->B->C)", 0.4, &["chain"]),
+            TrainingExample::new("reasoning", "All dogs are animals. Rex is a dog. Is Rex an animal?", "yes — syllogism: Rex is a dog, dogs are animals, Rex is an animal", 0.3, &["syllogism"]),
+            TrainingExample::new("reasoning", "A box has 3 red and 5 blue balls. Probability of drawing red?", "3/8 = 37.5%", 0.3, &["probability"]),
+            TrainingExample::new("reasoning", "If it rained, the ground is wet. The ground is dry. Did it rain?", "no — modus tollens: NOT wet -> NOT rained", 0.35, &["logic"]),
+            TrainingExample::new("reasoning", "Train A goes 60mph, Train B goes 80mph, both start 100mi apart toward each other. When do they meet?", "in 0.714 hours (100/(60+80))", 0.45, &["word_problem"]),
+            TrainingExample::new("reasoning", "Is 'all cats are black' disproved by a white cat?", "yes — one counterexample disproves a universal claim", 0.3, &["falsification"]),
+            TrainingExample::new("reasoning", "Can you prove a negative?", "generally no — absence of evidence is not evidence of absence, but counterexamples disprove universals", 0.5, &["epistemology"]),
+            TrainingExample::new("reasoning", "Post hoc ergo propter hoc — is this valid?", "no — correlation does not imply causation. A before B does not mean A caused B", 0.35, &["fallacies"]),
+        ]
+    }
+
+    // ================================================================
+    // CRYPTOGRAPHY (deeper than basic security)
+    // ================================================================
+    pub fn cryptography_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("crypto", "What is a hash function?", "one-way function: input -> fixed-size output, infeasible to reverse", 0.2, &["fundamentals"]),
+            TrainingExample::new("crypto", "What is SHA-256?", "256-bit hash function in the SHA-2 family, used in Bitcoin and TLS", 0.25, &["hash"]),
+            TrainingExample::new("crypto", "What is a digital signature?", "hash(message) encrypted with private key — proves authorship + integrity", 0.3, &["signatures"]),
+            TrainingExample::new("crypto", "What is Diffie-Hellman?", "key exchange protocol: two parties derive shared secret over insecure channel", 0.35, &["key_exchange"]),
+            TrainingExample::new("crypto", "What is post-quantum cryptography?", "algorithms resistant to quantum computer attacks: lattice-based, hash-based, code-based", 0.4, &["pqc"]),
+            TrainingExample::new("crypto", "What is ML-KEM (Kyber)?", "lattice-based key encapsulation mechanism — NIST PQC standard", 0.45, &["pqc", "standards"]),
+            TrainingExample::new("crypto", "What is homomorphic encryption?", "compute on encrypted data without decrypting — enables private cloud computation", 0.5, &["advanced"]),
+        ]
+    }
+
     /// Get ALL training examples across ALL domains.
     pub fn all_examples() -> Vec<TrainingExample> {
         let mut all = Vec::new();
@@ -390,6 +421,8 @@ impl TrainingDataGenerator {
         all.extend(Self::math_advanced_examples());
         all.extend(Self::social_engineering_examples());
         all.extend(Self::os_examples());
+        all.extend(Self::reasoning_examples());
+        all.extend(Self::cryptography_examples());
         all
     }
 
@@ -519,6 +552,31 @@ impl CorrectionLoop {
     /// Total corrections made.
     pub fn total_corrections(&self) -> usize {
         self.corrections.len()
+    }
+
+    /// Get the domains that need the most improvement (highest correction rate).
+    pub fn weakest_domains(&self) -> Vec<(String, f64)> {
+        let mut domain_errors: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+        for c in &self.corrections {
+            let entry = domain_errors.entry(c.domain.clone()).or_insert((0, 0));
+            entry.0 += 1; // errors
+        }
+        for eval in &self.evaluations {
+            let entry = domain_errors.entry(eval.domain.clone()).or_insert((0, 0));
+            entry.1 = eval.total; // total
+        }
+
+        let mut weak: Vec<(String, f64)> = domain_errors.iter()
+            .filter(|(_, (errors, total))| *total > 0)
+            .map(|(domain, (errors, total))| (domain.clone(), *errors as f64 / *total as f64))
+            .collect();
+        weak.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        weak
+    }
+
+    /// Get examples that should be reviewed (spaced repetition — focus on mistakes).
+    pub fn review_queue(&self) -> Vec<&CorrectionRecord> {
+        self.corrections.iter().filter(|c| c.corrected).collect()
     }
 }
 
