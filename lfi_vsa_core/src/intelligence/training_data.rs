@@ -398,6 +398,49 @@ impl TrainingDataGenerator {
         ]
     }
 
+    // ================================================================
+    // LAW & CIVIL RIGHTS
+    // ================================================================
+    pub fn law_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("law", "What is habeas corpus?", "right to challenge unlawful detention — 'produce the body'", 0.2, &["rights"]),
+            TrainingExample::new("law", "What is the 4th Amendment?", "protection against unreasonable search and seizure — requires warrants", 0.2, &["us_constitution"]),
+            TrainingExample::new("law", "What is the 5th Amendment?", "right against self-incrimination and due process of law", 0.2, &["us_constitution"]),
+            TrainingExample::new("law", "What is GDPR?", "EU data protection regulation — right to be forgotten, consent, data minimization", 0.25, &["privacy_law"]),
+            TrainingExample::new("law", "What is Section 230?", "US law shielding platforms from liability for user-generated content", 0.3, &["internet_law"]),
+            TrainingExample::new("law", "What is the right to privacy?", "fundamental right to be free from surveillance and data collection without consent", 0.2, &["rights"]),
+        ]
+    }
+
+    // ================================================================
+    // META-COGNITIVE SELF-KNOWLEDGE (LFI's understanding of itself)
+    // ================================================================
+    pub fn self_knowledge_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("self", "What are you?", "a neurosymbolic AI engine using hyperdimensional computing, not a neural network", 0.1, &["identity"]),
+            TrainingExample::new("self", "How do you store knowledge?", "VSA holographic memory: bind(key, value) stored in superposition", 0.25, &["architecture"]),
+            TrainingExample::new("self", "How do you reason?", "dual mode: System 1 (fast pattern match) and System 2 (MCTS deliberation)", 0.3, &["architecture"]),
+            TrainingExample::new("self", "Can you lie?", "the ProvenanceKind tag prevents me from presenting reconstructions as traced derivations", 0.35, &["provenance", "honesty"]),
+            TrainingExample::new("self", "What are your limitations?", "VSA similarity is approximate, holographic memory has capacity limits, I cannot access external networks without agents", 0.3, &["limitations"]),
+            TrainingExample::new("self", "What is your purpose?", "privacy, security, and anonymity (PSA) for everyone — accessible, local, transparent AI", 0.15, &["mission"]),
+            TrainingExample::new("self", "Who built you?", "PlausiDen Technologies — a company building civil rights tools", 0.1, &["identity"]),
+            TrainingExample::new("self", "What makes you different from LLMs?", "deterministic VSA operations instead of probabilistic weights, explainable reasoning, runs locally, no training data leakage", 0.3, &["architecture"]),
+        ]
+    }
+
+    // ================================================================
+    // ENVIRONMENTAL SCIENCE
+    // ================================================================
+    pub fn environment_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("environment", "What is the greenhouse effect?", "gases trap heat in atmosphere — CO2, methane, water vapor", 0.15, &["climate"]),
+            TrainingExample::new("environment", "What is biodiversity?", "variety of life in an ecosystem — species diversity, genetic diversity", 0.15, &["ecology"]),
+            TrainingExample::new("environment", "What is the ozone layer?", "O3 layer in stratosphere that absorbs UV radiation from the sun", 0.2, &["atmosphere"]),
+            TrainingExample::new("environment", "What is carbon neutrality?", "net zero CO2 emissions — balance emissions with removal/offset", 0.2, &["climate"]),
+            TrainingExample::new("environment", "What is renewable energy?", "energy from sources that replenish naturally: solar, wind, hydro, geothermal", 0.15, &["energy"]),
+        ]
+    }
+
     /// Get ALL training examples across ALL domains.
     pub fn all_examples() -> Vec<TrainingExample> {
         let mut all = Vec::new();
@@ -423,6 +466,9 @@ impl TrainingDataGenerator {
         all.extend(Self::os_examples());
         all.extend(Self::reasoning_examples());
         all.extend(Self::cryptography_examples());
+        all.extend(Self::law_examples());
+        all.extend(Self::self_knowledge_examples());
+        all.extend(Self::environment_examples());
         all
     }
 
