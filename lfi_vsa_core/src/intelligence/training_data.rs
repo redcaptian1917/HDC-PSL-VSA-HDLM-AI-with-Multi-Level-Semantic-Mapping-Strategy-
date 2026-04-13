@@ -236,6 +236,77 @@ impl TrainingDataGenerator {
         ]
     }
 
+    // ================================================================
+    // ECONOMICS
+    // ================================================================
+    pub fn economics_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("economics", "What is supply and demand?", "prices rise when demand exceeds supply, fall when supply exceeds demand", 0.15, &["fundamentals"]),
+            TrainingExample::new("economics", "What is inflation?", "general increase in prices and decrease in purchasing power of money", 0.15, &["macroeconomics"]),
+            TrainingExample::new("economics", "What is GDP?", "gross domestic product — total value of goods and services produced in a country", 0.1, &["macroeconomics"]),
+            TrainingExample::new("economics", "What is a recession?", "two consecutive quarters of negative GDP growth", 0.2, &["macroeconomics"]),
+            TrainingExample::new("economics", "What is compound interest?", "interest on both principal and accumulated interest: A = P(1+r)^n", 0.25, &["finance"]),
+            TrainingExample::new("economics", "What is a monopoly?", "single seller dominates market with no close substitutes", 0.15, &["market_structure"]),
+        ]
+    }
+
+    // ================================================================
+    // PSYCHOLOGY
+    // ================================================================
+    pub fn psychology_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("psychology", "What is confirmation bias?", "tendency to seek information confirming existing beliefs", 0.2, &["cognitive_bias"]),
+            TrainingExample::new("psychology", "What is the Dunning-Kruger effect?", "low-skill people overestimate their ability; high-skill people underestimate", 0.25, &["cognitive_bias"]),
+            TrainingExample::new("psychology", "What is cognitive dissonance?", "mental discomfort from holding contradictory beliefs", 0.2, &["cognition"]),
+            TrainingExample::new("psychology", "What is Maslow's hierarchy?", "physiological → safety → belonging → esteem → self-actualization", 0.2, &["motivation"]),
+            TrainingExample::new("psychology", "What is the bystander effect?", "less likely to help when others are present", 0.2, &["social"]),
+            TrainingExample::new("psychology", "What is anchoring bias?", "relying too heavily on the first piece of information encountered", 0.25, &["cognitive_bias"]),
+        ]
+    }
+
+    // ================================================================
+    // NETWORKING & PROTOCOLS
+    // ================================================================
+    pub fn networking_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("networking", "What are the OSI layers?", "Physical, Data Link, Network, Transport, Session, Presentation, Application", 0.25, &["fundamentals"]),
+            TrainingExample::new("networking", "What is TCP vs UDP?", "TCP: reliable ordered delivery. UDP: fast unreliable datagrams", 0.2, &["transport"]),
+            TrainingExample::new("networking", "What is DNS?", "Domain Name System — translates domain names to IP addresses", 0.15, &["application"]),
+            TrainingExample::new("networking", "What is TLS?", "Transport Layer Security — encrypts data in transit", 0.2, &["security"]),
+            TrainingExample::new("networking", "What is a firewall?", "filters network traffic based on rules — blocks unauthorized access", 0.15, &["security"]),
+            TrainingExample::new("networking", "What is NAT?", "Network Address Translation — maps private IPs to public IP", 0.2, &["network"]),
+            TrainingExample::new("networking", "What is HTTPS?", "HTTP over TLS — encrypted web traffic", 0.1, &["application", "security"]),
+        ]
+    }
+
+    // ================================================================
+    // DEMOCRACY & VOTING (Sacred.Vote domain)
+    // ================================================================
+    pub fn voting_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("voting", "What is ballot secrecy?", "no one can determine how a specific voter voted", 0.2, &["principles"]),
+            TrainingExample::new("voting", "What is verifiable voting?", "voters can verify their vote was counted correctly without revealing it", 0.3, &["cryptographic"]),
+            TrainingExample::new("voting", "What is a blind signature?", "signer signs a message without seeing its content — enables anonymous ballots", 0.35, &["cryptographic"]),
+            TrainingExample::new("voting", "What is coercion resistance?", "voter cannot prove how they voted even under duress", 0.35, &["security"]),
+            TrainingExample::new("voting", "What is end-to-end verifiability?", "voters verify: cast-as-intended, recorded-as-cast, tallied-as-recorded", 0.4, &["cryptographic"]),
+            TrainingExample::new("voting", "What is a zero-knowledge proof in voting?", "prove eligibility to vote without revealing identity", 0.4, &["cryptographic", "privacy"]),
+            TrainingExample::new("voting", "What is the Belenios protocol?", "verifiable voting protocol using ElGamal encryption and ZK proofs", 0.45, &["protocols"]),
+        ]
+    }
+
+    // ================================================================
+    // HISTORY
+    // ================================================================
+    pub fn history_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("history", "When did WW2 end?", "1945", 0.05, &["dates"]),
+            TrainingExample::new("history", "What was the Magna Carta?", "1215 charter limiting the power of the English king", 0.2, &["law"]),
+            TrainingExample::new("history", "What was the Renaissance?", "14th-17th century European cultural rebirth in art, science, philosophy", 0.2, &["culture"]),
+            TrainingExample::new("history", "What was the Industrial Revolution?", "transition from agrarian to industrial economy, starting ~1760 in Britain", 0.2, &["economics"]),
+            TrainingExample::new("history", "What is the Universal Declaration of Human Rights?", "1948 UN document establishing fundamental human rights for all people", 0.2, &["rights"]),
+        ]
+    }
+
     /// Get ALL training examples across ALL domains.
     pub fn all_examples() -> Vec<TrainingExample> {
         let mut all = Vec::new();
@@ -250,6 +321,11 @@ impl TrainingDataGenerator {
         all.extend(Self::medicine_examples());
         all.extend(Self::philosophy_examples());
         all.extend(Self::psa_examples());
+        all.extend(Self::economics_examples());
+        all.extend(Self::psychology_examples());
+        all.extend(Self::networking_examples());
+        all.extend(Self::voting_examples());
+        all.extend(Self::history_examples());
         all
     }
 

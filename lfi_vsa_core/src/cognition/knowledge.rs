@@ -820,8 +820,8 @@ impl KnowledgeEngine {
             return Ok(());
         }
 
-        debuglog!("KnowledgeEngine::learn_with_definition: '{}' — '{}'",
-            name, &definition[..definition.len().min(60)]);
+        let def_preview: String = definition.chars().take(60).collect();
+        debuglog!("KnowledgeEngine::learn_with_definition: '{}' — '{}'", name, def_preview);
 
         let vector = BipolarVector::from_seed(
             crate::identity::IdentityProver::hash(name)
