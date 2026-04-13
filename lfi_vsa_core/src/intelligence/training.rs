@@ -225,7 +225,10 @@ impl Trainer {
             // 1. Self-play.
             let sp_result = self.run_epoch(epoch)?;
 
-            // 2. Correction loop — evaluate and teach.
+            // 2. Apply mastery decay (spaced repetition — unused knowledge fades).
+            knowledge.apply_mastery_decay(0.02); // 2% decay per epoch
+
+            // 3. Correction loop — evaluate and teach.
             let eval_results = correction_loop.evaluate_and_correct(knowledge, examples)?;
             let accuracy = correction_loop.overall_accuracy();
             let corrections = correction_loop.total_corrections();

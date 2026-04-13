@@ -756,6 +756,41 @@ impl KnowledgeEngine {
         self.concepts.len()
     }
 
+    /// Apply mastery decay — concepts lose mastery if not recently reinforced.
+    ///
+    /// This implements spaced repetition: frequently-used concepts stay fresh,
+    /// rarely-used concepts fade. Call periodically (e.g., once per training epoch).
+    ///
+    /// decay_rate: how much mastery to subtract per call (e.g., 0.01 = 1% per epoch).
+    pub fn apply_mastery_decay(&mut self, decay_rate: f64) {
+        debuglog!("KnowledgeEngine::apply_mastery_decay: rate={:.4}", decay_rate);
+        for concept in &mut self.concepts {
+            // Concepts with high encounter_count decay slower (well-established knowledge).
+            let stability = (concept.encounter_count as f64).ln_1p() / 10.0;
+            let effective_decay = (decay_rate * (1.0 - stability)).max(0.0);
+            concept.mastery = (concept.mastery - effective_decay).max(0.0);
+        }
+    }
+
+    /// Get concepts that need reinforcement (mastery below threshold).
+    pub fn concepts_needing_review(&self, threshold: f64) -> Vec<&LearnedConcept> {
+        self.concepts.iter()
+            .filter(|c| c.mastery < threshold && c.mastery > 0.0)
+            .collect()
+    }
+
+    /// Reinforce a concept by name — increases mastery and encounter count.
+    pub fn reinforce(&mut self, name: &str) {
+        for concept in &mut self.concepts {
+            if concept.name == name {
+                concept.encounter_count += 1;
+                concept.mastery = (concept.mastery + 0.1).min(1.0);
+                debuglog!("KnowledgeEngine::reinforce: '{}' mastery={:.2}", name, concept.mastery);
+                return;
+            }
+        }
+    }
+
     /// Find the top-K most similar concepts to a query vector.
     ///
     /// Uses VSA similarity to find structurally related concepts regardless
