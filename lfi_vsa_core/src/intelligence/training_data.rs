@@ -82,6 +82,17 @@ impl TrainingDataGenerator {
             TrainingExample::new("math", "is 17 prime?", "yes", 0.15, &["number_theory"]),
             TrainingExample::new("math", "GCD(12, 18)", "6", 0.2, &["number_theory"]),
             TrainingExample::new("math", "LCM(4, 6)", "12", 0.2, &["number_theory"]),
+            // Trigonometry
+            TrainingExample::new("math", "sin(0)", "0", 0.2, &["trig"]),
+            TrainingExample::new("math", "cos(0)", "1", 0.2, &["trig"]),
+            TrainingExample::new("math", "sin(pi/2)", "1", 0.25, &["trig"]),
+            // Logarithms
+            TrainingExample::new("math", "log2(8)", "3", 0.2, &["logarithms"]),
+            TrainingExample::new("math", "log10(1000)", "3", 0.2, &["logarithms"]),
+            TrainingExample::new("math", "ln(e)", "1", 0.15, &["logarithms"]),
+            // Series/Sequences
+            TrainingExample::new("math", "sum of 1+2+3+...+100", "5050 (Gauss formula: n(n+1)/2)", 0.35, &["series"]),
+            TrainingExample::new("math", "geometric series: 1+1/2+1/4+1/8+...", "2 (converges to a/(1-r) = 1/(1-0.5))", 0.4, &["series"]),
         ]
     }
 
@@ -98,6 +109,10 @@ impl TrainingDataGenerator {
             TrainingExample::new("physics", "What is entropy?", "measure of disorder in a system", 0.3, &["thermodynamics"]),
             TrainingExample::new("physics", "gravitational acceleration on Earth", "9.8 m/s^2", 0.1, &["gravity"]),
             TrainingExample::new("physics", "What is Planck's constant?", "6.626 x 10^-34 J⋅s", 0.25, &["quantum"]),
+            TrainingExample::new("physics", "What is wave-particle duality?", "quantum entities exhibit both wave and particle properties depending on observation", 0.35, &["quantum"]),
+            TrainingExample::new("physics", "What is the Heisenberg uncertainty principle?", "cannot simultaneously know exact position and momentum of a particle", 0.35, &["quantum"]),
+            TrainingExample::new("physics", "What is a black hole?", "region where gravity is so strong that nothing, not even light, can escape", 0.25, &["astrophysics"]),
+            TrainingExample::new("physics", "What is the Doppler effect?", "frequency change when source and observer are in relative motion", 0.2, &["waves"]),
         ]
     }
 
@@ -147,6 +162,16 @@ impl TrainingDataGenerator {
             TrainingExample::new("security", "What is a MITM attack?", "attacker intercepts communication between two parties", 0.3, &["attacks"]),
             TrainingExample::new("security", "What is AES?", "Advanced Encryption Standard — symmetric block cipher", 0.25, &["cryptography"]),
             TrainingExample::new("security", "What is RSA?", "asymmetric encryption using prime factorization", 0.3, &["cryptography"]),
+            // Attack chains
+            TrainingExample::new("security", "What is a supply chain attack?", "compromise a dependency/vendor to attack downstream consumers", 0.4, &["attacks", "advanced"]),
+            TrainingExample::new("security", "What is credential stuffing?", "automated login attempts using breached username/password pairs", 0.3, &["attacks"]),
+            TrainingExample::new("security", "What is a rainbow table?", "precomputed hash-to-password lookup table — defeated by salting", 0.35, &["cryptanalysis"]),
+            TrainingExample::new("security", "What is lateral movement?", "attacker moves between systems after initial compromise to reach target", 0.4, &["attacks", "advanced"]),
+            TrainingExample::new("security", "What is OWASP Top 10?", "most critical web application security risks: injection, broken auth, XSS, etc.", 0.25, &["standards"]),
+            // Defense
+            TrainingExample::new("security", "What is a SIEM?", "Security Information and Event Management — centralized log analysis and alerting", 0.3, &["defense"]),
+            TrainingExample::new("security", "What is threat modeling?", "systematic analysis of potential threats, attack surfaces, and mitigations", 0.3, &["methodology"]),
+            TrainingExample::new("security", "What is penetration testing?", "authorized simulated attack to find vulnerabilities before real attackers do", 0.25, &["methodology"]),
         ]
     }
 
@@ -163,6 +188,16 @@ impl TrainingDataGenerator {
             TrainingExample::new("code", "Big-O: quicksort average", "O(n log n)", 0.3, &["algorithms"]),
             TrainingExample::new("code", "Big-O: hash table lookup", "O(1) average", 0.2, &["data_structures"]),
             TrainingExample::new("code", "What is SOLID?", "Single responsibility, Open-closed, Liskov, Interface segregation, Dependency inversion", 0.35, &["design"]),
+            // More algorithms
+            TrainingExample::new("code", "Big-O: merge sort", "O(n log n) worst case", 0.3, &["algorithms"]),
+            TrainingExample::new("code", "Big-O: linear search", "O(n)", 0.15, &["algorithms"]),
+            TrainingExample::new("code", "Big-O: matrix multiplication (naive)", "O(n^3)", 0.3, &["algorithms"]),
+            // Design patterns
+            TrainingExample::new("code", "What is dependency injection?", "provide dependencies externally instead of creating them internally — improves testability", 0.3, &["design"]),
+            TrainingExample::new("code", "What is the observer pattern?", "subjects notify observers of state changes — decouples components", 0.3, &["design"]),
+            // Rust-specific
+            TrainingExample::new("code", "What is a lifetime in Rust?", "compiler-tracked scope of a reference — ensures no dangling references", 0.35, &["rust", "memory"]),
+            TrainingExample::new("code", "What is zero-cost abstraction?", "abstraction that compiles to the same code as hand-written version", 0.3, &["rust", "performance"]),
         ]
     }
 
