@@ -671,6 +671,164 @@ impl TrainingDataGenerator {
         ]
     }
 
+    // ================================================================
+    // RECONNAISSANCE — Information Gathering
+    // ================================================================
+    pub fn recon_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("recon", "What is passive recon?", "gathering information without directly interacting with the target — OSINT, DNS, WHOIS, public records", 0.2, &["methodology"]),
+            TrainingExample::new("recon", "What is active recon?", "directly probing the target — port scanning, banner grabbing, vulnerability scanning", 0.2, &["methodology"]),
+            TrainingExample::new("recon", "What does nmap -sS do?", "TCP SYN scan (stealth scan) — sends SYN, reads response, never completes handshake", 0.3, &["nmap", "scanning"]),
+            TrainingExample::new("recon", "What does nmap -sV do?", "service version detection — probes open ports to determine running service and version", 0.3, &["nmap", "enumeration"]),
+            TrainingExample::new("recon", "What does nmap -O do?", "OS detection via TCP/IP stack fingerprinting", 0.3, &["nmap", "fingerprinting"]),
+            TrainingExample::new("recon", "What does nmap -A do?", "aggressive scan: OS detection + version detection + script scanning + traceroute", 0.25, &["nmap"]),
+            TrainingExample::new("recon", "What is WHOIS?", "protocol for querying domain registration data — registrar, nameservers, creation date, registrant", 0.15, &["dns", "osint"]),
+            TrainingExample::new("recon", "What is DNS enumeration?", "discovering subdomains, mail servers, nameservers via zone transfers, brute force, or passive DNS", 0.3, &["dns", "enumeration"]),
+            TrainingExample::new("recon", "What is Shodan?", "search engine for internet-connected devices — indexes banners, ports, services, vulnerabilities", 0.25, &["osint", "tools"]),
+            TrainingExample::new("recon", "What is theHarvester?", "OSINT tool for gathering emails, subdomains, IPs, URLs from public sources", 0.3, &["osint", "tools"]),
+            TrainingExample::new("recon", "What is Google dorking?", "using advanced Google operators (site:, inurl:, filetype:, intitle:) to find exposed data", 0.3, &["osint", "techniques"]),
+            TrainingExample::new("recon", "What is banner grabbing?", "connecting to a service and reading its identification response — reveals software/version", 0.2, &["enumeration"]),
+            TrainingExample::new("recon", "What is a zone transfer (AXFR)?", "DNS query that returns all records for a zone — if misconfigured, reveals full infrastructure", 0.35, &["dns", "misconfig"]),
+            TrainingExample::new("recon", "What is subdomain enumeration?", "discovering subdomains via wordlist brute force, certificate transparency, DNS records, web archives", 0.3, &["dns", "enumeration"]),
+            TrainingExample::new("recon", "What is Amass?", "OWASP tool for network mapping and subdomain discovery using passive and active techniques", 0.35, &["tools", "osint"]),
+        ]
+    }
+
+    // ================================================================
+    // EXPLOITATION — Vulnerability Exploitation
+    // ================================================================
+    pub fn exploitation_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("exploitation", "What is a buffer overflow?", "writing past buffer boundary to overwrite adjacent memory — can hijack execution flow", 0.4, &["memory", "classic"]),
+            TrainingExample::new("exploitation", "What is RCE?", "Remote Code Execution — attacker runs arbitrary code on target system", 0.3, &["impact"]),
+            TrainingExample::new("exploitation", "What is a reverse shell?", "target connects back to attacker — bypasses firewalls that block inbound connections", 0.35, &["post_exploit", "shells"]),
+            TrainingExample::new("exploitation", "What is privilege escalation?", "gaining higher permissions than initially obtained — vertical (user→root) or horizontal (user→other user)", 0.35, &["post_exploit"]),
+            TrainingExample::new("exploitation", "What is SUID exploitation?", "abusing SUID binaries that run as root — GTFOBins catalogs exploitable binaries", 0.4, &["linux", "privesc"]),
+            TrainingExample::new("exploitation", "What is a kernel exploit?", "exploiting vulnerability in the OS kernel to gain ring 0 access — usually leads to full system compromise", 0.5, &["advanced", "privesc"]),
+            TrainingExample::new("exploitation", "What is path traversal?", "accessing files outside intended directory using ../ sequences — e.g., ../../../../etc/passwd", 0.3, &["web", "lfi"]),
+            TrainingExample::new("exploitation", "What is LFI vs RFI?", "Local File Inclusion: include server files. Remote File Inclusion: include attacker-hosted files", 0.35, &["web", "inclusion"]),
+            TrainingExample::new("exploitation", "What is SSRF?", "Server-Side Request Forgery — make server send requests to internal services or cloud metadata", 0.4, &["web", "advanced"]),
+            TrainingExample::new("exploitation", "What is deserialization attack?", "injecting malicious serialized objects that execute code when deserialized", 0.45, &["web", "advanced"]),
+            TrainingExample::new("exploitation", "What is a race condition exploit?", "exploiting TOCTOU (time of check to time of use) windows to manipulate shared state", 0.5, &["concurrency"]),
+            TrainingExample::new("exploitation", "What is heap spraying?", "filling heap with attacker-controlled data to increase probability of landing on shellcode", 0.5, &["memory", "advanced"]),
+            TrainingExample::new("exploitation", "What is ROP?", "Return-Oriented Programming — chaining existing code gadgets to bypass DEP/NX protection", 0.6, &["memory", "advanced"]),
+            TrainingExample::new("exploitation", "What is Metasploit?", "exploitation framework — modules for scanning, exploiting, post-exploitation, payload generation", 0.3, &["tools"]),
+            TrainingExample::new("exploitation", "What is a web shell?", "script uploaded to web server providing remote command execution — usually PHP/ASPX/JSP", 0.35, &["web", "persistence"]),
+        ]
+    }
+
+    // ================================================================
+    // EVASION — Detection Avoidance
+    // ================================================================
+    pub fn evasion_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("evasion", "What is AV evasion?", "modifying payloads to avoid antivirus detection — encoding, packing, polymorphism, metamorphism", 0.4, &["defense_evasion"]),
+            TrainingExample::new("evasion", "What is living off the land?", "using built-in OS tools (PowerShell, certutil, curl) instead of custom malware to blend in", 0.35, &["techniques"]),
+            TrainingExample::new("evasion", "What is process hollowing?", "starting legitimate process then replacing its memory with malicious code — evades process-based detection", 0.5, &["advanced"]),
+            TrainingExample::new("evasion", "What is log evasion?", "clearing, modifying, or preventing log generation to hide activity — timestomping, log rotation manipulation", 0.4, &["anti_forensics"]),
+            TrainingExample::new("evasion", "What is obfuscation?", "making code/traffic hard to analyze — string encoding, control flow flattening, dead code insertion", 0.3, &["techniques"]),
+            TrainingExample::new("evasion", "What is tunneling?", "encapsulating traffic inside allowed protocols — DNS tunneling, ICMP tunneling, HTTP tunneling", 0.4, &["network"]),
+            TrainingExample::new("evasion", "What is AMSI bypass?", "disabling Windows Antimalware Scan Interface to execute scripts without detection", 0.45, &["windows"]),
+            TrainingExample::new("evasion", "What is reflective DLL injection?", "loading DLL from memory without touching disk — avoids file-based detection", 0.5, &["advanced"]),
+            TrainingExample::new("evasion", "What is polymorphic code?", "code that changes its appearance on each execution while maintaining functionality", 0.45, &["techniques"]),
+            TrainingExample::new("evasion", "What is a fileless attack?", "executing malicious code entirely in memory without writing to disk — harder to detect and forensically recover", 0.4, &["techniques"]),
+            TrainingExample::new("evasion", "What is traffic blending?", "making C2 traffic look like normal web browsing — domain fronting, malleable C2 profiles", 0.45, &["network"]),
+            TrainingExample::new("evasion", "What is timestomping?", "modifying file timestamps (MAC times) to make malicious files appear older/benign", 0.35, &["anti_forensics"]),
+        ]
+    }
+
+    // ================================================================
+    // VULNERABILITY SCANNING — Finding Weaknesses
+    // ================================================================
+    pub fn vuln_scanning_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("vuln_scanning", "What is CVSS?", "Common Vulnerability Scoring System — 0-10 severity rating based on exploitability and impact", 0.2, &["standards"]),
+            TrainingExample::new("vuln_scanning", "What is a CVE?", "Common Vulnerabilities and Exposures — standardized identifier for known vulnerabilities (e.g., CVE-2021-44228)", 0.15, &["standards"]),
+            TrainingExample::new("vuln_scanning", "What is Nessus?", "commercial vulnerability scanner — authenticated and unauthenticated scans, compliance checks, plugin-based", 0.25, &["tools"]),
+            TrainingExample::new("vuln_scanning", "What is OpenVAS?", "open-source vulnerability scanner — fork of Nessus, NVT-based detection", 0.25, &["tools"]),
+            TrainingExample::new("vuln_scanning", "What is Nikto?", "web server scanner — checks for dangerous files, outdated software, misconfigurations", 0.25, &["tools", "web"]),
+            TrainingExample::new("vuln_scanning", "What is Burp Suite?", "web application security testing platform — proxy, scanner, intruder, repeater, sequencer", 0.3, &["tools", "web"]),
+            TrainingExample::new("vuln_scanning", "What is fuzzing?", "sending random/malformed input to find crashes, memory errors, or unexpected behavior", 0.3, &["methodology"]),
+            TrainingExample::new("vuln_scanning", "What is SAST vs DAST?", "SAST: analyze source code. DAST: test running application. Both find different vulnerability classes", 0.3, &["methodology"]),
+            TrainingExample::new("vuln_scanning", "What is a false positive?", "scanner reports vulnerability that doesn't actually exist — requires manual verification", 0.15, &["analysis"]),
+            TrainingExample::new("vuln_scanning", "What is authenticated scanning?", "scanning with valid credentials — finds more vulnerabilities than unauthenticated but requires access", 0.25, &["methodology"]),
+            TrainingExample::new("vuln_scanning", "What is nuclei?", "fast vulnerability scanner using YAML templates — community-maintained template library", 0.3, &["tools"]),
+            TrainingExample::new("vuln_scanning", "What is dependency scanning?", "checking project dependencies for known vulnerabilities — cargo audit, npm audit, Snyk", 0.25, &["supply_chain"]),
+        ]
+    }
+
+    // ================================================================
+    // EXFILTRATION — Data Extraction
+    // ================================================================
+    pub fn exfiltration_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("exfiltration", "What is data exfiltration?", "unauthorized transfer of data from a compromised system — the attacker's primary objective", 0.25, &["fundamentals"]),
+            TrainingExample::new("exfiltration", "What is DNS exfiltration?", "encoding stolen data in DNS queries — hard to detect because DNS is rarely monitored closely", 0.4, &["techniques"]),
+            TrainingExample::new("exfiltration", "What is HTTPS exfiltration?", "sending data over HTTPS to attacker-controlled server — blends with normal web traffic", 0.3, &["techniques"]),
+            TrainingExample::new("exfiltration", "What is steganography?", "hiding data inside images, audio, or video — data hidden in least significant bits", 0.4, &["techniques"]),
+            TrainingExample::new("exfiltration", "What is cloud exfiltration?", "using cloud storage APIs (S3, GCS, Azure Blob) to exfiltrate — looks like normal cloud usage", 0.35, &["techniques"]),
+            TrainingExample::new("exfiltration", "What is packet capture for exfil?", "capturing network traffic to extract credentials, session tokens, or data in transit", 0.3, &["techniques"]),
+            TrainingExample::new("exfiltration", "What is staged exfiltration?", "collecting data in staging directory, compressing/encrypting, then sending in small batches to avoid detection", 0.35, &["methodology"]),
+            TrainingExample::new("exfiltration", "What is DLP?", "Data Loss Prevention — tools that monitor and block unauthorized data transfers", 0.25, &["defense"]),
+        ]
+    }
+
+    // ================================================================
+    // SOCIAL ENGINEERING — Advanced
+    // ================================================================
+    pub fn social_engineering_advanced_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("social_eng", "What is pretexting?", "creating a fabricated scenario to gain trust — posing as IT support, vendor, or authority figure", 0.3, &["techniques"]),
+            TrainingExample::new("social_eng", "What is spear phishing?", "targeted phishing using personal information about the victim — higher success rate than mass phishing", 0.3, &["phishing"]),
+            TrainingExample::new("social_eng", "What is whaling?", "phishing targeting executives (CEO, CFO) — often impersonates board members or legal", 0.35, &["phishing"]),
+            TrainingExample::new("social_eng", "What is vishing?", "voice phishing — phone calls impersonating banks, tech support, or government agencies", 0.3, &["techniques"]),
+            TrainingExample::new("social_eng", "What is smishing?", "SMS phishing — malicious links or urgency-based messages via text", 0.25, &["techniques"]),
+            TrainingExample::new("social_eng", "What is a watering hole attack?", "compromising a website frequently visited by target group — infects visitors", 0.4, &["advanced"]),
+            TrainingExample::new("social_eng", "What is baiting?", "leaving malicious USB drives or media where targets will find them — exploits curiosity", 0.25, &["physical"]),
+            TrainingExample::new("social_eng", "What is tailgating?", "following authorized person through secured door without authentication — physical access attack", 0.2, &["physical"]),
+            TrainingExample::new("social_eng", "What is OSINT for social engineering?", "gathering target info from social media, public records, corporate websites to craft convincing attacks", 0.35, &["methodology"]),
+            TrainingExample::new("social_eng", "What is authority principle in SE?", "people comply with perceived authority — impersonating executives, law enforcement, IT admin", 0.3, &["psychology"]),
+            TrainingExample::new("social_eng", "What is urgency principle in SE?", "creating time pressure to bypass rational thinking — 'act now or lose access'", 0.25, &["psychology"]),
+            TrainingExample::new("social_eng", "What is social proof in SE?", "people follow the crowd — 'everyone in your department has already updated their password'", 0.3, &["psychology"]),
+        ]
+    }
+
+    // ================================================================
+    // STRATEGIC PLANNING — Attack Methodology
+    // ================================================================
+    pub fn attack_methodology_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("methodology", "What is the Cyber Kill Chain?", "Lockheed Martin's 7-phase model: Recon, Weaponize, Deliver, Exploit, Install, C2, Actions on Objectives", 0.3, &["frameworks"]),
+            TrainingExample::new("methodology", "What is MITRE ATT&CK?", "knowledge base of adversary tactics and techniques — 14 tactics from Initial Access to Impact", 0.3, &["frameworks"]),
+            TrainingExample::new("methodology", "What is PTES?", "Penetration Testing Execution Standard — pre-engagement, intel gathering, threat modeling, vuln analysis, exploitation, post-exploitation, reporting", 0.35, &["frameworks"]),
+            TrainingExample::new("methodology", "What is OWASP Testing Guide?", "comprehensive web application security testing methodology — 11 categories, 90+ test cases", 0.3, &["frameworks", "web"]),
+            TrainingExample::new("methodology", "What is red teaming?", "adversary simulation — emulating real threat actors to test organizational defenses holistically", 0.3, &["approach"]),
+            TrainingExample::new("methodology", "What is purple teaming?", "collaborative red+blue team exercises — red attacks, blue defends, both learn and improve together", 0.3, &["approach"]),
+            TrainingExample::new("methodology", "What are assumed breach assessments?", "start from inside the network (as if already compromised) — tests detection and response, not just prevention", 0.35, &["approach"]),
+            TrainingExample::new("methodology", "What is pivoting?", "using compromised system as stepping stone to reach other internal systems — lateral movement technique", 0.35, &["techniques"]),
+            TrainingExample::new("methodology", "What is persistence?", "maintaining access after initial compromise — scheduled tasks, startup scripts, rootkits, implants", 0.35, &["post_exploit"]),
+            TrainingExample::new("methodology", "What is C2 (Command and Control)?", "infrastructure for remotely controlling compromised systems — beacons, channels, protocols", 0.35, &["infrastructure"]),
+        ]
+    }
+
+    // ================================================================
+    // CREATIVE PROBLEM SOLVING — Strategic Intelligence
+    // ================================================================
+    pub fn creative_strategy_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("strategy", "What is lateral thinking?", "solving problems through indirect and creative approaches — reframing assumptions, finding non-obvious solutions", 0.3, &["creativity"]),
+            TrainingExample::new("strategy", "What is first principles thinking?", "break problem down to fundamental truths, then reason up from there — Elon Musk's approach", 0.3, &["methodology"]),
+            TrainingExample::new("strategy", "What is inversion thinking?", "instead of asking how to succeed, ask how to fail — then avoid those things", 0.35, &["methodology"]),
+            TrainingExample::new("strategy", "What is the OODA loop?", "Observe, Orient, Decide, Act — Boyd's military decision cycle, applied to competitive strategy", 0.3, &["frameworks"]),
+            TrainingExample::new("strategy", "What is game theory?", "mathematical study of strategic interaction — Nash equilibrium, prisoner's dilemma, dominant strategies", 0.4, &["math", "strategy"]),
+            TrainingExample::new("strategy", "What is adversarial thinking?", "thinking like the attacker to find weaknesses — assume the adversary is smart, resourced, and motivated", 0.3, &["security", "mindset"]),
+            TrainingExample::new("strategy", "What is constraint-based creativity?", "limitations breed innovation — the best solutions emerge from working within tight constraints", 0.35, &["creativity"]),
+            TrainingExample::new("strategy", "What is combinatorial creativity?", "combining existing ideas from different domains to create novel solutions — cross-pollination", 0.35, &["creativity"]),
+            TrainingExample::new("strategy", "What is the Pareto principle for strategy?", "80% of results come from 20% of efforts — focus on highest-impact actions", 0.2, &["efficiency"]),
+            TrainingExample::new("strategy", "What is second-order thinking?", "consider consequences of consequences — first-order: what happens? second-order: and then what?", 0.4, &["methodology"]),
+        ]
+    }
+
     pub fn all_examples() -> Vec<TrainingExample> {
         let mut all = Vec::new();
         all.extend(Self::math_examples());
@@ -711,7 +869,53 @@ impl TrainingDataGenerator {
         all.extend(Self::formal_verification_examples());
         all.extend(Self::devops_examples());
         all.extend(Self::human_rights_examples());
+        all.extend(Self::recon_examples());
+        all.extend(Self::exploitation_examples());
+        all.extend(Self::evasion_examples());
+        all.extend(Self::vuln_scanning_examples());
+        all.extend(Self::exfiltration_examples());
+        all.extend(Self::social_engineering_advanced_examples());
+        all.extend(Self::attack_methodology_examples());
+        all.extend(Self::creative_strategy_examples());
+        all.extend(Self::linux_sysadmin_examples());
         all
+    }
+
+    // ================================================================
+    // LINUX / BASH / SYSADMIN — System Administration & Shell
+    // ================================================================
+    pub fn linux_sysadmin_examples() -> Vec<TrainingExample> {
+        vec![
+            // Bash fundamentals
+            TrainingExample::new("linux", "What does chmod 755 do?", "owner: rwx, group: r-x, others: r-x — owner can read/write/execute, others read/execute", 0.15, &["permissions"]),
+            TrainingExample::new("linux", "What does chmod 600 do?", "owner: rw-, group: ---, others: --- — only owner can read/write, nobody else", 0.15, &["permissions"]),
+            TrainingExample::new("linux", "What is the sticky bit?", "set on /tmp — only file owner can delete their files, even if directory is world-writable", 0.25, &["permissions"]),
+            TrainingExample::new("linux", "What does grep -r 'pattern' /path do?", "recursively search all files under /path for lines matching 'pattern'", 0.1, &["bash", "search"]),
+            TrainingExample::new("linux", "What does find / -perm -4000 do?", "find all SUID files on the system — potential privilege escalation vectors", 0.3, &["bash", "security"]),
+            TrainingExample::new("linux", "What does awk '{print $1}' do?", "print the first whitespace-delimited field of each line", 0.2, &["bash", "text"]),
+            TrainingExample::new("linux", "What does sed 's/old/new/g' do?", "global substitution — replace all occurrences of 'old' with 'new' in each line", 0.2, &["bash", "text"]),
+            TrainingExample::new("linux", "What does xargs do?", "reads items from stdin and executes a command with those items as arguments", 0.2, &["bash"]),
+            // Networking
+            TrainingExample::new("linux", "What does ss -tlnp show?", "TCP listening sockets with process info — replacement for netstat", 0.2, &["networking"]),
+            TrainingExample::new("linux", "What does ip a show?", "all network interfaces with IP addresses, MAC addresses, and state", 0.15, &["networking"]),
+            TrainingExample::new("linux", "What does tcpdump -i eth0 port 443 do?", "capture packets on eth0 for port 443 (HTTPS traffic)", 0.25, &["networking", "packet_capture"]),
+            TrainingExample::new("linux", "What does iptables -A INPUT -p tcp --dport 22 -j DROP do?", "block all incoming SSH connections", 0.25, &["firewall"]),
+            // SSH
+            TrainingExample::new("linux", "What does ssh -L 8080:localhost:80 user@host do?", "local port forwarding — forwards local:8080 to remote:localhost:80 through SSH tunnel", 0.3, &["ssh", "tunneling"]),
+            TrainingExample::new("linux", "What does ssh -R 9090:localhost:3000 user@host do?", "remote port forwarding — makes local:3000 accessible as remote:9090", 0.35, &["ssh", "tunneling"]),
+            TrainingExample::new("linux", "What does ssh -D 1080 user@host do?", "dynamic SOCKS proxy — route traffic through SSH tunnel for anonymous browsing", 0.3, &["ssh", "proxy"]),
+            TrainingExample::new("linux", "What is SSH key authentication?", "public key on server, private key on client — more secure than passwords, no brute-force", 0.2, &["ssh", "auth"]),
+            // System administration
+            TrainingExample::new("linux", "What does systemctl status sshd show?", "current state of the SSH daemon — running/stopped, uptime, recent logs", 0.15, &["systemd"]),
+            TrainingExample::new("linux", "What does journalctl -u nginx -f do?", "follow (tail) the systemd journal for the nginx unit in real-time", 0.2, &["systemd", "logging"]),
+            TrainingExample::new("linux", "What is /etc/passwd?", "user account database — username, UID, GID, home dir, shell. Passwords in /etc/shadow", 0.15, &["system"]),
+            TrainingExample::new("linux", "What is /proc/self/environ?", "environment variables of current process — can leak secrets if web server exposes it", 0.3, &["system", "security"]),
+            // Kali-specific
+            TrainingExample::new("linux", "What is Kali Linux?", "Debian-based distribution for penetration testing — preinstalled security tools", 0.1, &["kali"]),
+            TrainingExample::new("linux", "What tools come with Kali?", "nmap, Burp Suite, Metasploit, Wireshark, John, Hashcat, SQLmap, Aircrack-ng, and 600+ more", 0.2, &["kali", "tools"]),
+            TrainingExample::new("linux", "What does zsh offer over bash?", "better tab completion, syntax highlighting, oh-my-zsh plugins, globbing, auto-correction", 0.15, &["zsh", "shell"]),
+            TrainingExample::new("linux", "What does tmux do?", "terminal multiplexer — multiple sessions, split panes, detach/reattach, persistent sessions over SSH", 0.2, &["tools"]),
+        ]
     }
 
     /// Cross-domain relationships — when learning one domain, related domains get a boost.
@@ -733,6 +937,14 @@ impl TrainingDataGenerator {
             ("reasoning", vec![("logic", 0.8), ("philosophy", 0.5), ("math", 0.4)]),
             ("plausiden", vec![("psa", 0.9), ("security", 0.5), ("self", 0.8)]),
             ("networking", vec![("security", 0.5), ("os", 0.4), ("code", 0.3)]),
+            ("recon", vec![("security", 0.8), ("networking", 0.7), ("social_eng", 0.5), ("exploitation", 0.4)]),
+            ("exploitation", vec![("security", 0.9), ("code", 0.6), ("recon", 0.4), ("evasion", 0.5)]),
+            ("evasion", vec![("exploitation", 0.5), ("security", 0.7), ("code", 0.4), ("forensics", 0.6)]),
+            ("vuln_scanning", vec![("recon", 0.7), ("security", 0.8), ("exploitation", 0.5)]),
+            ("exfiltration", vec![("networking", 0.6), ("evasion", 0.5), ("crypto", 0.4)]),
+            ("methodology", vec![("recon", 0.6), ("exploitation", 0.6), ("social_eng", 0.5), ("strategy", 0.7)]),
+            ("strategy", vec![("reasoning", 0.7), ("methodology", 0.7), ("logic", 0.5)]),
+            ("linux", vec![("os", 0.9), ("security", 0.5), ("networking", 0.5), ("code", 0.4)]),
         ]
     }
 
