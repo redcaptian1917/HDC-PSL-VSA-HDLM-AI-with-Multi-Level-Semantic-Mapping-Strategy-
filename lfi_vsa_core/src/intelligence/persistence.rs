@@ -322,4 +322,37 @@ mod tests {
         store.mark_searched("rust");
         assert!(store.has_searched("rust"));
     }
+
+    #[test]
+    fn test_log_learning() {
+        let mut store = KnowledgeStore::new();
+        store.log_learning("Learned about HDC vectors");
+        store.log_learning("Learned about PSL axioms");
+        assert_eq!(store.learning_log.len(), 2);
+        assert!(store.learning_log[0].contains("HDC"));
+    }
+
+    #[test]
+    fn test_fact_update() {
+        let mut store = KnowledgeStore::new();
+        store.upsert_fact("name", "Alice");
+        assert_eq!(store.get_fact("name"), Some("Alice"));
+        store.upsert_fact("name", "Bob"); // Update
+        assert_eq!(store.get_fact("name"), Some("Bob"));
+        assert_eq!(store.facts.len(), 1, "Should update, not duplicate");
+    }
+
+    #[test]
+    fn test_default_path() {
+        let path = KnowledgeStore::default_path();
+        assert!(path.to_str().unwrap().contains("lfi"));
+    }
+
+    #[test]
+    fn test_store_serialization() {
+        let store = KnowledgeStore::new();
+        let json = serde_json::to_string(&store).expect("serialize");
+        let recovered: KnowledgeStore = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered.version, store.version);
+    }
 }

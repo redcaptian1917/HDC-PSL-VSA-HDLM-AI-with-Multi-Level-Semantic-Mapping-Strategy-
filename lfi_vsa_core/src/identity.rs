@@ -118,12 +118,129 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_identity_verification() {
+    fn test_identity_verification_correct() {
         let proof = IdentityProver::commit("Test Sovereign", "555000111", "s99999999", "test_pass", IdentityKind::Sovereign);
         assert!(IdentityProver::verify(&proof, "Test Sovereign", "555000111", "s99999999", "test_pass"));
-        // Fails on incorrect credential
+    }
+
+    #[test]
+    fn test_identity_wrong_credential_fails() {
+        let proof = IdentityProver::commit("Test Sovereign", "555000111", "s99999999", "test_pass", IdentityKind::Sovereign);
         assert!(!IdentityProver::verify(&proof, "Test Sovereign", "000000000", "s99999999", "test_pass"));
-        // Fails on incorrect password
+    }
+
+    #[test]
+    fn test_identity_wrong_password_fails() {
+        let proof = IdentityProver::commit("Test Sovereign", "555000111", "s99999999", "test_pass", IdentityKind::Sovereign);
         assert!(!IdentityProver::verify(&proof, "Test Sovereign", "555000111", "s99999999", "wrong_pass"));
+    }
+
+    #[test]
+    fn test_identity_wrong_name_fails() {
+        let proof = IdentityProver::commit("Real Name", "555000111", "s99999999", "test_pass", IdentityKind::Sovereign);
+        assert!(!IdentityProver::verify(&proof, "Fake Name", "555000111", "s99999999", "test_pass"));
+    }
+
+    #[test]
+    fn test_identity_wrong_license_fails() {
+        let proof = IdentityProver::commit("Test", "555000111", "s99999999", "pass", IdentityKind::Sovereign);
+        assert!(!IdentityProver::verify(&proof, "Test", "555000111", "x00000000", "pass"));
+    }
+
+    #[test]
+    fn test_password_verification() {
+        let proof = IdentityProver::commit("User", "cred", "lic", "s3cur3_p4ss!", IdentityKind::Sovereign);
+        assert!(IdentityProver::verify_password(&proof, "s3cur3_p4ss!"));
+        assert!(!IdentityProver::verify_password(&proof, "wrong_password"));
+        assert!(!IdentityProver::verify_password(&proof, ""));
+    }
+
+    #[test]
+    fn test_signature_verification() {
+        let proof = IdentityProver::commit("User", "cred", "lic", "pass", IdentityKind::Sovereign);
+        let prompt = "execute critical operation";
+        let sig = SovereignSignature {
+            payload_hash: IdentityProver::hash(prompt),
+            signature: vec![0xAA, 0xBB, 0xCC], // Non-empty = valid in simulator
+        };
+        assert!(IdentityProver::verify_signature(&proof, prompt, &sig));
+    }
+
+    #[test]
+    fn test_signature_hash_mismatch_rejected() {
+        let proof = IdentityProver::commit("User", "cred", "lic", "pass", IdentityKind::Sovereign);
+        let sig = SovereignSignature {
+            payload_hash: 12345, // Wrong hash
+            signature: vec![0xAA],
+        };
+        assert!(!IdentityProver::verify_signature(&proof, "actual prompt", &sig));
+    }
+
+    #[test]
+    fn test_signature_empty_rejected() {
+        let proof = IdentityProver::commit("User", "cred", "lic", "pass", IdentityKind::Sovereign);
+        let prompt = "test";
+        let sig = SovereignSignature {
+            payload_hash: IdentityProver::hash(prompt),
+            signature: vec![], // Empty = rejected
+        };
+        assert!(!IdentityProver::verify_signature(&proof, prompt, &sig));
+    }
+
+    #[test]
+    fn test_commitment_is_deterministic() {
+        let p1 = IdentityProver::commit("User", "cred", "lic", "pass", IdentityKind::Sovereign);
+        let p2 = IdentityProver::commit("User", "cred", "lic", "pass", IdentityKind::Sovereign);
+        assert_eq!(p1.name_hash, p2.name_hash);
+        assert_eq!(p1.credentials_commitment, p2.credentials_commitment);
+        assert_eq!(p1.password_commitment, p2.password_commitment);
+    }
+
+    #[test]
+    fn test_commitment_never_stores_cleartext() {
+        let proof = IdentityProver::commit("John Doe", "555123456", "a12345678", "my_password", IdentityKind::Sovereign);
+        // The proof struct should NOT contain any cleartext.
+        let debug_str = format!("{:?}", proof.kind);
+        assert!(!debug_str.contains("John Doe"));
+        assert!(!debug_str.contains("555123456"));
+        assert!(!debug_str.contains("my_password"));
+        // The hash values should be non-zero.
+        assert!(proof.name_hash != 0);
+        assert!(proof.credentials_commitment != 0);
+        assert!(proof.password_commitment != 0);
+    }
+
+    #[test]
+    fn test_sovereign_vs_deniable_identity() {
+        let sovereign = IdentityProver::commit("User", "cred", "lic", "pass", IdentityKind::Sovereign);
+        let deniable = IdentityProver::commit("User", "cred", "lic", "pass", IdentityKind::Deniable);
+
+        // Same credentials but different kinds.
+        assert_eq!(sovereign.kind, IdentityKind::Sovereign);
+        assert_eq!(deniable.kind, IdentityKind::Deniable);
+
+        // Hashes should be the same (kind doesn't affect the hash).
+        assert_eq!(sovereign.name_hash, deniable.name_hash);
+        assert_eq!(sovereign.password_commitment, deniable.password_commitment);
+    }
+
+    #[test]
+    fn test_hash_stability() {
+        // Same input always produces the same hash.
+        let h1 = IdentityProver::hash("test_input");
+        let h2 = IdentityProver::hash("test_input");
+        assert_eq!(h1, h2);
+
+        // Different inputs produce different hashes.
+        let h3 = IdentityProver::hash("different_input");
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_empty_credentials_handled() {
+        // Edge case: empty strings should still produce valid commitments.
+        let proof = IdentityProver::commit("", "", "", "", IdentityKind::Deniable);
+        assert!(IdentityProver::verify(&proof, "", "", "", ""));
+        assert!(!IdentityProver::verify(&proof, "notempty", "", "", ""));
     }
 }

@@ -33,6 +33,7 @@ pub mod inference_engine;
 pub mod data_ingestor;
 pub mod qos;
 pub mod crypto_epistemology;
+pub mod reasoning_provenance;
 pub mod diag;
 pub mod data_ingestion;
 
@@ -55,3 +56,7 @@ pub use identity::{IdentityProver, SovereignProof};
 pub use hid::{HidDevice, HidCommand};
 pub use agent::LfiAgent;
 pub use hmas::{MicroSupervisor, AgentRole, AgentTemplate};
+pub use reasoning_provenance::{
+    ProvenanceEngine, ProvenanceKind, ProvenancedExplanation,
+    TraceArena, TraceEntry, TraceId, ConclusionId, InferenceSource,
+};

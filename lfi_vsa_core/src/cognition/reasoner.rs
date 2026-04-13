@@ -18,6 +18,7 @@ use crate::hdc::error::HdcError;
 use crate::cognition::planner::{Plan, Planner};
 use crate::cognition::metacognitive::{MetaCognitiveProfiler, CognitiveDomain, PerformanceRecord};
 use crate::cognition::knowledge_compiler::KnowledgeCompiler;
+use crate::reasoning_provenance::{TraceArena, TraceId, ConclusionId, InferenceSource};
 
 /// The active cognitive mode.
 #[derive(Debug, Clone, PartialEq)]
@@ -449,6 +450,93 @@ impl CognitiveCore {
         self.fast_memory.associate(&input_vector, &result.output)?;
 
         Ok(result)
+    }
+
+    /// Think with reasoning provenance recording.
+    ///
+    /// Identical to [`think`] but records a trace entry documenting whether
+    /// System 1 (fast) or System 2 (deep) was used, the confidence, and
+    /// the intent detected. Links to `parent_trace` for chain continuity.
+    ///
+    /// System 1 fast-path results get lightweight traces (single entry).
+    /// System 2 deliberative results get full traces with plan step details.
+    pub fn think_with_provenance(
+        &mut self,
+        input: &str,
+        arena: &mut TraceArena,
+        parent_trace: Option<TraceId>,
+        conclusion_id: Option<ConclusionId>,
+    ) -> Result<(ThoughtResult, TraceId), HdcError> {
+        let result = self.think(input)?;
+
+        let trace_id = match &result.mode {
+            CognitiveMode::Fast => {
+                // System 1: lightweight trace — single entry.
+                arena.record_step(
+                    parent_trace,
+                    InferenceSource::System1FastPath {
+                        similarity_score: result.confidence,
+                    },
+                    vec![format!("input:\"{}\"", &input[..input.len().min(40)])],
+                    result.confidence,
+                    conclusion_id,
+                    format!("System 1 fast recall: {} (conf={:.4})",
+                        result.explanation, result.confidence),
+                    0,
+                )
+            }
+            CognitiveMode::Deep => {
+                // System 2: record the root trace, then sub-traces for plan steps.
+                let root_trace = arena.record_step(
+                    parent_trace,
+                    InferenceSource::System2Deliberation {
+                        iterations: result.plan.as_ref().map(|p| p.steps.len()).unwrap_or(0),
+                    },
+                    vec![format!("input:\"{}\"", &input[..input.len().min(40)])],
+                    result.confidence,
+                    conclusion_id,
+                    format!("System 2 deliberation: {} (conf={:.4})",
+                        result.explanation, result.confidence),
+                    0,
+                );
+
+                // Record each plan step as a child trace.
+                if let Some(ref plan) = result.plan {
+                    for (i, step) in plan.steps.iter().enumerate() {
+                        arena.record_step(
+                            Some(root_trace),
+                            InferenceSource::System2Deliberation { iterations: 1 },
+                            vec![format!("plan_step_{}", i)],
+                            1.0 - step.complexity as f64,
+                            None,
+                            format!("Plan step {}: {} (complexity={:.2})",
+                                i, step.description, step.complexity),
+                            0,
+                        );
+                    }
+                }
+
+                // Record knowledge compilation if it happened.
+                if result.confidence > 0.7 {
+                    arena.record_step(
+                        Some(root_trace),
+                        InferenceSource::KnowledgeCompilation,
+                        vec!["sys2_to_sys1".into()],
+                        result.confidence,
+                        None,
+                        "Knowledge compilation: System 2 result cached to System 1".into(),
+                        0,
+                    );
+                }
+
+                root_trace
+            }
+        };
+
+        debuglog!("CognitiveCore::think_with_provenance: mode={:?}, trace_id={}, conf={:.4}",
+            result.mode, trace_id, result.confidence);
+
+        Ok((result, trace_id))
     }
 
     /// Process a conversational exchange: understand, respond, learn.
@@ -1058,6 +1146,71 @@ mod tests {
 
         // Context window should have 2 entries
         assert_eq!(core.context_window.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_think_with_provenance_system2() -> Result<(), HdcError> {
+        use crate::reasoning_provenance::TraceArena;
+
+        let mut core = CognitiveCore::new()?;
+        let mut arena = TraceArena::new();
+
+        // Novel input → System 2 deep mode.
+        let (result, trace_id) = core.think_with_provenance(
+            "design a completely new cryptographic protocol for post-quantum voting",
+            &mut arena,
+            None,
+            Some(100),
+        )?;
+
+        assert_eq!(result.mode, CognitiveMode::Deep);
+        assert!(arena.len() >= 1, "Should have at least the root trace");
+
+        let entry = arena.get(trace_id).expect("root trace should exist");
+        assert!(
+            matches!(entry.source, InferenceSource::System2Deliberation { .. }),
+            "Deep mode should produce System2Deliberation trace"
+        );
+
+        // Should have child traces for plan steps.
+        let chain = arena.trace_chain(trace_id);
+        assert_eq!(chain.len(), 1, "Root trace has no parent");
+
+        // Arena should have root + plan steps + possibly compilation.
+        assert!(arena.len() > 1, "Should have plan step sub-traces, got {}", arena.len());
+        Ok(())
+    }
+
+    #[test]
+    fn test_think_with_provenance_system1() -> Result<(), HdcError> {
+        use crate::reasoning_provenance::TraceArena;
+
+        let mut core = CognitiveCore::new()?;
+        let mut arena = TraceArena::new();
+
+        // First call: deep mode (unfamiliar).
+        let _ = core.think("familiar task for provenance test")?;
+
+        // Second call: fast mode (recognized from memory).
+        let (result, trace_id) = core.think_with_provenance(
+            "familiar task for provenance test",
+            &mut arena,
+            None,
+            Some(200),
+        )?;
+
+        assert_eq!(result.mode, CognitiveMode::Fast);
+
+        let entry = arena.get(trace_id).expect("trace should exist");
+        assert!(
+            matches!(entry.source, InferenceSource::System1FastPath { .. }),
+            "Fast mode should produce System1FastPath trace, got {:?}",
+            entry.source
+        );
+
+        // System 1 = lightweight: just 1 trace entry.
+        assert_eq!(arena.len(), 1, "System 1 should produce exactly 1 lightweight trace");
         Ok(())
     }
 }

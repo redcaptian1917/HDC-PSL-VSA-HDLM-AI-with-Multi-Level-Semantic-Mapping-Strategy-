@@ -257,8 +257,37 @@ mod tests {
         };
         let auditor = QosAuditor::with_policy(policy);
         let report = auditor.audit(0.995);
-        // With high axiom rate, PSL should pass; other checks depend on real hardware
         let psl_check = report.checks.iter().find(|c| c.name.contains("PSL")).unwrap();
         assert!(psl_check.passed, "High axiom rate should pass custom policy PSL check");
+    }
+
+    #[test]
+    fn test_qos_report_structure() {
+        let auditor = QosAuditor::new();
+        let report = auditor.audit(1.0);
+        // Should have at least 6 checks.
+        assert!(report.checks.len() >= 6, "QoS should run at least 6 checks, got {}", report.checks.len());
+        // Every check should have a name and value.
+        for check in &report.checks {
+            assert!(!check.name.is_empty());
+            assert!(!check.value.is_empty());
+            assert!(!check.threshold.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_qos_zero_axiom_rate() {
+        let auditor = QosAuditor::new();
+        let report = auditor.audit(0.0);
+        assert!(report.critical_failures > 0, "Zero axiom rate must be critical");
+    }
+
+    #[test]
+    fn test_qos_policy_serialization() {
+        let policy = QosPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        let recovered: QosPolicy = serde_json::from_str(&json).unwrap();
+        assert!((policy.min_axiom_pass_rate - recovered.min_axiom_pass_rate).abs() < 0.001);
+        assert!((policy.max_cpu_temp_c - recovered.max_cpu_temp_c).abs() < 0.001);
     }
 }

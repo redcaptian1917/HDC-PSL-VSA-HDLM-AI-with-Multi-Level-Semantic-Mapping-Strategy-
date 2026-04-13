@@ -115,3 +115,135 @@ pub struct AgentTemplate {
     pub role: AgentRole,
     pub trust_tier: f64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::psl::axiom::DimensionalityAxiom;
+
+    #[test]
+    fn test_agent_creation() {
+        let agent = MicroSupervisor::new(AgentRole::Architect);
+        assert_eq!(agent.role, AgentRole::Architect);
+        assert!((agent.consensus_threshold - 0.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_vote_agree() {
+        let agent = MicroSupervisor::new(AgentRole::Auditor);
+        let proposal = Proposal {
+            id: "test_proposal".into(),
+            payload_hv: HyperMemory::generate_seed(DIM_PROLETARIAT),
+            timestamp: 0,
+        };
+        let vote = agent.vote(&proposal, true).expect("vote should succeed");
+        // Agree vote should be similar to agree anchor bound with proposal.
+        let expected = agent.agree_anchor.bind(&proposal.payload_hv).unwrap();
+        let sim = vote.similarity(&expected);
+        assert!((sim - 1.0).abs() < 0.01, "Agree vote should match expected binding");
+    }
+
+    #[test]
+    fn test_vote_disagree() {
+        let agent = MicroSupervisor::new(AgentRole::Worker);
+        let proposal = Proposal {
+            id: "bad_proposal".into(),
+            payload_hv: HyperMemory::generate_seed(DIM_PROLETARIAT),
+            timestamp: 0,
+        };
+        let vote = agent.vote(&proposal, false).expect("vote should succeed");
+        let expected = agent.disagree_anchor.bind(&proposal.payload_hv).unwrap();
+        let sim = vote.similarity(&expected);
+        assert!((sim - 1.0).abs() < 0.01, "Disagree vote should match expected binding");
+    }
+
+    #[test]
+    fn test_consensus_resolution() {
+        let agent = MicroSupervisor::new(AgentRole::Architect);
+        let proposal = Proposal {
+            id: "consensus_test".into(),
+            payload_hv: HyperMemory::generate_seed(DIM_PROLETARIAT),
+            timestamp: 0,
+        };
+
+        // 3 agree votes.
+        let votes: Vec<HyperMemory> = (0..3)
+            .map(|_| agent.vote(&proposal, true).unwrap())
+            .collect();
+
+        let agreement = MicroSupervisor::resolve_consensus(&votes, &proposal, &agent.agree_anchor)
+            .expect("consensus should resolve");
+
+        debuglog!("test_consensus: agreement={:.4}", agreement);
+        // With all-agree votes, consensus should be detectable.
+        assert!(agreement.is_finite());
+    }
+
+    #[test]
+    fn test_empty_votes_returns_zero() {
+        let proposal = Proposal {
+            id: "empty".into(),
+            payload_hv: HyperMemory::generate_seed(DIM_PROLETARIAT),
+            timestamp: 0,
+        };
+        let agree_anchor = HyperMemory::from_string("CONSENSUS_AGREE_PROCEED", DIM_PROLETARIAT);
+        let result = MicroSupervisor::resolve_consensus(&[], &proposal, &agree_anchor).unwrap();
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_verify_execution_safe_code() {
+        let agent = MicroSupervisor::new(AgentRole::Auditor);
+        assert!(agent.verify_execution("fn main() { let x = 5; }"));
+        assert!(agent.verify_execution("result.map_err(|e| format!(\"{}\", e))?;"));
+    }
+
+    #[test]
+    fn test_verify_execution_rejects_unwrap() {
+        let agent = MicroSupervisor::new(AgentRole::Auditor);
+        // verify_execution checks for the literal strings "unwrap()" and "expect()"
+        assert!(!agent.verify_execution("let val = something.unwrap()"));
+        assert!(!agent.verify_execution("value.expect()"));
+    }
+
+    #[test]
+    fn test_historian_archive_and_recall() {
+        let mut historian = Historian::new();
+        let state = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        historian.record_synthesis(state.clone());
+        assert_eq!(historian.archive.len(), 1);
+
+        let (archive_sim, neg_sim) = historian.retrieve_context(&state);
+        assert!(archive_sim > 0.5, "Should find archived state");
+        assert!(neg_sim.abs() < 0.01, "No negative knowledge yet");
+    }
+
+    #[test]
+    fn test_historian_negative_knowledge() {
+        let mut historian = Historian::new();
+        let failure = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        historian.condemn_failure(failure.clone());
+        assert_eq!(historian.negative_knowledge.len(), 1);
+
+        let (_, neg_sim) = historian.retrieve_context(&failure);
+        assert!(neg_sim > 0.5, "Should detect condemned pattern");
+    }
+
+    #[test]
+    fn test_agent_role_serialization() {
+        let json = serde_json::to_string(&AgentRole::Architect).unwrap();
+        let recovered: AgentRole = serde_json::from_str(&json).unwrap();
+        assert_eq!(recovered, AgentRole::Architect);
+    }
+
+    #[test]
+    fn test_deliberate_produces_decomposition() {
+        let agent = MicroSupervisor::new(AgentRole::Architect);
+        let mut supervisor = PslSupervisor::new();
+        supervisor.register_axiom(Box::new(DimensionalityAxiom));
+
+        let steps = agent.deliberate_and_decompose("implement security audit", &supervisor)
+            .expect("deliberation should succeed");
+        assert!(steps.len() >= 3, "Should produce at least 3 decomposed steps");
+    }
+}

@@ -435,4 +435,40 @@ mod tests {
         let learnings2 = learner.drain_recent_learnings();
         assert!(learnings2.is_empty());
     }
+
+    #[test]
+    fn test_shared_knowledge_thread_safe() {
+        let store = KnowledgeStore::new();
+        let learner = BackgroundLearner::new(store);
+        let shared = learner.shared_knowledge();
+        // Should be able to lock without panic.
+        let guard = shared.lock();
+        assert!(guard.research_queue.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_research_topics() {
+        let store = KnowledgeStore::new();
+        let learner = BackgroundLearner::new(store);
+        learner.enqueue_research("topic_a");
+        learner.enqueue_research("topic_b");
+        learner.enqueue_research("topic_c");
+
+        let guard = learner.shared_knowledge();
+        let locked = guard.lock();
+        assert_eq!(locked.research_queue.len(), 3);
+    }
+
+    #[test]
+    fn test_recent_learning_structure() {
+        let learning = RecentLearning {
+            topic: "security".into(),
+            summary: "Input validation prevents injection".into(),
+            trust: 0.95,
+            source_count: 3,
+        };
+        assert_eq!(learning.topic, "security");
+        assert!(learning.trust > 0.9);
+        assert_eq!(learning.source_count, 3);
+    }
 }

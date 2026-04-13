@@ -33,6 +33,7 @@
 use crate::memory_bus::HyperMemory;
 #[cfg(test)]
 use crate::memory_bus::DIM_PROLETARIAT;
+use crate::reasoning_provenance::{ProvenanceEngine, ProvenanceKind, ConclusionId};
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
 use tracing::info;
@@ -199,6 +200,49 @@ impl EpistemicLedger {
         sim
     }
 
+    /// COMMIT WITH PROVENANCE ENFORCEMENT.
+    ///
+    /// Commits a belief and tags it with its provenance status. If a
+    /// `ProvenanceEngine` and `ConclusionId` are provided, the ledger
+    /// checks whether a traced derivation exists for this belief.
+    ///
+    /// Returns `(commitment_index, ProvenanceKind)`.
+    ///
+    /// THIS IS THE CORE ENFORCEMENT POINT:
+    ///   - If a traced derivation exists → tagged TracedDerivation
+    ///   - If NOT → tagged ReconstructedRationalization
+    ///   - The tag is stored in the commitment label for audit
+    ///   - The system CANNOT present a reconstruction as a trace
+    pub fn commit_belief_with_provenance(
+        &mut self,
+        belief: &HyperMemory,
+        label: &str,
+        provenance: &ProvenanceEngine,
+        conclusion_id: ConclusionId,
+    ) -> (usize, ProvenanceKind) {
+        debuglog!("EpistemicLedger::commit_belief_with_provenance: label='{}', cid={}",
+            label, conclusion_id);
+
+        let explanation = provenance.explain_conclusion(conclusion_id);
+        let kind = explanation.kind.clone();
+
+        // Tag the label with provenance status so it's visible in the audit log.
+        let tagged_label = match &kind {
+            ProvenanceKind::TracedDerivation => {
+                info!("// CRYPTO-EPISTEMOLOGY: Belief '{}' has TRACED derivation (depth={}, steps={})",
+                    label, explanation.depth, explanation.trace_chain.len());
+                format!("{} [TRACED:depth={},steps={}]", label, explanation.depth, explanation.trace_chain.len())
+            }
+            ProvenanceKind::ReconstructedRationalization { reason } => {
+                info!("// CRYPTO-EPISTEMOLOGY: Belief '{}' is RECONSTRUCTED — {}", label, reason);
+                format!("{} [RECONSTRUCTED:{}]", label, reason)
+            }
+        };
+
+        let idx = self.commit_belief(belief, &tagged_label);
+        (idx, kind)
+    }
+
     /// Number of commitments in the ledger.
     pub fn commitment_count(&self) -> usize {
         self.commitments.len()
@@ -333,6 +377,55 @@ mod tests {
         let consistency = EpistemicLedger::check_consistency(&witness_a, &witness_b);
         assert!((consistency - 1.0).abs() < 0.001,
             "Identical beliefs should have consistency=1.0 (got {:.4})", consistency);
+    }
+
+    #[test]
+    fn test_provenance_enforcement_traced() {
+        use crate::reasoning_provenance::{ProvenanceEngine, InferenceSource};
+
+        let mut ledger = EpistemicLedger::new();
+        let mut provenance = ProvenanceEngine::new();
+        let belief = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let cid: ConclusionId = 42;
+
+        // Record a traced derivation for this conclusion.
+        provenance.arena.record_step(
+            None,
+            InferenceSource::ExternalAssertion { source: "test".into() },
+            vec!["premise".into()],
+            0.95,
+            Some(cid),
+            "Test derivation".into(),
+            0,
+        );
+
+        let (idx, kind) = ledger.commit_belief_with_provenance(
+            &belief, "test_belief", &provenance, cid,
+        );
+
+        assert_eq!(kind, ProvenanceKind::TracedDerivation,
+            "Belief with stored trace should be tagged TracedDerivation");
+        assert!(ledger.commitments[idx].label.contains("TRACED"),
+            "Label should contain TRACED tag");
+    }
+
+    #[test]
+    fn test_provenance_enforcement_reconstructed() {
+        use crate::reasoning_provenance::ProvenanceEngine;
+
+        let mut ledger = EpistemicLedger::new();
+        let provenance = ProvenanceEngine::new(); // Empty — no traces
+        let belief = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let cid: ConclusionId = 999; // No trace for this
+
+        let (idx, kind) = ledger.commit_belief_with_provenance(
+            &belief, "untraced_belief", &provenance, cid,
+        );
+
+        assert!(matches!(kind, ProvenanceKind::ReconstructedRationalization { .. }),
+            "Belief without stored trace should be tagged ReconstructedRationalization");
+        assert!(ledger.commitments[idx].label.contains("RECONSTRUCTED"),
+            "Label should contain RECONSTRUCTED tag");
     }
 
     #[test]

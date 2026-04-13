@@ -87,9 +87,35 @@ mod tests {
     fn test_project_different_data_produces_different_vectors() -> Result<(), HdcError> {
         let hv1 = BinaryTransducer::project(b"alpha")?;
         let hv2 = BinaryTransducer::project(b"beta")?;
-        // Different content should produce quasi-orthogonal vectors
         let sim = hv1.similarity(&hv2)?;
         assert!(sim.abs() < 0.3, "Different data should be quasi-orthogonal, sim={}", sim);
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_consistent_dimensions() -> Result<(), HdcError> {
+        // BinaryTransducer may use random components internally,
+        // so we verify consistent dimensionality rather than exact determinism.
+        let data = b"consistency test";
+        let hv1 = BinaryTransducer::project(data)?;
+        let hv2 = BinaryTransducer::project(data)?;
+        assert_eq!(hv1.dim(), hv2.dim());
+        assert_eq!(hv1.dim(), 10000);
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_single_byte() -> Result<(), HdcError> {
+        let hv = BinaryTransducer::project(&[0xFF])?;
+        assert_eq!(hv.dim(), 10000);
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_large_data() -> Result<(), HdcError> {
+        let data: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
+        let hv = BinaryTransducer::project(&data)?;
+        assert_eq!(hv.dim(), 10000);
         Ok(())
     }
 }

@@ -88,3 +88,103 @@ impl SensoryEncoder {
         HyperMemory::from_string(&hex_string, DIM_PROLETARIAT)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sensory_cortex_creation() -> Result<(), HdcError> {
+        let cortex = SensoryCortex::new()?;
+        assert_eq!(cortex.group_base.len(), 7, "Should have 7 sensor groups");
+        Ok(())
+    }
+
+    #[test]
+    fn test_encode_frame() -> Result<(), HdcError> {
+        let cortex = SensoryCortex::new()?;
+        let frame = SensoryFrame {
+            group: SensorGroup::IMU,
+            timestamp: 12345,
+            raw_signal: vec![1.0, 2.0, 3.0],
+        };
+        let encoded = cortex.encode_frame(&frame)?;
+        assert_eq!(encoded.dim(), 10000);
+        Ok(())
+    }
+
+    #[test]
+    fn test_different_signals_different_encodings() -> Result<(), HdcError> {
+        let cortex = SensoryCortex::new()?;
+        let f1 = SensoryFrame { group: SensorGroup::Visual, timestamp: 0, raw_signal: vec![1.0] };
+        let f2 = SensoryFrame { group: SensorGroup::Visual, timestamp: 0, raw_signal: vec![2.0] };
+        let e1 = cortex.encode_frame(&f1)?;
+        let e2 = cortex.encode_frame(&f2)?;
+        let sim = e1.similarity(&e2)?;
+        assert!(sim < 0.9, "Different signals should produce different encodings: {:.4}", sim);
+        Ok(())
+    }
+
+    #[test]
+    fn test_different_groups_different_bases() -> Result<(), HdcError> {
+        let cortex = SensoryCortex::new()?;
+        let same_signal = vec![1.0, 2.0];
+        let f1 = SensoryFrame { group: SensorGroup::Auditory, timestamp: 0, raw_signal: same_signal.clone() };
+        let f2 = SensoryFrame { group: SensorGroup::RF, timestamp: 0, raw_signal: same_signal };
+        let e1 = cortex.encode_frame(&f1)?;
+        let e2 = cortex.encode_frame(&f2)?;
+        let sim = e1.similarity(&e2)?;
+        // Different groups bind with different base vectors → should differ.
+        assert!(sim < 0.9, "Different sensor groups should produce different encodings: {:.4}", sim);
+        Ok(())
+    }
+
+    #[test]
+    fn test_serial_encoder() {
+        let data = vec![0xAA, 0xBB, 0xCC, 0xDD];
+        let encoded = SensoryEncoder::encode_serial(&data);
+        assert_eq!(encoded.dimensions, DIM_PROLETARIAT);
+
+        // Same data should produce same encoding.
+        let encoded2 = SensoryEncoder::encode_serial(&data);
+        let sim = encoded.similarity(&encoded2);
+        assert!((sim - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_multimodal_bind_event() -> Result<(), Box<dyn std::error::Error>> {
+        let frames = vec![
+            MultimodalFrame {
+                modality: Modality::Audio,
+                timestamp: 100,
+                signal_hv: HyperMemory::generate_seed(DIM_PROLETARIAT),
+            },
+            MultimodalFrame {
+                modality: Modality::Video,
+                timestamp: 100,
+                signal_hv: HyperMemory::generate_seed(DIM_PROLETARIAT),
+            },
+        ];
+        let bound = MultimodalFrame::bind_event(&frames)?;
+        assert_eq!(bound.dimensions, DIM_PROLETARIAT);
+        Ok(())
+    }
+
+    #[test]
+    fn test_multimodal_empty_fails() {
+        let result = MultimodalFrame::bind_event(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sensor_group_equality() {
+        assert_eq!(SensorGroup::Biometric, SensorGroup::Biometric);
+        assert_ne!(SensorGroup::IMU, SensorGroup::RF);
+    }
+
+    #[test]
+    fn test_modality_equality() {
+        assert_eq!(Modality::Audio, Modality::Audio);
+        assert_ne!(Modality::Audio, Modality::Video);
+    }
+}

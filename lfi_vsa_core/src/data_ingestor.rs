@@ -349,12 +349,38 @@ mod tests {
 
     #[test]
     fn test_lean_proof_optional_fields() {
-        // imports and tags should be optional (default to empty)
         let json = r#"{"name":"minimal","statement":"True","proof":"trivial"}"#;
         let parsed: Result<LeanProofPayload, _> = serde_json::from_str(json);
         assert!(parsed.is_ok(), "Should deserialize with missing optional fields");
         let p = parsed.unwrap();
         assert!(p.imports.is_empty());
         assert!(p.tags.is_empty());
+    }
+
+    #[test]
+    fn test_trainer_creation() {
+        let trainer = VsaTrainer::new();
+        assert_eq!(trainer.memory.dimensions, DIM_PROLETARIAT);
+    }
+
+    #[test]
+    fn test_learn_association() {
+        let mut trainer = VsaTrainer::new();
+        let result = trainer.learn_association("hello", "greeting", true);
+        assert!(result.is_ok(), "Association should succeed");
+    }
+
+    #[test]
+    fn test_learn_untrusted_association() {
+        let mut trainer = VsaTrainer::new();
+        let result = trainer.learn_association("spam", "junk", false);
+        assert!(result.is_ok(), "Untrusted association should succeed (but not trusted)");
+    }
+
+    #[test]
+    fn test_nonexistent_file_fails() {
+        let mut trainer = VsaTrainer::new();
+        let result = trainer.train_on_intents("/nonexistent/file.jsonl");
+        assert!(result.is_err(), "Nonexistent file should fail gracefully");
     }
 }

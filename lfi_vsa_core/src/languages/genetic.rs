@@ -96,7 +96,80 @@ mod tests {
         }
         optimizer.evolve();
         assert_eq!(optimizer.population.len(), 10);
-        // The best gene from previous generation should be present (elite)
         assert!(optimizer.population[0].genes.len() == 5);
+    }
+
+    #[test]
+    fn test_population_initialization() {
+        let opt = GeneticOptimizer::new(20, 8);
+        assert_eq!(opt.population.len(), 20);
+        for c in &opt.population {
+            assert_eq!(c.genes.len(), 8);
+            assert_eq!(c.fitness, 0.0);
+            for &g in &c.genes {
+                assert!(g >= 0.0 && g <= 1.0, "Genes should be in [0,1]");
+            }
+        }
+    }
+
+    #[test]
+    fn test_fitness_update() {
+        let mut opt = GeneticOptimizer::new(5, 3);
+        opt.update_fitness(0, 0.95);
+        assert!((opt.population[0].fitness - 0.95).abs() < 0.001);
+
+        // Out of bounds index should not panic.
+        opt.update_fitness(999, 1.0);
+    }
+
+    #[test]
+    fn test_best_genes() {
+        let mut opt = GeneticOptimizer::new(5, 3);
+        for i in 0..5 {
+            opt.update_fitness(i, (i + 1) as f64);
+        }
+        opt.evolve(); // Sort by fitness, highest first
+        let best = opt.best_genes().expect("should have best");
+        assert_eq!(best.len(), 3);
+    }
+
+    #[test]
+    fn test_elite_preservation() {
+        let mut opt = GeneticOptimizer::new(10, 4);
+        // Give the first chromosome maximum fitness.
+        opt.update_fitness(0, 100.0);
+        let elite_genes = opt.population[0].genes.clone();
+        opt.evolve();
+        // After evolution, the elite should be preserved (first in sorted order).
+        assert_eq!(opt.population[0].genes, elite_genes,
+            "Best chromosome should survive evolution");
+    }
+
+    #[test]
+    fn test_multiple_evolution_cycles() {
+        let mut opt = GeneticOptimizer::new(20, 6);
+        for gen in 0..10 {
+            for i in 0..20 {
+                opt.update_fitness(i, (i as f64) * (gen as f64 + 1.0));
+            }
+            opt.evolve();
+        }
+        // Population should still be valid after 10 generations.
+        assert_eq!(opt.population.len(), 20);
+        for c in &opt.population {
+            assert_eq!(c.genes.len(), 6);
+            for &g in &c.genes {
+                assert!(g >= 0.0 && g <= 1.0, "Gene mutation should stay in bounds");
+            }
+        }
+    }
+
+    #[test]
+    fn test_small_population() {
+        // Minimum viable population: 5 (elite = 1).
+        let mut opt = GeneticOptimizer::new(5, 2);
+        opt.update_fitness(0, 1.0);
+        opt.evolve();
+        assert_eq!(opt.population.len(), 5);
     }
 }

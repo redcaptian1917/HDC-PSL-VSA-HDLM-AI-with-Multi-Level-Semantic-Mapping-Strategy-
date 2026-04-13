@@ -71,3 +71,60 @@ impl MaterialAuditor {
         45.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_stats_returns_valid_data() {
+        let stats = MaterialAuditor::get_stats(0.05, 0.95);
+        assert!(stats.ram_available_mb > 0, "RAM should be detectable");
+        assert!(stats.cpu_temp_c > 0.0, "Temperature should be positive");
+        assert!((stats.vsa_orthogonality - 0.05).abs() < 0.001);
+        assert!((stats.axiom_pass_rate - 0.95).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_throttle_detection() {
+        // Temperature > 80 should trigger throttle.
+        let stats_hot = SubstrateStats {
+            ram_available_mb: 4000,
+            cpu_temp_c: 85.0,
+            is_throttled: 85.0 > 80.0,
+            vsa_orthogonality: 0.05,
+            axiom_pass_rate: 1.0,
+            logic_density: 0.0,
+        };
+        assert!(stats_hot.is_throttled);
+
+        let stats_cool = SubstrateStats {
+            cpu_temp_c: 50.0,
+            is_throttled: 50.0 > 80.0,
+            ..stats_hot
+        };
+        assert!(!stats_cool.is_throttled);
+    }
+
+    #[test]
+    fn test_stats_serialization() {
+        let stats = MaterialAuditor::get_stats(0.03, 0.99);
+        let json = serde_json::to_string(&stats).unwrap();
+        let recovered: SubstrateStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats.ram_available_mb, recovered.ram_available_mb);
+        assert!((stats.axiom_pass_rate - recovered.axiom_pass_rate).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_get_logs_returns_entries() {
+        let logs = get_logs();
+        assert!(!logs.is_empty(), "Should return at least one log entry");
+        assert!(logs[0].contains("AUDIT"));
+    }
+
+    #[test]
+    fn test_read_memory_returns_positive() {
+        let ram = MaterialAuditor::read_available_memory();
+        assert!(ram > 0, "Available memory should be positive: {}", ram);
+    }
+}

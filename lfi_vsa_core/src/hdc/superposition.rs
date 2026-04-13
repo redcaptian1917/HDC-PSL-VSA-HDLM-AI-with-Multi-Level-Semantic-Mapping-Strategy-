@@ -131,4 +131,85 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_empty_storage() {
+        let storage = SuperpositionStorage::new();
+        assert_eq!(storage.signal_count, 0);
+    }
+
+    #[test]
+    fn test_commit_real_increments_count() -> Result<(), HdcError> {
+        let mut storage = SuperpositionStorage::new();
+        let sig = BipolarVector::new_random()?;
+        storage.commit_real(&sig)?;
+        assert_eq!(storage.signal_count, 1);
+        storage.commit_real(&BipolarVector::new_random()?)?;
+        assert_eq!(storage.signal_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_chaff_injection_count() -> Result<(), HdcError> {
+        let mut storage = SuperpositionStorage::new();
+        let sig = BipolarVector::new_random()?;
+        storage.commit_real(&sig)?;
+        storage.inject_chaff(10)?;
+        assert_eq!(storage.signal_count, 11); // 1 real + 10 chaff
+        Ok(())
+    }
+
+    #[test]
+    fn test_disk_persistence() -> Result<(), HdcError> {
+        let mut storage = SuperpositionStorage::new();
+        let sig = BipolarVector::new_random()?;
+        storage.commit_real(&sig)?;
+
+        let path = "/tmp/test_superposition_persist.json";
+        storage.save_to_disk(path)?;
+
+        let loaded = SuperpositionStorage::load_from_disk(path)?;
+        assert_eq!(loaded.signal_count, 1);
+
+        // Probing should give similar results.
+        let original_sim = storage.probe(&sig)?;
+        let loaded_sim = loaded.probe(&sig)?;
+        assert!((original_sim - loaded_sim).abs() < 0.01,
+            "Loaded storage should produce same probe results: {:.4} vs {:.4}", original_sim, loaded_sim);
+
+        let _ = std::fs::remove_file(path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_heavy_chaff_obscures_signal() -> Result<(), HdcError> {
+        let mut storage = SuperpositionStorage::new();
+        let sig = BipolarVector::new_random()?;
+        storage.commit_real(&sig)?;
+
+        // Heavy chaff should reduce signal detectability.
+        storage.inject_chaff(50)?;
+        let sim = storage.probe(&sig)?;
+        debuglog!("test_heavy_chaff: similarity after 50 chaff = {:.4}", sim);
+        // Signal should still be above noise floor but attenuated.
+        // With 51 vectors bundled, expected similarity is ~1/sqrt(51) ≈ 0.14
+        assert!(sim.abs() < 0.5, "Heavy chaff should attenuate signal: {:.4}", sim);
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_real_signals_detectable() -> Result<(), HdcError> {
+        let mut storage = SuperpositionStorage::new();
+        let sig1 = BipolarVector::new_random()?;
+        let sig2 = BipolarVector::new_random()?;
+        storage.commit_real(&sig1)?;
+        storage.commit_real(&sig2)?;
+
+        // Both signals should be detectable.
+        let sim1 = storage.probe(&sig1)?;
+        let sim2 = storage.probe(&sig2)?;
+        assert!(sim1 > 0.0, "First signal should be detectable: {:.4}", sim1);
+        assert!(sim2 > 0.0, "Second signal should be detectable: {:.4}", sim2);
+        Ok(())
+    }
 }

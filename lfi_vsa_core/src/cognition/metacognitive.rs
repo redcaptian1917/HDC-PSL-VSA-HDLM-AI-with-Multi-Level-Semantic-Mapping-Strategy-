@@ -291,6 +291,121 @@ impl MetaCognitiveProfiler {
     pub fn domain_count(&self) -> usize {
         self.domain_stats.len()
     }
+
+    /// Generate a concrete improvement plan for the weakest domains.
+    ///
+    /// Each plan item describes what the system should do to improve,
+    /// based on the failure patterns observed.
+    pub fn generate_improvement_plan(&self) -> Result<Vec<ImprovementPlan>, HdcError> {
+        debuglog!("MetaCognitiveProfiler::generate_improvement_plan: analyzing performance");
+
+        let queue = self.improvement_queue()?;
+        let mut plans = Vec::new();
+
+        for target in queue.iter().filter(|t| t.improvement_priority > 0.4) {
+            let total = target.success_count + target.failure_count;
+            let failure_rate = if total > 0 { target.failure_count as f64 / total as f64 } else { 0.0 };
+
+            let strategy = if failure_rate > 0.8 {
+                "CRITICAL: Almost always failing. Needs foundational learning before attempting more tasks."
+            } else if failure_rate > 0.5 {
+                "HIGH: Failing more than succeeding. Focus on identifying the specific failure patterns."
+            } else {
+                "MODERATE: Occasionally failing. Refine edge case handling and increase confidence."
+            };
+
+            let actions = match &target.domain {
+                CognitiveDomain::Coding => vec![
+                    "Review recent code generation failures for pattern analysis",
+                    "Study language-specific idioms for error-prone constructs",
+                    "Practice with increasingly complex code synthesis tasks",
+                ],
+                CognitiveDomain::Security => vec![
+                    "Review PSL axiom rejection patterns in feedback loop",
+                    "Study common vulnerability patterns (OWASP, CWE)",
+                    "Practice threat modeling on diverse attack surfaces",
+                ],
+                CognitiveDomain::Mathematics => vec![
+                    "Review failed mathematical reasoning chains",
+                    "Practice symbolic manipulation and proof verification",
+                    "Study numerical stability and edge case handling",
+                ],
+                CognitiveDomain::Planning => vec![
+                    "Analyze plan failures: were goals too ambitious?",
+                    "Practice decomposition on smaller, verifiable sub-goals",
+                    "Study means-end analysis heuristics",
+                ],
+                _ => vec![
+                    "Review failure patterns in this domain",
+                    "Identify knowledge gaps via the knowledge engine",
+                    "Practice with increasing difficulty",
+                ],
+            };
+
+            plans.push(ImprovementPlan {
+                domain: target.domain.clone(),
+                priority: strategy.to_string(),
+                failure_rate,
+                actions: actions.iter().map(|s| s.to_string()).collect(),
+                estimated_sessions: (failure_rate * 10.0).ceil() as usize,
+            });
+        }
+
+        debuglog!("MetaCognitiveProfiler::generate_improvement_plan: {} plans generated", plans.len());
+        Ok(plans)
+    }
+
+    /// Detect cross-domain performance correlation.
+    ///
+    /// Returns pairs of domains where improvement in one correlates
+    /// with improvement in another — suggesting transfer learning.
+    pub fn detect_cross_domain_transfer(&self) -> Vec<(CognitiveDomain, CognitiveDomain, f64)> {
+        debuglog!("MetaCognitiveProfiler::detect_cross_domain_transfer: analyzing correlations");
+
+        let domains: Vec<&CognitiveDomain> = self.domain_stats.keys().collect();
+        let mut transfers = Vec::new();
+
+        for i in 0..domains.len() {
+            for j in (i + 1)..domains.len() {
+                let rate_i = self.success_rate(domains[i]);
+                let rate_j = self.success_rate(domains[j]);
+
+                // Simple correlation: both strong or both weak suggests transfer.
+                // This is a heuristic — real transfer detection needs temporal data.
+                let correlation = 1.0 - (rate_i - rate_j).abs();
+
+                if correlation > 0.7 && rate_i > 0.3 && rate_j > 0.3 {
+                    transfers.push((domains[i].clone(), domains[j].clone(), correlation));
+                }
+            }
+        }
+
+        transfers.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        debuglog!("MetaCognitiveProfiler::detect_cross_domain_transfer: {} correlations found", transfers.len());
+        transfers
+    }
+
+    /// Overall readiness score: weighted average of all domain success rates.
+    /// 1.0 = all domains at 100% success, 0.0 = all domains at 0%.
+    pub fn overall_readiness(&self) -> f64 {
+        if self.domain_stats.is_empty() {
+            return 0.0;
+        }
+        let total: f64 = self.domain_stats.keys()
+            .map(|d| self.success_rate(d))
+            .sum();
+        total / self.domain_stats.len() as f64
+    }
+}
+
+/// A concrete improvement plan for a weak domain.
+#[derive(Debug, Clone)]
+pub struct ImprovementPlan {
+    pub domain: CognitiveDomain,
+    pub priority: String,
+    pub failure_rate: f64,
+    pub actions: Vec<String>,
+    pub estimated_sessions: usize,
 }
 
 #[cfg(test)]
@@ -483,6 +598,79 @@ mod tests {
         assert_eq!(*successes, 1);
         assert_eq!(*failures, 1);
         assert!((*avg_conf - 0.6).abs() < 0.001); // (0.9 + 0.3) / 2
+        Ok(())
+    }
+
+    #[test]
+    fn test_improvement_plan_generation() -> Result<(), HdcError> {
+        let mut profiler = MetaCognitiveProfiler::new();
+
+        // Weak Security domain.
+        for _ in 0..8 {
+            profiler.record(&make_record(CognitiveDomain::Security, false, 0.1))?;
+        }
+        for _ in 0..2 {
+            profiler.record(&make_record(CognitiveDomain::Security, true, 0.5))?;
+        }
+
+        let plans = profiler.generate_improvement_plan()?;
+        assert!(!plans.is_empty(), "Should generate improvement plans for weak domains");
+        assert_eq!(plans[0].domain, CognitiveDomain::Security);
+        assert!(plans[0].failure_rate > 0.5);
+        assert!(!plans[0].actions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_plans_for_strong_domains() -> Result<(), HdcError> {
+        let mut profiler = MetaCognitiveProfiler::new();
+
+        // Strong Coding domain.
+        for _ in 0..10 {
+            profiler.record(&make_record(CognitiveDomain::Coding, true, 0.95))?;
+        }
+
+        let plans = profiler.generate_improvement_plan()?;
+        assert!(
+            plans.iter().all(|p| p.domain != CognitiveDomain::Coding),
+            "Strong domains should not appear in improvement plans"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_cross_domain_transfer_detection() -> Result<(), HdcError> {
+        let mut profiler = MetaCognitiveProfiler::new();
+
+        // Both Coding and Security are strong (suggesting transfer).
+        for _ in 0..9 {
+            profiler.record(&make_record(CognitiveDomain::Coding, true, 0.9))?;
+            profiler.record(&make_record(CognitiveDomain::Security, true, 0.85))?;
+        }
+        profiler.record(&make_record(CognitiveDomain::Coding, false, 0.4))?;
+        profiler.record(&make_record(CognitiveDomain::Security, false, 0.3))?;
+
+        let transfers = profiler.detect_cross_domain_transfer();
+        // Should detect correlation between Coding and Security.
+        assert!(!transfers.is_empty(), "Should detect cross-domain transfer");
+        Ok(())
+    }
+
+    #[test]
+    fn test_overall_readiness() -> Result<(), HdcError> {
+        let mut profiler = MetaCognitiveProfiler::new();
+
+        // All domains at 100%.
+        for domain in &[CognitiveDomain::Coding, CognitiveDomain::Security, CognitiveDomain::Mathematics] {
+            profiler.record(&make_record(domain.clone(), true, 0.9))?;
+        }
+
+        let readiness = profiler.overall_readiness();
+        assert!((readiness - 1.0).abs() < 0.01, "All-success should give readiness ~1.0, got {:.4}", readiness);
+
+        // Empty profiler.
+        let empty = MetaCognitiveProfiler::new();
+        assert_eq!(empty.overall_readiness(), 0.0);
         Ok(())
     }
 }

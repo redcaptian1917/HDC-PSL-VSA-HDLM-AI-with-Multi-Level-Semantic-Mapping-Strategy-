@@ -131,18 +131,66 @@ mod tests {
     fn test_semantic_mapping_separation() -> HdlmResult<()> {
         let map = SemanticMap::new()?;
         let logic = ForensicNode::Function;
-        let decoration = BipolarVector::new_random()?; // Aesthetic expansion
-        
-        // 1. Project logic + decoration
+        let decoration = BipolarVector::new_random()?;
         let projected = map.project_node(logic.clone(), &decoration)?;
-        
-        // 2. Verify Forensic Integrity
         assert!(map.verify_forensic_integrity(&projected, logic, &decoration)?);
-        
-        // 3. Verify that a different decoration fails verification
         let fake_decoration = BipolarVector::new_random()?;
         assert!(!map.verify_forensic_integrity(&projected, ForensicNode::Function, &fake_decoration)?);
-        
         Ok(())
+    }
+
+    #[test]
+    fn test_all_node_types_have_bases() -> HdlmResult<()> {
+        let map = SemanticMap::new()?;
+        let nodes = vec![
+            ForensicNode::Module, ForensicNode::Function,
+            ForensicNode::Statement, ForensicNode::Expression,
+            ForensicNode::Literal, ForensicNode::Identifier,
+            ForensicNode::Unknown,
+        ];
+        let decoration = BipolarVector::new_random()?;
+        for node in nodes {
+            let projected = map.project_node(node, &decoration)?;
+            assert_eq!(projected.dim(), 10000);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_different_nodes_different_projections() -> HdlmResult<()> {
+        let map = SemanticMap::new()?;
+        let decoration = BipolarVector::new_random()?;
+        let p_func = map.project_node(ForensicNode::Function, &decoration)?;
+        let p_lit = map.project_node(ForensicNode::Literal, &decoration)?;
+        let sim = p_func.similarity(&p_lit)?;
+        assert!(sim < 0.9, "Different node types should produce different projections: {:.4}", sim);
+        Ok(())
+    }
+
+    #[test]
+    fn test_positional_bases_exist() -> HdlmResult<()> {
+        let map = SemanticMap::new()?;
+        for i in 0..10 {
+            assert!(map.get_pos_base(i).is_some(), "Position {} should have a base", i);
+        }
+        assert!(map.get_pos_base(10).is_none(), "Position 10 should not exist");
+        Ok(())
+    }
+
+    #[test]
+    fn test_wrong_node_fails_verification() -> HdlmResult<()> {
+        let map = SemanticMap::new()?;
+        let decoration = BipolarVector::new_random()?;
+        let projected = map.project_node(ForensicNode::Module, &decoration)?;
+        // Verify with wrong node type should fail.
+        let wrong = map.verify_forensic_integrity(&projected, ForensicNode::Statement, &decoration)?;
+        assert!(!wrong, "Wrong forensic node should fail verification");
+        Ok(())
+    }
+
+    #[test]
+    fn test_forensic_node_equality() {
+        assert_eq!(ForensicNode::Function, ForensicNode::Function);
+        assert_ne!(ForensicNode::Function, ForensicNode::Literal);
     }
 }

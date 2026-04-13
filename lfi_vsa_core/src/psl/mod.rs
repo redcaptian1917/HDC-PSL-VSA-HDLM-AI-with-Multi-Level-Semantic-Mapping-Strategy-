@@ -9,6 +9,7 @@ pub mod coercion;
 pub mod probes;
 pub mod error;
 pub mod feedback;
+pub mod predicates;
 
 pub use axiom::{Axiom, AuditTarget, AxiomVerdict};
 pub use supervisor::PslSupervisor;

@@ -124,16 +124,90 @@ mod tests {
 
     #[test]
     fn test_lnn_adaptation() -> Result<(), HdcError> {
-        let mut lnn = LiquidSensorium::new(19); // MIT-style sparse LNN
-        
-        // Step through noise
+        let mut lnn = LiquidSensorium::new(19);
         for _ in 0..100 {
             lnn.step(1.0, 0.01)?;
         }
-        
         let hv = lnn.project_to_vsa()?;
         assert_eq!(hv.dim(), 10000);
-        debuglog!("test_lnn_adaptation: ones={}", hv.count_ones());
+        Ok(())
+    }
+
+    #[test]
+    fn test_lnn_creation() {
+        let lnn = LiquidSensorium::new(10);
+        assert_eq!(lnn.neurons.len(), 10);
+        for n in &lnn.neurons {
+            assert_eq!(n.state, 0.0);
+            assert_eq!(n.tau, 1.0);
+        }
+    }
+
+    #[test]
+    fn test_step_changes_state() -> Result<(), HdcError> {
+        let mut lnn = LiquidSensorium::new(5);
+        lnn.step(1.0, 0.1)?;
+        // After one step with input=1.0, states should be positive.
+        for n in &lnn.neurons {
+            assert!(n.state > 0.0, "State should be positive after positive input: {:.4}", n.state);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_different_inputs_different_projections() -> Result<(), HdcError> {
+        let mut lnn1 = LiquidSensorium::new(10);
+        let mut lnn2 = LiquidSensorium::new(10);
+
+        for _ in 0..50 {
+            lnn1.step(1.0, 0.1)?;
+            lnn2.step(-1.0, 0.1)?;
+        }
+
+        let hv1 = lnn1.project_to_vsa()?;
+        let hv2 = lnn2.project_to_vsa()?;
+        let sim = hv1.similarity(&hv2)?;
+        assert!(sim < 0.9, "Different input histories should produce different projections: {:.4}", sim);
+        Ok(())
+    }
+
+    #[test]
+    fn test_mutate_tau() {
+        let mut lnn = LiquidSensorium::new(3);
+        lnn.mutate_tau(&[2.0, 0.5, 1.5]);
+        assert!((lnn.neurons[0].tau - 2.0).abs() < 0.01);
+        assert!((lnn.neurons[1].tau - 0.5).abs() < 0.01);
+        assert!((lnn.neurons[2].tau - 1.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_tau_clamping() {
+        let mut lnn = LiquidSensorium::new(2);
+        lnn.mutate_tau(&[100.0, 0.001]);
+        assert!(lnn.neurons[0].tau <= 10.0, "Tau should be clamped to max 10.0");
+        assert!(lnn.neurons[1].tau >= 0.1, "Tau should be clamped to min 0.1");
+    }
+
+    #[test]
+    fn test_projection_balanced() -> Result<(), HdcError> {
+        let mut lnn = LiquidSensorium::new(10);
+        for _ in 0..50 {
+            lnn.step(0.5, 0.1)?;
+        }
+        let hv = lnn.project_to_vsa()?;
+        let ones = hv.count_ones() as f64 / 10000.0;
+        // Should be roughly balanced (30%-70% ones).
+        assert!(ones > 0.3 && ones < 0.7,
+            "Projection should be roughly balanced: {:.1}% ones", ones * 100.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_sensorium() -> Result<(), HdcError> {
+        let lnn = LiquidSensorium::new(0);
+        // Should not panic on empty neuron set.
+        let hv = lnn.project_to_vsa()?;
+        assert_eq!(hv.dim(), 10000);
         Ok(())
     }
 }

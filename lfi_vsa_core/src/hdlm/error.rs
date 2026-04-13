@@ -49,3 +49,35 @@ impl fmt::Display for HdlmError {
 }
 
 impl std::error::Error for HdlmError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        let e = HdlmError::MalformedAst { reason: "bad node".into() };
+        assert!(format!("{}", e).contains("bad node"));
+
+        let e2 = HdlmError::EmptyAst;
+        assert!(format!("{}", e2).contains("empty"));
+
+        let e3 = HdlmError::UnmappedSymbol { symbol_id: 42 };
+        assert!(format!("{}", e3).contains("42"));
+    }
+
+    #[test]
+    fn test_error_equality() {
+        assert_eq!(HdlmError::EmptyAst, HdlmError::EmptyAst);
+        assert_ne!(
+            HdlmError::MalformedAst { reason: "a".into() },
+            HdlmError::MalformedAst { reason: "b".into() }
+        );
+    }
+
+    #[test]
+    fn test_error_is_std_error() {
+        let e: Box<dyn std::error::Error> = Box::new(HdlmError::EmptyAst);
+        assert!(format!("{}", e).contains("empty"));
+    }
+}

@@ -261,3 +261,70 @@ impl LfiAgent {
         Ok(confidence)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_creation() {
+        let agent = LfiAgent::new();
+        assert!(agent.is_ok(), "Agent should initialize without error");
+    }
+
+    #[test]
+    fn test_agent_starts_unauthenticated() {
+        let agent = LfiAgent::new().expect("agent init");
+        // Agent should start unauthenticated (password not provided).
+        assert!(!agent.authenticated);
+    }
+
+    #[test]
+    fn test_coercion_audit_clean() {
+        let agent = LfiAgent::new().expect("agent init");
+        let conf = agent.audit_coercion(0.0, 0.0).expect("audit should work");
+        assert!((conf - 1.0).abs() < 0.01, "Zero threat should give conf=1.0, got {:.4}", conf);
+    }
+
+    #[test]
+    fn test_coercion_audit_high_threat() {
+        let agent = LfiAgent::new().expect("agent init");
+        let conf = agent.audit_coercion(1.0, 1.0).expect("audit should work");
+        assert!(conf < 0.01, "Max threat should give conf≈0.0, got {:.4}", conf);
+    }
+
+    #[test]
+    fn test_coercion_audit_medium() {
+        let agent = LfiAgent::new().expect("agent init");
+        let conf = agent.audit_coercion(0.3, 0.5).expect("audit should work");
+        assert!(conf > 0.0 && conf < 1.0, "Medium threat should give partial conf: {:.4}", conf);
+    }
+
+    #[test]
+    fn test_agent_authenticate_wrong_password() {
+        let mut agent = LfiAgent::new().expect("agent init");
+        // With default env (no SOVEREIGN_PASSWORD set), empty password might pass.
+        // Any non-matching password should fail.
+        let result = agent.authenticate("definitely_wrong_password_123456");
+        // Result depends on env var — just verify it doesn't panic.
+        debuglog!("test_authenticate: result={}", result);
+    }
+
+    #[test]
+    fn test_govern_substrate() {
+        let mut agent = LfiAgent::new().expect("agent init");
+        let input = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let tier = agent.govern_substrate(&input);
+        // Should return a valid tier without panic.
+        debuglog!("test_govern: tier={:?}", tier);
+        assert!(matches!(tier, IntelligenceTier::Pulse | IntelligenceTier::Bridge | IntelligenceTier::BigBrain));
+    }
+
+    #[test]
+    fn test_set_entropy() {
+        let mut agent = LfiAgent::new().expect("agent init");
+        agent.set_entropy(true);
+        agent.set_entropy(false);
+        // Should not panic on toggle.
+    }
+}

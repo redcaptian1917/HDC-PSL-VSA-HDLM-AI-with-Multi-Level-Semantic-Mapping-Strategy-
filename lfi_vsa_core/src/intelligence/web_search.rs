@@ -641,4 +641,48 @@ mod tests {
         let engine = WebSearchEngine::new();
         assert_eq!(engine.max_results_per_backend, 5);
     }
+
+    #[test]
+    fn test_url_encode_special_chars() {
+        assert_eq!(WebSearchEngine::url_encode("a&b=c"), "a%26b%3Dc");
+        assert_eq!(WebSearchEngine::url_encode("test?query"), "test%3Fquery");
+    }
+
+    #[test]
+    fn test_strip_html_nested() {
+        let result = WebSearchEngine::strip_html("<div><p>Hello <b>World</b></p></div>");
+        assert_eq!(result, "Hello World");
+    }
+
+    #[test]
+    fn test_strip_html_empty() {
+        assert_eq!(WebSearchEngine::strip_html(""), "");
+        assert_eq!(WebSearchEngine::strip_html("<br/>"), "");
+    }
+
+    #[test]
+    fn test_search_result_structure() {
+        let result = SearchResult {
+            title: "Test Result".into(),
+            source_url: "https://example.com".into(),
+            snippet: "A test snippet".into(),
+            backend: SearchBackend::DuckDuckGo,
+            source_trust: 0.8,
+        };
+        assert_eq!(result.title, "Test Result");
+        assert_eq!(result.backend, SearchBackend::DuckDuckGo);
+    }
+
+    #[test]
+    fn test_search_response_empty() {
+        let response = SearchResponse {
+            query: "nonexistent query".into(),
+            results: vec![],
+            source_count: 0,
+            best_summary: String::new(),
+            cross_reference_trust: 0.0,
+        };
+        assert!(response.results.is_empty());
+        assert_eq!(response.cross_reference_trust, 0.0);
+    }
 }

@@ -30,3 +30,48 @@ impl Axiom for EncryptionProbe {
         Ok(AxiomVerdict::pass(self.id().to_string(), 0.9, "Entropy nominal".into()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hdc::vector::BipolarVector;
+    use crate::psl::trust::TrustLevel;
+
+    #[test]
+    fn test_overflow_probe_normal_vector() -> Result<(), PslError> {
+        let probe = OverflowProbe;
+        let v = BipolarVector::new_random().unwrap();
+        let target = AuditTarget::Vector(v);
+        let verdict = probe.evaluate(&target)?;
+        assert!(verdict.confidence > 0.5, "Normal 10k vector should pass");
+        assert!(matches!(verdict.level, TrustLevel::Sovereign | TrustLevel::Trusted));
+        Ok(())
+    }
+
+    #[test]
+    fn test_overflow_probe_non_vector() -> Result<(), PslError> {
+        let probe = OverflowProbe;
+        let target = AuditTarget::Scalar { label: "test".into(), value: 42.0 };
+        let verdict = probe.evaluate(&target)?;
+        assert!(verdict.confidence == 1.0, "Non-vector should pass");
+        Ok(())
+    }
+
+    #[test]
+    fn test_encryption_probe_always_passes() -> Result<(), PslError> {
+        let probe = EncryptionProbe;
+        let target = AuditTarget::Scalar { label: "entropy".into(), value: 0.99 };
+        let verdict = probe.evaluate(&target)?;
+        assert!(verdict.confidence > 0.8);
+        Ok(())
+    }
+
+    #[test]
+    fn test_probe_ids_are_unique() {
+        let overflow = OverflowProbe;
+        let encryption = EncryptionProbe;
+        assert_ne!(overflow.id(), encryption.id());
+        assert!(!overflow.description().is_empty());
+        assert!(!encryption.description().is_empty());
+    }
+}

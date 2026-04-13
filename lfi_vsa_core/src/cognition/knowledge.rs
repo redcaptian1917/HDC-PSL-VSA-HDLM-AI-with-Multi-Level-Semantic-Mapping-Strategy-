@@ -755,6 +755,137 @@ impl KnowledgeEngine {
     pub fn concept_count(&self) -> usize {
         self.concepts.len()
     }
+
+    /// Find the top-K most similar concepts to a query vector.
+    ///
+    /// Uses VSA similarity to find structurally related concepts regardless
+    /// of naming — a query about "encryption" will find "security" even if
+    /// the word "encryption" doesn't appear in concept names.
+    pub fn find_similar_concepts(&self, query: &BipolarVector, k: usize) -> Result<Vec<(&LearnedConcept, f64)>, HdcError> {
+        debuglog!("KnowledgeEngine::find_similar_concepts: searching {} concepts for top-{}", self.concepts.len(), k);
+
+        let mut scored: Vec<(&LearnedConcept, f64)> = self.concepts.iter()
+            .map(|c| {
+                let sim = query.similarity(&c.vector).unwrap_or(0.0);
+                (c, sim)
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(k);
+
+        debuglog!("KnowledgeEngine::find_similar_concepts: top match = '{}' (sim={:.4})",
+            scored.first().map(|(c, _)| c.name.as_str()).unwrap_or("none"),
+            scored.first().map(|(_, s)| *s).unwrap_or(0.0));
+
+        Ok(scored)
+    }
+
+    /// Identify knowledge gaps: concepts with low mastery that have been encountered.
+    ///
+    /// Returns concepts sorted by improvement priority (low mastery + high encounters
+    /// means the system keeps running into something it doesn't understand well).
+    pub fn knowledge_gaps(&self) -> Vec<&LearnedConcept> {
+        debuglog!("KnowledgeEngine::knowledge_gaps: analyzing {} concepts", self.concepts.len());
+
+        let mut gaps: Vec<&LearnedConcept> = self.concepts.iter()
+            .filter(|c| c.mastery < 0.8) // Below proficiency threshold
+            .collect();
+
+        // Sort by urgency: low mastery + high encounter count = most urgent gap.
+        gaps.sort_by(|a, b| {
+            let urgency_a = (1.0 - a.mastery) * (a.encounter_count as f64).ln_1p();
+            let urgency_b = (1.0 - b.mastery) * (b.encounter_count as f64).ln_1p();
+            urgency_b.partial_cmp(&urgency_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        debuglog!("KnowledgeEngine::knowledge_gaps: found {} gaps", gaps.len());
+        gaps
+    }
+
+    /// Learn a concept with an explicit definition (richer than bare learn()).
+    ///
+    /// Sovereign-only. Stores the definition alongside the vector representation,
+    /// enabling the system to explain what it knows in natural language.
+    pub fn learn_with_definition(
+        &mut self,
+        name: &str,
+        definition: &str,
+        related: &[&str],
+        initial_mastery: f64,
+        is_sovereign: bool,
+    ) -> Result<(), HdcError> {
+        if !is_sovereign {
+            debuglog!("KnowledgeEngine::learn_with_definition: UNTRUSTED attempt for '{}' REJECTED", name);
+            return Ok(());
+        }
+
+        debuglog!("KnowledgeEngine::learn_with_definition: '{}' — '{}'",
+            name, &definition[..definition.len().min(60)]);
+
+        let vector = BipolarVector::from_seed(
+            crate::identity::IdentityProver::hash(name)
+        );
+
+        // Update existing or create new.
+        for concept in &mut self.concepts {
+            if concept.name == name {
+                concept.encounter_count += 1;
+                concept.mastery = (concept.mastery + 0.1).min(1.0);
+                concept.definition = Some(definition.to_string());
+                concept.trust_score = 1.0;
+                self.knowledge_memory.associate(&vector, &vector)?;
+                debuglog!("KnowledgeEngine::learn_with_definition: reinforced '{}' with definition", name);
+                return Ok(());
+            }
+        }
+
+        self.concepts.push(LearnedConcept {
+            name: name.to_string(),
+            vector: vector.clone(),
+            mastery: initial_mastery.clamp(0.0, 1.0),
+            encounter_count: 1,
+            trust_score: 1.0,
+            definition: Some(definition.to_string()),
+            related_concepts: related.iter().map(|s| s.to_string()).collect(),
+        });
+        self.knowledge_memory.associate(&vector, &vector)?;
+
+        debuglog!("KnowledgeEngine::learn_with_definition: NEW concept '{}' acquired with definition", name);
+        Ok(())
+    }
+
+    /// Get a knowledge summary: total concepts, average mastery, top gaps.
+    pub fn summary(&self) -> KnowledgeSummary {
+        let total = self.concepts.len();
+        let avg_mastery = if total > 0 {
+            self.concepts.iter().map(|c| c.mastery).sum::<f64>() / total as f64
+        } else {
+            0.0
+        };
+        let gaps = self.knowledge_gaps();
+        let top_gaps: Vec<String> = gaps.iter().take(5).map(|c| {
+            format!("{} ({:.0}%)", c.name, c.mastery * 100.0)
+        }).collect();
+
+        KnowledgeSummary {
+            total_concepts: total,
+            average_mastery: avg_mastery,
+            top_gaps,
+            expert_domains: self.concepts.iter().filter(|c| c.mastery >= 0.9).count(),
+            learning_targets: self.self_knowledge.learning_targets.clone(),
+        }
+    }
+}
+
+/// Summary of the knowledge engine's current state.
+#[derive(Debug, Clone)]
+pub struct KnowledgeSummary {
+    pub total_concepts: usize,
+    pub average_mastery: f64,
+    pub top_gaps: Vec<String>,
+    pub expert_domains: usize,
+    pub learning_targets: Vec<String>,
 }
 
 #[cfg(test)]
@@ -887,6 +1018,91 @@ mod tests {
         assert!(sk.expert_languages.contains(&"Rust".to_string()));
         assert!(!sk.capabilities.is_empty());
         assert!(!sk.limitations.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_similar_concepts() -> Result<(), HdcError> {
+        let engine = KnowledgeEngine::new();
+        // Query with the vector for "ownership_borrowing".
+        let query_vec = BipolarVector::from_seed(
+            crate::identity::IdentityProver::hash("ownership_borrowing")
+        );
+        let similar = engine.find_similar_concepts(&query_vec, 3)?;
+        assert!(!similar.is_empty(), "Should find at least one similar concept");
+        // The closest match should be ownership_borrowing itself.
+        assert_eq!(similar[0].0.name, "ownership_borrowing");
+        Ok(())
+    }
+
+    #[test]
+    fn test_knowledge_gaps() -> Result<(), HdcError> {
+        let engine = KnowledgeEngine::new();
+        let gaps = engine.knowledge_gaps();
+        // Some seeded concepts have mastery < 0.8 (e.g., databases at 0.70).
+        assert!(!gaps.is_empty(), "Should have some knowledge gaps");
+        // Should be sorted by urgency (lowest mastery concepts first).
+        if gaps.len() >= 2 {
+            // First gap should have lower or equal mastery than second.
+            // (adjusted for encounter count weighting)
+            assert!(gaps[0].mastery <= 0.8);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_learn_with_definition() -> Result<(), HdcError> {
+        let mut engine = KnowledgeEngine::new();
+        let initial = engine.concept_count();
+
+        engine.learn_with_definition(
+            "homomorphic_encryption",
+            "Computation on encrypted data without decryption. Enables privacy-preserving cloud computing.",
+            &["encryption", "privacy", "cloud_computing"],
+            0.4,
+            true,
+        )?;
+
+        assert_eq!(engine.concept_count(), initial + 1);
+        let concept = engine.concepts().iter().find(|c| c.name == "homomorphic_encryption");
+        assert!(concept.is_some());
+        let c = concept.unwrap();
+        assert!(c.definition.as_ref().unwrap().contains("encrypted data"));
+        assert!((c.mastery - 0.4).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn test_learn_with_definition_reinforces() -> Result<(), HdcError> {
+        let mut engine = KnowledgeEngine::new();
+        engine.learn_with_definition("test_concept", "First definition", &[], 0.3, true)?;
+        engine.learn_with_definition("test_concept", "Updated definition", &[], 0.3, true)?;
+
+        let c = engine.concepts().iter().find(|c| c.name == "test_concept").unwrap();
+        assert_eq!(c.encounter_count, 2);
+        assert!(c.mastery > 0.3, "Mastery should increase on reinforcement");
+        assert!(c.definition.as_ref().unwrap().contains("Updated"), "Definition should update");
+        Ok(())
+    }
+
+    #[test]
+    fn test_knowledge_summary() -> Result<(), HdcError> {
+        let engine = KnowledgeEngine::new();
+        let summary = engine.summary();
+        assert!(summary.total_concepts > 10);
+        assert!(summary.average_mastery > 0.5);
+        assert!(summary.expert_domains > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_untrusted_learn_rejected() -> Result<(), HdcError> {
+        let mut engine = KnowledgeEngine::new();
+        let before = engine.concept_count();
+        engine.learn("malicious_concept", &["attack"], false)?;
+        assert_eq!(engine.concept_count(), before, "Untrusted learning should be rejected");
+        engine.learn_with_definition("malicious", "bad", &[], 0.9, false)?;
+        assert_eq!(engine.concept_count(), before, "Untrusted definitions should be rejected");
         Ok(())
     }
 }

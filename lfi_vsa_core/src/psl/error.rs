@@ -65,3 +65,41 @@ impl fmt::Display for PslError {
 }
 
 impl std::error::Error for PslError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_psl_error_display() {
+        let e = PslError::AxiomViolation { axiom_id: "DimAxiom".into(), detail: "wrong dim".into() };
+        let msg = format!("{}", e);
+        assert!(msg.contains("DimAxiom") && msg.contains("wrong dim"));
+
+        let e2 = PslError::TrustThresholdBreached { required: 0.75, actual: 0.5 };
+        let msg2 = format!("{}", e2);
+        assert!(msg2.contains("0.75") && msg2.contains("0.5"));
+
+        let e3 = PslError::EmptyAxiomSet;
+        assert!(format!("{}", e3).contains("no axioms"));
+    }
+
+    #[test]
+    fn test_psl_error_equality() {
+        assert_eq!(PslError::EmptyAxiomSet, PslError::EmptyAxiomSet);
+        assert_ne!(
+            PslError::AxiomViolation { axiom_id: "a".into(), detail: "b".into() },
+            PslError::AxiomFailure { axiom_id: "a".into(), reason: "b".into() }
+        );
+    }
+
+    #[test]
+    fn test_hostile_data_error() {
+        let e = PslError::HostileDataDetected {
+            source: "remote_gpu".into(),
+            reason: "integrity mismatch".into(),
+        };
+        let msg = format!("{}", e);
+        assert!(msg.contains("remote_gpu") && msg.contains("integrity"));
+    }
+}

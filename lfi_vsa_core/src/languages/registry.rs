@@ -306,4 +306,36 @@ mod tests {
         assert_eq!(fpga.len(), 1);
         assert_eq!(fpga[0].id, LanguageId::Verilog);
     }
+
+    #[test]
+    fn test_all_languages_have_paradigms() {
+        let registry = LanguageRegistry::new();
+        for lang in registry.languages.values() {
+            assert!(!lang.paradigms.is_empty(),
+                "Language {:?} should have at least one paradigm", lang.id);
+        }
+    }
+
+    #[test]
+    fn test_rust_has_expected_properties() {
+        let registry = LanguageRegistry::new();
+        let rust = registry.get_language(&LanguageId::Rust).expect("Rust should exist");
+        assert!(rust.paradigms.contains(&Paradigm::Systems));
+        assert!(rust.paradigms.contains(&Paradigm::Concurrent));
+    }
+
+    #[test]
+    fn test_language_id_serialization() {
+        let id = LanguageId::Rust;
+        let json = serde_json::to_string(&id).unwrap();
+        let recovered: LanguageId = serde_json::from_str(&json).unwrap();
+        assert_eq!(recovered, LanguageId::Rust);
+    }
+
+    #[test]
+    fn test_find_functional_languages() {
+        let registry = LanguageRegistry::new();
+        let functional = registry.find_by_paradigm(Paradigm::Functional);
+        assert!(functional.len() >= 2, "Should find multiple functional languages: {}", functional.len());
+    }
 }

@@ -244,6 +244,29 @@ See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for detailed per-file
 
 ---
 
+## Test Coverage
+
+609+ tests (542 lib + 67 integration/adversarial/stress), 0 failures. Every major subsystem has test coverage:
+
+| Subsystem | Tests | Key Capabilities Verified |
+|-----------|-------|--------------------------|
+| HDC Core (vector, holographic, compute) | 48+ | Binding, bundling, permutation, similarity, algebraic invariants |
+| PSL Governance (supervisor, axioms, feedback) | 40+ | Axiom evaluation, trust hierarchy, coercion detection, injection prevention |
+| Cognition (reasoner, MCTS, planner, knowledge) | 70+ | Dual-mode reasoning, MCTS deliberation, goal decomposition, novelty assessment |
+| Reasoning Provenance | 15 | TracedDerivation vs ReconstructedRationalization enforcement |
+| HDLM (AST, codebook, intercept) | 30+ | Arena allocation, forensic generation, OPSEC PII scrubbing |
+| Crypto Epistemology | 11 | Belief commitments, tamper detection, provenance enforcement |
+| World Model | 8 | Counterfactual reasoning, multi-step prediction, causal learning |
+| Identity & Laws | 23 | ZK-style identity verification, sovereign law enforcement |
+| Infrastructure (memory bus, telemetry, QoS) | 30+ | HyperMemory operations, substrate health, policy compliance |
+
+```bash
+cd lfi_vsa_core
+cargo test
+```
+
+---
+
 ## License
 
 Proprietary - PlausiDen Technologies. All rights reserved.

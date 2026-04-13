@@ -70,19 +70,67 @@ mod tests {
     fn test_ui_element_folding() -> Result<(), HdcError> {
         let attr = UiAttributes {
             element_type: "Button".to_string(),
-            x: 100,
-            y: 200,
-            width: 50,
-            height: 20,
+            x: 100, y: 200, width: 50, height: 20,
             text: Some("Login".to_string()),
         };
-        
         let element = UiElement::fold(attr)?;
         assert_eq!(element.vector.dim(), 10000);
-        
-        // Ensure some content was captured
         assert!(element.vector.count_ones() > 0);
-        
         Ok(())
+    }
+
+    #[test]
+    fn test_fold_without_text() -> Result<(), HdcError> {
+        let attr = UiAttributes {
+            element_type: "Spacer".to_string(),
+            x: 0, y: 0, width: 100, height: 10,
+            text: None,
+        };
+        let element = UiElement::fold(attr)?;
+        assert_eq!(element.vector.dim(), 10000);
+        assert!(element.attributes.text.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_different_elements_different_vectors() -> Result<(), HdcError> {
+        let btn = UiElement::fold(UiAttributes {
+            element_type: "Button".into(), x: 10, y: 10, width: 80, height: 30,
+            text: Some("OK".into()),
+        })?;
+        let inp = UiElement::fold(UiAttributes {
+            element_type: "Input".into(), x: 10, y: 50, width: 200, height: 30,
+            text: Some("Username".into()),
+        })?;
+        let sim = btn.vector.similarity(&inp.vector)?;
+        // Different elements should have different representations.
+        // They share some structure (bundled from random bases) but differ overall.
+        assert!(sim < 0.95, "Different UI elements should differ: {:.4}", sim);
+        Ok(())
+    }
+
+    #[test]
+    fn test_attributes_preserved() -> Result<(), HdcError> {
+        let attr = UiAttributes {
+            element_type: "Dropdown".into(), x: 50, y: 100, width: 120, height: 25,
+            text: Some("Select...".into()),
+        };
+        let element = UiElement::fold(attr)?;
+        assert_eq!(element.attributes.element_type, "Dropdown");
+        assert_eq!(element.attributes.x, 50);
+        assert_eq!(element.attributes.text, Some("Select...".into()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_ui_attributes_serialization() {
+        let attr = UiAttributes {
+            element_type: "Button".into(), x: 10, y: 20, width: 30, height: 40,
+            text: Some("Click".into()),
+        };
+        let json = serde_json::to_string(&attr).expect("serialize");
+        let recovered: UiAttributes = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered.element_type, "Button");
+        assert_eq!(recovered.x, 10);
     }
 }

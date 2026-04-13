@@ -326,6 +326,125 @@ impl Planner {
     pub fn pattern_count(&self) -> usize {
         self.patterns.len()
     }
+
+    /// Validate a plan: check that dependency ordering is consistent.
+    ///
+    /// Returns Ok(()) if valid, Err with the first inconsistency found.
+    /// Checks:
+    ///   - No self-dependencies
+    ///   - No dependencies on non-existent steps
+    ///   - No circular dependencies
+    pub fn validate_plan(&self, plan: &Plan) -> Result<(), HdcError> {
+        debuglog!("Planner::validate_plan: checking {} steps", plan.steps.len());
+
+        for (i, step) in plan.steps.iter().enumerate() {
+            for &dep in &step.depends_on {
+                if dep == i {
+                    return Err(HdcError::InitializationFailed {
+                        reason: format!("Step {} depends on itself", i),
+                    });
+                }
+                if dep >= plan.steps.len() {
+                    return Err(HdcError::InitializationFailed {
+                        reason: format!("Step {} depends on non-existent step {}", i, dep),
+                    });
+                }
+            }
+        }
+
+        // Check for cycles via topological sort.
+        let n = plan.steps.len();
+        let mut in_degree = vec![0usize; n];
+        for step in &plan.steps {
+            for &dep in &step.depends_on {
+                if dep < n {
+                    in_degree[step.depends_on.len()] += 0; // just counting
+                }
+            }
+        }
+        // Simple DFS cycle detection.
+        let mut visited = vec![0u8; n]; // 0=unvisited, 1=in-progress, 2=done
+        for start in 0..n {
+            if visited[start] == 0 {
+                let mut stack = vec![(start, false)];
+                while let Some((node, returning)) = stack.pop() {
+                    if returning {
+                        visited[node] = 2;
+                        continue;
+                    }
+                    if visited[node] == 1 {
+                        return Err(HdcError::InitializationFailed {
+                            reason: format!("Circular dependency detected involving step {}", node),
+                        });
+                    }
+                    if visited[node] == 2 {
+                        continue;
+                    }
+                    visited[node] = 1;
+                    stack.push((node, true));
+                    for &dep in &plan.steps[node].depends_on {
+                        if dep < n {
+                            stack.push((dep, false));
+                        }
+                    }
+                }
+            }
+        }
+
+        debuglog!("Planner::validate_plan: valid");
+        Ok(())
+    }
+
+    /// Find steps that can execute in parallel (no dependency between them).
+    ///
+    /// Returns groups of step indices that can run simultaneously.
+    pub fn parallel_groups(&self, plan: &Plan) -> Vec<Vec<usize>> {
+        debuglog!("Planner::parallel_groups: analyzing {} steps", plan.steps.len());
+
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut scheduled = vec![false; plan.steps.len()];
+
+        loop {
+            let mut group = Vec::new();
+            for (i, step) in plan.steps.iter().enumerate() {
+                if scheduled[i] {
+                    continue;
+                }
+                // Can execute if all dependencies are already scheduled.
+                let deps_met = step.depends_on.iter().all(|&dep| dep < plan.steps.len() && scheduled[dep]);
+                if deps_met {
+                    group.push(i);
+                }
+            }
+
+            if group.is_empty() {
+                break;
+            }
+
+            for &idx in &group {
+                scheduled[idx] = true;
+            }
+            groups.push(group);
+        }
+
+        debuglog!("Planner::parallel_groups: {} groups", groups.len());
+        groups
+    }
+
+    /// Estimate the critical path length (longest dependency chain).
+    /// This is the minimum number of sequential phases needed.
+    pub fn critical_path_length(&self, plan: &Plan) -> usize {
+        let groups = self.parallel_groups(plan);
+        groups.len()
+    }
+
+    /// Get the progress of a plan as a percentage (0.0 to 1.0).
+    pub fn progress(plan: &Plan) -> f64 {
+        if plan.steps.is_empty() {
+            return 1.0;
+        }
+        plan.completed_count() as f64 / plan.steps.len() as f64
+    }
 }
 
 #[cfg(test)]
@@ -385,13 +504,78 @@ mod tests {
         let initial_count = planner.pattern_count();
 
         let mut plan = planner.plan("deploy microservice to kubernetes")?;
-        // Complete all steps
         while let Some(idx) = planner.advance(&mut plan)? {
             planner.complete_step(&mut plan, idx)?;
         }
 
         planner.learn_from_success(&plan)?;
         assert_eq!(planner.pattern_count(), initial_count + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_plan_valid() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let plan = planner.plan("implement authentication middleware")?;
+        planner.validate_plan(&plan)?; // Should not error.
+        Ok(())
+    }
+
+    #[test]
+    fn test_validate_plan_self_dependency() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let mut plan = planner.plan("test task")?;
+        // Inject a self-dependency.
+        if !plan.steps.is_empty() {
+            plan.steps[0].depends_on.push(0);
+        }
+        let result = planner.validate_plan(&plan);
+        assert!(result.is_err(), "Self-dependency should fail validation");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parallel_groups() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let plan = planner.plan("build REST API with tests")?;
+        let groups = planner.parallel_groups(&plan);
+
+        // Should have at least 1 group.
+        assert!(!groups.is_empty(), "Should have at least one parallel group");
+
+        // Total steps across all groups should equal plan.steps.len().
+        let total: usize = groups.iter().map(|g| g.len()).sum();
+        assert_eq!(total, plan.steps.len(), "All steps should be scheduled");
+        Ok(())
+    }
+
+    #[test]
+    fn test_critical_path_length() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let plan = planner.plan("fix critical security vulnerability")?;
+        let cpl = planner.critical_path_length(&plan);
+        // Linear dependency chain → critical path = number of steps.
+        assert!(cpl > 0 && cpl <= plan.steps.len());
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_progress() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let mut plan = planner.plan("optimize query performance")?;
+
+        assert!((Planner::progress(&plan) - 0.0).abs() < 0.01);
+
+        // Complete half the steps.
+        let half = plan.steps.len() / 2;
+        for _ in 0..half {
+            if let Some(idx) = planner.advance(&mut plan)? {
+                planner.complete_step(&mut plan, idx)?;
+            }
+        }
+        let progress = Planner::progress(&plan);
+        assert!(progress > 0.0 && progress < 1.0, "Progress should be partial: {:.2}", progress);
+
         Ok(())
     }
 }

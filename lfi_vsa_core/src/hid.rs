@@ -70,4 +70,66 @@ impl HidDevice {
 
         Ok(())
     }
+
+    /// Get the device path.
+    pub fn device_path(&self) -> &str {
+        &self.device_path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hid_device_creation() {
+        let device = HidDevice::new(None).expect("default path should work");
+        assert_eq!(device.device_path(), "/dev/hidg0");
+
+        let custom = HidDevice::new(Some("/tmp/test_hid")).expect("custom path should work");
+        assert_eq!(custom.device_path(), "/tmp/test_hid");
+    }
+
+    #[test]
+    fn test_hid_command_debug() {
+        let cmd = HidCommand::MouseMove { x: 10, y: -5 };
+        let dbg = format!("{:?}", cmd);
+        assert!(dbg.contains("MouseMove"));
+        assert!(dbg.contains("10"));
+
+        let click = HidCommand::MouseClick;
+        assert!(format!("{:?}", click).contains("MouseClick"));
+
+        let text = HidCommand::Text("hello".into());
+        assert!(format!("{:?}", text).contains("hello"));
+    }
+
+    #[test]
+    fn test_hid_execute_simulated() {
+        // Device path doesn't exist — should simulate without error.
+        let device = HidDevice::new(Some("/dev/nonexistent_hidg_test")).unwrap();
+        let result = device.execute(HidCommand::MouseMove { x: 50, y: 50 });
+        assert!(result.is_ok(), "Simulated execution should succeed");
+    }
+
+    #[test]
+    fn test_hid_mouse_click_simulated() {
+        let device = HidDevice::new(Some("/dev/nonexistent_hidg_test")).unwrap();
+        let result = device.execute(HidCommand::MouseClick);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hid_text_simulated() {
+        let device = HidDevice::new(Some("/dev/nonexistent_hidg_test")).unwrap();
+        let result = device.execute(HidCommand::Text("test input".into()));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_hid_keypress_simulated() {
+        let device = HidDevice::new(Some("/dev/nonexistent_hidg_test")).unwrap();
+        let result = device.execute(HidCommand::KeyPress(0x04)); // 'a' in HID
+        assert!(result.is_ok());
+    }
 }

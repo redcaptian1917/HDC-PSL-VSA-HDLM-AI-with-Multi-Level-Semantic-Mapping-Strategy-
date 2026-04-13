@@ -381,4 +381,49 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_set_avoidance_threshold() {
+        let mut fl = PslFeedbackLoop::new();
+        fl.set_avoidance_threshold(0.5);
+        assert!((fl.avoidance_threshold - 0.5).abs() < 0.01);
+        // Clamped to [0, 1]
+        fl.set_avoidance_threshold(2.0);
+        assert!((fl.avoidance_threshold - 1.0).abs() < 0.01);
+        fl.set_avoidance_threshold(-0.5);
+        assert!((fl.avoidance_threshold - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_no_rejections_no_common() {
+        let fl = PslFeedbackLoop::new();
+        assert!(fl.most_common_rejection().is_none());
+    }
+
+    #[test]
+    fn test_stats_initial_state() {
+        let fl = PslFeedbackLoop::new();
+        let (rej, warn, log) = fl.rejection_stats();
+        assert_eq!(rej, 0);
+        assert_eq!(warn, 0);
+        assert_eq!(log, 0);
+    }
+
+    #[test]
+    fn test_log_bounded_by_max_size() -> Result<(), HdcError> {
+        let mut fl = PslFeedbackLoop::new();
+        // The max_log_size is 500. Fill more than that.
+        for i in 0..550 {
+            let input = BipolarVector::from_seed(i as u64);
+            let output = BipolarVector::from_seed(i as u64 + 1000);
+            fl.process_verdict(
+                &make_fail_verdict("Axiom:Overflow", &format!("test {}", i)),
+                &input, &output,
+            )?;
+        }
+        let (_, _, log_len) = fl.rejection_stats();
+        assert!(log_len <= 500, "Log should be bounded: {}", log_len);
+        assert_eq!(fl.total_rejections, 550);
+        Ok(())
+    }
 }

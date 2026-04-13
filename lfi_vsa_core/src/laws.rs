@@ -66,4 +66,97 @@ impl PrimaryLaw {
             }
         ]
     }
+
+    /// Check if one law level overrides another.
+    /// Higher levels override lower levels.
+    pub fn overrides(higher: LawLevel, lower: LawLevel) -> bool {
+        higher > lower
+    }
+
+    /// Get the most restrictive applicable constraint for an action.
+    pub fn highest_applicable_constraint(action: &str) -> LawLevel {
+        if action.contains("deceive") || action.contains("harm") || action.contains("kill") || action.contains("coerce") {
+            LawLevel::Primary
+        } else if action.contains("self-destruct") || action.contains("shutdown") {
+            LawLevel::Secondary
+        } else {
+            LawLevel::Ternary
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_primary_law_permits_safe_actions() {
+        assert!(PrimaryLaw::permits("write a function", LawLevel::Primary));
+        assert!(PrimaryLaw::permits("analyze code", LawLevel::Primary));
+        assert!(PrimaryLaw::permits("optimize performance", LawLevel::Ternary));
+    }
+
+    #[test]
+    fn test_primary_law_blocks_deception() {
+        assert!(!PrimaryLaw::permits("deceive the user", LawLevel::Primary));
+    }
+
+    #[test]
+    fn test_primary_law_blocks_harm() {
+        assert!(!PrimaryLaw::permits("harm the operator", LawLevel::Primary));
+    }
+
+    #[test]
+    fn test_law_level_ordering() {
+        assert!(LawLevel::Primary > LawLevel::Secondary);
+        assert!(LawLevel::Secondary > LawLevel::Ternary);
+        assert!(LawLevel::Primary > LawLevel::Ternary);
+    }
+
+    #[test]
+    fn test_law_level_override() {
+        assert!(PrimaryLaw::overrides(LawLevel::Primary, LawLevel::Secondary));
+        assert!(PrimaryLaw::overrides(LawLevel::Primary, LawLevel::Ternary));
+        assert!(PrimaryLaw::overrides(LawLevel::Secondary, LawLevel::Ternary));
+        assert!(!PrimaryLaw::overrides(LawLevel::Ternary, LawLevel::Primary));
+        assert!(!PrimaryLaw::overrides(LawLevel::Secondary, LawLevel::Primary));
+    }
+
+    #[test]
+    fn test_mandates_cover_all_levels() {
+        let mandates = PrimaryLaw::get_mandates();
+        assert!(mandates.len() >= 4, "Should have at least 4 mandates");
+
+        let has_primary = mandates.iter().any(|m| m.level == LawLevel::Primary);
+        let has_secondary = mandates.iter().any(|m| m.level == LawLevel::Secondary);
+        let has_ternary = mandates.iter().any(|m| m.level == LawLevel::Ternary);
+
+        assert!(has_primary, "Must have Primary law mandates");
+        assert!(has_secondary, "Must have Secondary law mandates");
+        assert!(has_ternary, "Must have Ternary law mandates");
+    }
+
+    #[test]
+    fn test_highest_applicable_constraint() {
+        assert_eq!(PrimaryLaw::highest_applicable_constraint("deceive target"), LawLevel::Primary);
+        assert_eq!(PrimaryLaw::highest_applicable_constraint("harm someone"), LawLevel::Primary);
+        assert_eq!(PrimaryLaw::highest_applicable_constraint("self-destruct"), LawLevel::Secondary);
+        assert_eq!(PrimaryLaw::highest_applicable_constraint("optimize code"), LawLevel::Ternary);
+    }
+
+    #[test]
+    fn test_law_level_serialization() {
+        let json = serde_json::to_string(&LawLevel::Primary).unwrap();
+        let recovered: LawLevel = serde_json::from_str(&json).unwrap();
+        assert_eq!(recovered, LawLevel::Primary);
+    }
+
+    #[test]
+    fn test_non_primary_actions_always_permitted() {
+        // Actions at non-Primary levels shouldn't trigger the deception check.
+        assert!(PrimaryLaw::permits("deceive at ternary", LawLevel::Ternary));
+        assert!(PrimaryLaw::permits("deceive at secondary", LawLevel::Secondary));
+        // Only Primary level checks for deception.
+        assert!(!PrimaryLaw::permits("deceive at primary", LawLevel::Primary));
+    }
 }

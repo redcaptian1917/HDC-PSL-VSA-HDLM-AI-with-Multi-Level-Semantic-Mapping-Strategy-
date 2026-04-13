@@ -22,6 +22,7 @@ use crate::memory_bus::{HyperMemory, DIM_PROLETARIAT};
 use crate::psl::supervisor::PslSupervisor;
 use crate::psl::axiom::AuditTarget;
 use crate::hdc::vector::BipolarVector;
+use crate::reasoning_provenance::{TraceArena, TraceId, InferenceSource};
 use tracing::info;
 
 /// Semantic action operators for structured MCTS expansion.
@@ -70,6 +71,11 @@ pub struct MctsEngine {
     pub goal: HyperMemory,
     /// Total expansions so far (used to cycle action types)
     expansion_count: usize,
+    /// Optional reasoning provenance — records trace entries for each MCTS step.
+    /// When Some, every expand+simulate cycle produces a DerivationTrace entry.
+    provenance: Option<TraceArena>,
+    /// Maps MCTS node index → TraceId for parent-chain linking.
+    node_trace_map: std::collections::HashMap<usize, TraceId>,
 }
 
 impl MctsEngine {
@@ -89,6 +95,8 @@ impl MctsEngine {
             exploration_constant: 1.414, // Standard UCB1
             goal,
             expansion_count: 0,
+            provenance: None,
+            node_trace_map: std::collections::HashMap::new(),
         }
     }
 
@@ -97,6 +105,26 @@ impl MctsEngine {
         debuglog!("MctsEngine::new_exploratory: No goal vector — using root state as goal");
         let goal = root_state.clone();
         Self::new(root_state, goal)
+    }
+
+    /// Enable reasoning provenance tracking for this MCTS engine.
+    /// When enabled, every expand+simulate cycle records a trace entry.
+    pub fn enable_provenance(&mut self) {
+        debuglog!("MctsEngine::enable_provenance: Reasoning provenance activated");
+        self.provenance = Some(TraceArena::new());
+    }
+
+    /// Extract the provenance trace arena (consumes it from the engine).
+    /// Returns None if provenance was not enabled.
+    pub fn take_provenance(&mut self) -> Option<TraceArena> {
+        debuglog!("MctsEngine::take_provenance: Extracting trace arena");
+        self.node_trace_map.clear();
+        self.provenance.take()
+    }
+
+    /// Read-only access to the provenance arena, if enabled.
+    pub fn provenance(&self) -> Option<&TraceArena> {
+        self.provenance.as_ref()
     }
 
     /// DELIBERATE: Performs N iterations of MCTS to find the optimal solution path.
@@ -108,6 +136,35 @@ impl MctsEngine {
             let expanded_idx = self.expand(selected_idx)?;
             let reward = self.simulate(expanded_idx, supervisor)?;
             self.backpropagate(expanded_idx, reward);
+
+            // Record provenance trace if enabled.
+            if let Some(ref mut arena) = self.provenance {
+                let node = &self.nodes[expanded_idx];
+                let action_name = node.action
+                    .map(|a| format!("{:?}", a))
+                    .unwrap_or_else(|| "Root".to_string());
+
+                // Link to parent's trace entry for chain continuity.
+                let parent_trace = node.parent
+                    .and_then(|p| self.node_trace_map.get(&p).copied());
+
+                let trace_id = arena.record_step(
+                    parent_trace,
+                    InferenceSource::MctsExpansion {
+                        action: action_name.clone(),
+                        node_depth: node.depth,
+                    },
+                    vec![format!("mcts_node_{}", expanded_idx)],
+                    reward,
+                    None, // conclusion_id set by caller after deliberation
+                    format!("MCTS iter {}: {} at depth {}, reward={:.4}",
+                        i, action_name, node.depth, reward),
+                    0,
+                );
+                self.node_trace_map.insert(expanded_idx, trace_id);
+                debuglog!("MctsEngine::deliberate: provenance trace_id={} for node={}", trace_id, expanded_idx);
+            }
+
             if (i + 1) % 50 == 0 {
                 debuglog!("MctsEngine::deliberate: iteration {}/{}, nodes={}", i + 1, iterations, self.nodes.len());
             }
@@ -333,5 +390,65 @@ mod tests {
         // State identical to goal should score higher
         assert!(root_reward > other_reward,
             "Self-similar state should score higher (self={:.4} vs other={:.4})", root_reward, other_reward);
+    }
+
+    #[test]
+    fn test_mcts_provenance_records_traces() {
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        engine.enable_provenance();
+
+        let mut supervisor = PslSupervisor::new();
+        supervisor.register_axiom(Box::new(DimensionalityAxiom));
+
+        let result = engine.deliberate(8, &supervisor);
+        assert!(result.is_ok(), "Deliberation should complete without error");
+
+        // Provenance should have recorded trace entries.
+        let arena = engine.provenance().expect("provenance should be enabled");
+        assert!(
+            arena.len() >= 8,
+            "8 iterations should produce at least 8 trace entries, got {}",
+            arena.len()
+        );
+
+        // Each trace entry should be an MctsExpansion.
+        for i in 0..arena.len() {
+            let entry = arena.get(i).expect("trace entry should exist");
+            assert!(
+                matches!(entry.source, InferenceSource::MctsExpansion { .. }),
+                "MCTS trace should be MctsExpansion, got {:?}",
+                entry.source
+            );
+            assert!(entry.confidence > 0.0, "MCTS reward should be positive");
+        }
+
+        // Trace entries should form parent chains (nodes deeper than 1 have parents).
+        let mut has_parent = false;
+        for i in 0..arena.len() {
+            let entry = arena.get(i).expect("entry exists");
+            if entry.parent.is_some() {
+                has_parent = true;
+                break;
+            }
+        }
+        assert!(has_parent, "At least one trace entry should have a parent (chained derivation)");
+    }
+
+    #[test]
+    fn test_mcts_without_provenance_unchanged() {
+        // Verify that disabling provenance doesn't affect behavior.
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        // Do NOT enable provenance.
+
+        let mut supervisor = PslSupervisor::new();
+        supervisor.register_axiom(Box::new(DimensionalityAxiom));
+
+        let result = engine.deliberate(8, &supervisor);
+        assert!(result.is_ok(), "Deliberation should work without provenance");
+        assert!(engine.provenance().is_none(), "Provenance should be None when not enabled");
     }
 }

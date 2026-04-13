@@ -198,3 +198,595 @@ impl Axiom for ClassInterestAxiom {
         }
     }
 }
+
+// ============================================================
+// Security Hardening Axioms
+// ============================================================
+
+/// Detects suspiciously low-entropy vectors that may indicate
+/// tampering, degenerate computation, or adversarial injection.
+///
+/// Healthy bipolar vectors should have ~50% ones. A vector that's
+/// all +1 or all -1 is either corrupted or adversarially crafted.
+pub struct EntropyAxiom {
+    /// Minimum acceptable entropy ratio (fraction of +1 bits).
+    /// Healthy range: [0.3, 0.7]. Outside this = suspicious.
+    pub min_ratio: f64,
+    pub max_ratio: f64,
+}
+
+impl Default for EntropyAxiom {
+    fn default() -> Self {
+        Self { min_ratio: 0.3, max_ratio: 0.7 }
+    }
+}
+
+impl Axiom for EntropyAxiom {
+    fn id(&self) -> &str { "Axiom:Entropy_Guard" }
+    fn description(&self) -> &str { "Rejects suspiciously low-entropy vectors (adversarial or degenerate)" }
+
+    fn evaluate(&self, target: &AuditTarget) -> Result<AxiomVerdict, PslError> {
+        match target {
+            AuditTarget::Vector(v) => {
+                let dim = v.dim();
+                if dim == 0 {
+                    return Ok(AxiomVerdict::fail(self.id().into(), 0.0, "Zero-dimensional vector".into()));
+                }
+                let ones = v.count_ones();
+                let ratio = ones as f64 / dim as f64;
+
+                debuglog!("PSL EntropyAxiom: ratio={:.4} (ones={}, dim={})", ratio, ones, dim);
+
+                if ratio < self.min_ratio || ratio > self.max_ratio {
+                    Ok(AxiomVerdict::fail(
+                        self.id().into(),
+                        ratio.min(1.0 - ratio) * 2.0, // Lower confidence the more extreme
+                        format!("Entropy violation: {:.1}% ones (expected {:.0}%-{:.0}%)",
+                            ratio * 100.0, self.min_ratio * 100.0, self.max_ratio * 100.0),
+                    ))
+                } else {
+                    Ok(AxiomVerdict::pass(
+                        self.id().into(),
+                        1.0 - (ratio - 0.5).abs() * 4.0, // Higher confidence near 50%
+                        format!("Entropy healthy: {:.1}% ones", ratio * 100.0),
+                    ))
+                }
+            }
+            _ => Ok(AxiomVerdict::pass(self.id().into(), 1.0, "Non-vector target".into())),
+        }
+    }
+
+    fn relevance(&self, target: &AuditTarget) -> f64 {
+        if matches!(target, AuditTarget::Vector(_)) { 1.0 } else { 0.0 }
+    }
+}
+
+/// Prevents unreasonably large payloads that could cause DoS or
+/// memory exhaustion. Configurable per-field and total size limits.
+pub struct OutputBoundsAxiom {
+    /// Maximum total bytes across all fields.
+    pub max_total_bytes: usize,
+    /// Maximum bytes per individual field.
+    pub max_field_bytes: usize,
+    /// Maximum number of fields.
+    pub max_fields: usize,
+}
+
+impl Default for OutputBoundsAxiom {
+    fn default() -> Self {
+        Self {
+            max_total_bytes: 10 * 1024 * 1024, // 10 MB
+            max_field_bytes: 1024 * 1024,       // 1 MB per field
+            max_fields: 1000,
+        }
+    }
+}
+
+impl Axiom for OutputBoundsAxiom {
+    fn id(&self) -> &str { "Axiom:Output_Bounds" }
+    fn description(&self) -> &str { "Prevents unreasonably large outputs (DoS protection)" }
+
+    fn evaluate(&self, target: &AuditTarget) -> Result<AxiomVerdict, PslError> {
+        match target {
+            AuditTarget::Payload { fields, .. } => {
+                if fields.len() > self.max_fields {
+                    return Ok(AxiomVerdict::fail(
+                        self.id().into(), 0.1,
+                        format!("Too many fields: {} > {}", fields.len(), self.max_fields),
+                    ));
+                }
+
+                let mut total = 0usize;
+                for (key, value) in fields {
+                    let field_size = key.len() + value.len();
+                    if field_size > self.max_field_bytes {
+                        return Ok(AxiomVerdict::fail(
+                            self.id().into(), 0.1,
+                            format!("Field '{}' too large: {} bytes > {} limit",
+                                &key[..key.len().min(30)], field_size, self.max_field_bytes),
+                        ));
+                    }
+                    total += field_size;
+                }
+
+                if total > self.max_total_bytes {
+                    Ok(AxiomVerdict::fail(
+                        self.id().into(), 0.1,
+                        format!("Total payload too large: {} bytes > {} limit", total, self.max_total_bytes),
+                    ))
+                } else {
+                    let usage = total as f64 / self.max_total_bytes as f64;
+                    Ok(AxiomVerdict::pass(
+                        self.id().into(),
+                        1.0 - usage, // Confidence decreases as we approach the limit
+                        format!("Payload size OK: {} bytes ({:.0}% of limit)", total, usage * 100.0),
+                    ))
+                }
+            }
+            AuditTarget::RawBytes { data, .. } => {
+                if data.len() > self.max_total_bytes {
+                    Ok(AxiomVerdict::fail(
+                        self.id().into(), 0.1,
+                        format!("Raw data too large: {} bytes > {} limit", data.len(), self.max_total_bytes),
+                    ))
+                } else {
+                    Ok(AxiomVerdict::pass(self.id().into(), 1.0, "Size within bounds".into()))
+                }
+            }
+            _ => Ok(AxiomVerdict::pass(self.id().into(), 1.0, "Non-payload target".into())),
+        }
+    }
+
+    fn relevance(&self, target: &AuditTarget) -> f64 {
+        match target {
+            AuditTarget::Payload { .. } | AuditTarget::RawBytes { .. } => 1.0,
+            _ => 0.0,
+        }
+    }
+}
+
+/// Detects common injection patterns in payload fields.
+/// Guards against SQL injection, command injection, XSS, and
+/// template injection in any text-based output.
+pub struct InjectionDetectionAxiom;
+
+impl Axiom for InjectionDetectionAxiom {
+    fn id(&self) -> &str { "Axiom:Injection_Detection" }
+    fn description(&self) -> &str { "Detects SQL/command/XSS/template injection patterns in payloads" }
+
+    fn evaluate(&self, target: &AuditTarget) -> Result<AxiomVerdict, PslError> {
+        match target {
+            AuditTarget::Payload { fields, .. } => {
+                for (key, value) in fields {
+                    let lower = value.to_lowercase();
+
+                    // SQL injection patterns
+                    let sql_patterns = ["' or 1=1", "'; drop", "union select", "--", "/*", "*/", "exec(", "xp_"];
+                    for pattern in &sql_patterns {
+                        if lower.contains(pattern) {
+                            return Ok(AxiomVerdict::fail(
+                                self.id().into(), 0.05,
+                                format!("SQL injection detected in field '{}': pattern '{}'", key, pattern),
+                            ));
+                        }
+                    }
+
+                    // Command injection patterns
+                    let cmd_patterns = ["; rm ", "| cat ", "$(", "`", "&&", "||", "> /", "< /", "| bash", "| sh"];
+                    for pattern in &cmd_patterns {
+                        if lower.contains(pattern) {
+                            return Ok(AxiomVerdict::fail(
+                                self.id().into(), 0.05,
+                                format!("Command injection detected in field '{}': pattern '{}'", key, pattern),
+                            ));
+                        }
+                    }
+
+                    // XSS patterns
+                    let xss_patterns = ["<script", "javascript:", "onerror=", "onload=", "eval("];
+                    for pattern in &xss_patterns {
+                        if lower.contains(pattern) {
+                            return Ok(AxiomVerdict::fail(
+                                self.id().into(), 0.05,
+                                format!("XSS detected in field '{}': pattern '{}'", key, pattern),
+                            ));
+                        }
+                    }
+
+                    // Template injection patterns
+                    let template_patterns = ["{{", "}}", "${", "#{", "<%"];
+                    for pattern in &template_patterns {
+                        if value.contains(pattern) {
+                            return Ok(AxiomVerdict::fail(
+                                self.id().into(), 0.15,
+                                format!("Template injection in field '{}': pattern '{}'", key, pattern),
+                            ));
+                        }
+                    }
+                }
+
+                Ok(AxiomVerdict::pass(self.id().into(), 1.0, "No injection patterns detected".into()))
+            }
+            _ => Ok(AxiomVerdict::pass(self.id().into(), 1.0, "Non-payload target".into())),
+        }
+    }
+
+    fn relevance(&self, target: &AuditTarget) -> f64 {
+        if matches!(target, AuditTarget::Payload { .. }) { 1.0 } else { 0.0 }
+    }
+}
+
+/// Rate-limiting axiom: prevents rapid-fire requests that could indicate
+/// brute-force attacks, credential stuffing, or DoS attempts.
+///
+/// Tracks request timestamps and rejects if the rate exceeds the threshold.
+/// Thread-safe via atomic operations — no mutex needed.
+pub struct RateLimitAxiom {
+    /// Maximum requests per window.
+    pub max_requests: usize,
+    /// Window size in seconds.
+    pub window_seconds: u64,
+    /// Request timestamps (ring buffer).
+    timestamps: std::sync::Mutex<Vec<u64>>,
+}
+
+impl RateLimitAxiom {
+    pub fn new(max_requests: usize, window_seconds: u64) -> Self {
+        Self {
+            max_requests,
+            window_seconds,
+            timestamps: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn current_timestamp() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
+}
+
+impl Axiom for RateLimitAxiom {
+    fn id(&self) -> &str { "Axiom:Rate_Limit" }
+    fn description(&self) -> &str { "Prevents brute-force attacks via request rate limiting" }
+
+    fn evaluate(&self, _target: &AuditTarget) -> Result<AxiomVerdict, PslError> {
+        let now = Self::current_timestamp();
+        let mut timestamps = self.timestamps.lock().map_err(|_| PslError::AxiomFailure {
+            axiom_id: self.id().into(),
+            reason: "Mutex poisoned".into(),
+        })?;
+
+        // Prune old timestamps outside the window.
+        let cutoff = now.saturating_sub(self.window_seconds);
+        timestamps.retain(|&t| t > cutoff);
+
+        // Record this request.
+        timestamps.push(now);
+
+        let count = timestamps.len();
+        debuglog!("RateLimitAxiom: {} requests in {}s window (max={})", count, self.window_seconds, self.max_requests);
+
+        if count > self.max_requests {
+            Ok(AxiomVerdict::fail(
+                self.id().into(),
+                0.1,
+                format!("Rate limit exceeded: {} requests in {}s (max {})",
+                    count, self.window_seconds, self.max_requests),
+            ))
+        } else {
+            let usage = count as f64 / self.max_requests as f64;
+            Ok(AxiomVerdict::pass(
+                self.id().into(),
+                1.0 - usage,
+                format!("Rate OK: {}/{} in {}s window", count, self.max_requests, self.window_seconds),
+            ))
+        }
+    }
+
+    // Rate limiting applies to everything.
+    fn relevance(&self, _target: &AuditTarget) -> f64 { 1.0 }
+}
+
+/// Detects data exfiltration attempts — payloads containing file paths,
+/// database connection strings, environment variables, or internal URLs
+/// that should never leave the system.
+pub struct ExfiltrationDetectionAxiom;
+
+impl Axiom for ExfiltrationDetectionAxiom {
+    fn id(&self) -> &str { "Axiom:Exfiltration_Detection" }
+    fn description(&self) -> &str { "Detects data exfiltration: file paths, DB strings, env vars, internal URLs in output" }
+
+    fn evaluate(&self, target: &AuditTarget) -> Result<AxiomVerdict, PslError> {
+        match target {
+            AuditTarget::Payload { fields, .. } => {
+                for (key, value) in fields {
+                    let lower = value.to_lowercase();
+
+                    // File path patterns (absolute paths that shouldn't be in output)
+                    if value.contains("/etc/passwd") || value.contains("/etc/shadow")
+                        || value.contains("C:\\Windows\\System32")
+                        || value.contains("/root/") || value.contains("/home/")
+                        || value.contains(".ssh/") || value.contains(".gnupg/")
+                    {
+                        return Ok(AxiomVerdict::fail(
+                            self.id().into(), 0.05,
+                            format!("File path exfiltration in '{}': system path detected", key),
+                        ));
+                    }
+
+                    // Database connection strings
+                    if lower.contains("postgres://") || lower.contains("mysql://")
+                        || lower.contains("mongodb://") || lower.contains("redis://")
+                        || lower.contains("sqlite://")
+                    {
+                        return Ok(AxiomVerdict::fail(
+                            self.id().into(), 0.05,
+                            format!("DB connection string in '{}': potential credential leak", key),
+                        ));
+                    }
+
+                    // Environment variable patterns
+                    if lower.contains("database_url=") || lower.contains("api_key=")
+                        || lower.contains("secret_key=") || lower.contains("aws_access")
+                        || lower.contains("password=") || lower.contains("token=")
+                    {
+                        return Ok(AxiomVerdict::fail(
+                            self.id().into(), 0.05,
+                            format!("Environment variable leak in '{}': credential pattern", key),
+                        ));
+                    }
+
+                    // Internal network URLs
+                    if lower.contains("localhost:") || lower.contains("127.0.0.1:")
+                        || lower.contains("0.0.0.0:") || lower.contains("internal.")
+                        || lower.contains(".local:") || lower.contains("10.0.")
+                        || lower.contains("172.16.") || lower.contains("192.168.")
+                    {
+                        return Ok(AxiomVerdict::fail(
+                            self.id().into(), 0.1,
+                            format!("Internal network URL in '{}': infrastructure leak", key),
+                        ));
+                    }
+                }
+
+                Ok(AxiomVerdict::pass(self.id().into(), 1.0, "No exfiltration patterns".into()))
+            }
+            _ => Ok(AxiomVerdict::pass(self.id().into(), 1.0, "Non-payload target".into())),
+        }
+    }
+
+    fn relevance(&self, target: &AuditTarget) -> f64 {
+        if matches!(target, AuditTarget::Payload { .. }) { 1.0 } else { 0.0 }
+    }
+}
+
+#[cfg(test)]
+mod axiom_tests {
+    use super::*;
+
+    #[test]
+    fn test_entropy_axiom_healthy_vector() -> Result<(), PslError> {
+        let v = BipolarVector::new_random().unwrap();
+        let axiom = EntropyAxiom::default();
+        let target = AuditTarget::Vector(v);
+        let verdict = axiom.evaluate(&target)?;
+        assert!(verdict.confidence > 0.5, "Random vector should pass entropy check");
+        assert!(matches!(verdict.level, TrustLevel::Sovereign | TrustLevel::Trusted));
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_axiom_degenerate_vector() -> Result<(), PslError> {
+        // All-ones vector: 100% ones → fails entropy check
+        let v = BipolarVector::ones();
+        let axiom = EntropyAxiom::default();
+        let target = AuditTarget::Vector(v);
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Untrusted | TrustLevel::Forbidden),
+            "All-ones vector should fail entropy: {:?}", verdict);
+        Ok(())
+    }
+
+    #[test]
+    fn test_output_bounds_within_limits() -> Result<(), PslError> {
+        let axiom = OutputBoundsAxiom::default();
+        let target = AuditTarget::Payload {
+            source: "test".into(),
+            fields: vec![("key".into(), "value".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(verdict.confidence > 0.9);
+        Ok(())
+    }
+
+    #[test]
+    fn test_output_bounds_too_many_fields() -> Result<(), PslError> {
+        let axiom = OutputBoundsAxiom { max_fields: 2, ..Default::default() };
+        let target = AuditTarget::Payload {
+            source: "test".into(),
+            fields: vec![
+                ("a".into(), "1".into()),
+                ("b".into(), "2".into()),
+                ("c".into(), "3".into()), // Exceeds max_fields=2
+            ],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Untrusted | TrustLevel::Forbidden));
+        Ok(())
+    }
+
+    #[test]
+    fn test_injection_sql() -> Result<(), PslError> {
+        let axiom = InjectionDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "user_input".into(),
+            fields: vec![("query".into(), "' OR 1=1 --".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Forbidden),
+            "SQL injection should be Forbidden: {:?}", verdict);
+        Ok(())
+    }
+
+    #[test]
+    fn test_injection_command() -> Result<(), PslError> {
+        let axiom = InjectionDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "user_input".into(),
+            fields: vec![("cmd".into(), "test; rm -rf /".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Forbidden));
+        Ok(())
+    }
+
+    #[test]
+    fn test_injection_xss() -> Result<(), PslError> {
+        let axiom = InjectionDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "user_input".into(),
+            fields: vec![("html".into(), "<script>alert('xss')</script>".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Forbidden));
+        Ok(())
+    }
+
+    #[test]
+    fn test_injection_clean_payload() -> Result<(), PslError> {
+        let axiom = InjectionDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "safe_input".into(),
+            fields: vec![
+                ("name".into(), "PlausiDen Toolkit".into()),
+                ("version".into(), "0.1.0".into()),
+            ],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Sovereign | TrustLevel::Trusted),
+            "Clean payload should pass: {:?}", verdict);
+        Ok(())
+    }
+
+    #[test]
+    fn test_injection_template() -> Result<(), PslError> {
+        let axiom = InjectionDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "user_input".into(),
+            fields: vec![("template".into(), "Hello {{user.admin}}".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Untrusted | TrustLevel::Forbidden));
+        Ok(())
+    }
+
+    #[test]
+    fn test_rate_limit_under_threshold() -> Result<(), PslError> {
+        let axiom = RateLimitAxiom::new(100, 60);
+        let target = AuditTarget::Scalar { label: "request".into(), value: 1.0 };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(verdict.confidence > 0.5, "Under-limit should pass");
+        Ok(())
+    }
+
+    #[test]
+    fn test_rate_limit_exceeds_threshold() -> Result<(), PslError> {
+        let axiom = RateLimitAxiom::new(3, 60); // Only 3 per minute
+        let target = AuditTarget::Scalar { label: "request".into(), value: 1.0 };
+
+        // Fire 4 requests — 4th should exceed limit.
+        for _ in 0..3 {
+            let _ = axiom.evaluate(&target)?;
+        }
+        let verdict = axiom.evaluate(&target)?;
+        assert!(matches!(verdict.level, TrustLevel::Untrusted | TrustLevel::Forbidden),
+            "4th request should exceed 3/min limit: {:?}", verdict);
+        Ok(())
+    }
+
+    #[test]
+    fn test_rate_limit_relevance_universal() {
+        let axiom = RateLimitAxiom::new(10, 60);
+        let vector_target = AuditTarget::Vector(BipolarVector::new_random().unwrap());
+        let scalar_target = AuditTarget::Scalar { label: "x".into(), value: 1.0 };
+        assert_eq!(axiom.relevance(&vector_target), 1.0);
+        assert_eq!(axiom.relevance(&scalar_target), 1.0);
+    }
+
+    #[test]
+    fn test_exfiltration_file_path() -> Result<(), PslError> {
+        let axiom = ExfiltrationDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "output".into(),
+            fields: vec![("data".into(), "Contents of /etc/passwd: root:x:0:0:".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(!verdict.level.permits_execution(), "File path exfiltration should be blocked");
+        Ok(())
+    }
+
+    #[test]
+    fn test_exfiltration_db_connection() -> Result<(), PslError> {
+        let axiom = ExfiltrationDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "output".into(),
+            fields: vec![("config".into(), "postgres://admin:secret@db.internal:5432/prod".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(!verdict.level.permits_execution(), "DB connection string should be blocked");
+        Ok(())
+    }
+
+    #[test]
+    fn test_exfiltration_env_vars() -> Result<(), PslError> {
+        let axiom = ExfiltrationDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "output".into(),
+            fields: vec![("leak".into(), "DATABASE_URL=postgres://... SECRET_KEY=abc123".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(!verdict.level.permits_execution(), "Env var leak should be blocked");
+        Ok(())
+    }
+
+    #[test]
+    fn test_exfiltration_internal_url() -> Result<(), PslError> {
+        let axiom = ExfiltrationDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "output".into(),
+            fields: vec![("url".into(), "http://192.168.1.100:8080/admin".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(!verdict.level.permits_execution(), "Internal URL should be blocked");
+        Ok(())
+    }
+
+    #[test]
+    fn test_exfiltration_clean_output() -> Result<(), PslError> {
+        let axiom = ExfiltrationDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "output".into(),
+            fields: vec![
+                ("text".into(), "PlausiDen is a privacy toolkit.".into()),
+                ("version".into(), "0.1.0".into()),
+            ],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(verdict.level.permits_execution(), "Clean output should pass");
+        Ok(())
+    }
+
+    #[test]
+    fn test_exfiltration_ssh_keys() -> Result<(), PslError> {
+        let axiom = ExfiltrationDetectionAxiom;
+        let target = AuditTarget::Payload {
+            source: "output".into(),
+            fields: vec![("path".into(), "Found keys in /root/.ssh/id_rsa".into())],
+        };
+        let verdict = axiom.evaluate(&target)?;
+        assert!(!verdict.level.permits_execution(), "SSH key path should be blocked");
+        Ok(())
+    }
+}

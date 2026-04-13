@@ -152,3 +152,120 @@ impl HyperMemory {
         Ok(store)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_creates_correct_dimensions() {
+        let hm = HyperMemory::new(DIM_PROLETARIAT);
+        assert_eq!(hm.dimensions, DIM_PROLETARIAT);
+        assert_eq!(hm.vector.len(), DIM_PROLETARIAT);
+    }
+
+    #[test]
+    fn test_generate_seed_is_nonzero() {
+        let hm = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        assert_eq!(hm.dimensions, DIM_PROLETARIAT);
+        // At least some values should be nonzero.
+        let nonzero = hm.vector.iter().filter(|&&v| v != 0).count();
+        assert!(nonzero > 0, "Seeded vector should have nonzero elements");
+    }
+
+    #[test]
+    fn test_from_string_deterministic() {
+        let a = HyperMemory::from_string("test_input", DIM_PROLETARIAT);
+        let b = HyperMemory::from_string("test_input", DIM_PROLETARIAT);
+        assert!((a.similarity(&b) - 1.0).abs() < 0.001, "Same string should produce same vector");
+    }
+
+    #[test]
+    fn test_from_string_different_inputs() {
+        let a = HyperMemory::from_string("alpha", DIM_PROLETARIAT);
+        let b = HyperMemory::from_string("beta", DIM_PROLETARIAT);
+        let sim = a.similarity(&b);
+        assert!(sim < 0.9, "Different strings should produce different vectors: {:.4}", sim);
+    }
+
+    #[test]
+    fn test_self_similarity_is_one() {
+        let hm = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let sim = hm.similarity(&hm);
+        assert!((sim - 1.0).abs() < 0.001, "Self-similarity should be ~1.0, got {:.4}", sim);
+    }
+
+    #[test]
+    fn test_bind_produces_result() {
+        let a = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let b = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let bound = a.bind(&b).expect("bind should succeed");
+        assert_eq!(bound.dimensions, DIM_PROLETARIAT);
+    }
+
+    #[test]
+    fn test_bind_dimension_mismatch() {
+        let a = HyperMemory::new(100);
+        let b = HyperMemory::new(200);
+        assert!(a.bind(&b).is_err(), "Mismatched dimensions should fail");
+    }
+
+    #[test]
+    fn test_bundle_combines_vectors() {
+        let a = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let b = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let bundled = HyperMemory::bundle(&[a, b]).expect("bundle should succeed");
+        assert_eq!(bundled.dimensions, DIM_PROLETARIAT);
+    }
+
+    #[test]
+    fn test_permute_changes_vector() {
+        let a = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let permuted = a.permute(1).expect("permute should succeed");
+        let sim = a.similarity(&permuted);
+        assert!(sim < 0.9, "Permuted vector should differ: {:.4}", sim);
+    }
+
+    #[test]
+    fn test_project_reduces_dimension() {
+        let hm = HyperMemory::generate_seed(DIM_BIGBRAIN);
+        let projected = hm.project(DIM_PROLETARIAT).expect("project should succeed");
+        assert_eq!(projected.dimensions, DIM_PROLETARIAT);
+    }
+
+    #[test]
+    fn test_audit_orthogonality() {
+        let hm = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let ortho = hm.audit_orthogonality();
+        // Orthogonality should be a finite number.
+        assert!(ortho.is_finite(), "Orthogonality should be finite");
+    }
+
+    #[test]
+    fn test_export_raw_bitvec() {
+        let hm = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let bits = hm.export_raw_bitvec();
+        assert_eq!(bits.len(), DIM_PROLETARIAT, "Bitvec should match dimensions");
+    }
+
+    #[test]
+    fn test_disk_persistence_round_trip() {
+        let original = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let path = "/tmp/test_hypermemory_persist.bin";
+
+        original.commit_to_disk(path).expect("write should succeed");
+        let loaded = HyperMemory::load_from_disk(path).expect("load should succeed");
+
+        let sim = original.similarity(&loaded);
+        assert!((sim - 1.0).abs() < 0.001, "Loaded vector should be identical: {:.4}", sim);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(DIM_PROLETARIAT, 10000);
+        assert_eq!(DIM_BIGBRAIN, 32768);
+        assert!(DIM_BIGBRAIN > DIM_PROLETARIAT);
+    }
+}

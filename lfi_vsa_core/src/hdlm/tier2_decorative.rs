@@ -122,6 +122,71 @@ impl DecorativeExpander for SExprRenderer {
     }
 }
 
+/// Renders an AST to a JSON-like structured representation.
+/// Useful for API responses and machine-readable output.
+pub struct JsonRenderer;
+
+impl JsonRenderer {
+    fn render_node(&self, ast: &Ast, id: NodeId) -> Result<String, HdlmError> {
+        let node = ast.get_node(id).ok_or(HdlmError::Tier2ExpansionFailed {
+            reason: format!("Node {} not found", id),
+        })?;
+
+        match &node.kind {
+            NodeKind::Root => {
+                if node.children.is_empty() {
+                    return Ok(r#"{"type":"root","children":[]}"#.into());
+                }
+                let children: Vec<String> = node.children.iter()
+                    .filter_map(|&c| self.render_node(ast, c).ok())
+                    .collect();
+                Ok(format!(r#"{{"type":"root","children":[{}]}}"#, children.join(",")))
+            }
+            NodeKind::Literal { value } => {
+                Ok(format!(r#"{{"type":"literal","value":"{}"}}"#, value))
+            }
+            NodeKind::Identifier { name } => {
+                Ok(format!(r#"{{"type":"identifier","name":"{}"}}"#, name))
+            }
+            NodeKind::BinaryOp { operator } => {
+                let children: Vec<String> = node.children.iter()
+                    .filter_map(|&c| self.render_node(ast, c).ok())
+                    .collect();
+                Ok(format!(r#"{{"type":"binop","op":"{}","children":[{}]}}"#,
+                    operator, children.join(",")))
+            }
+            NodeKind::Block { name } => {
+                let children: Vec<String> = node.children.iter()
+                    .filter_map(|&c| self.render_node(ast, c).ok())
+                    .collect();
+                Ok(format!(r#"{{"type":"block","name":"{}","children":[{}]}}"#,
+                    name, children.join(",")))
+            }
+            NodeKind::Sentence => {
+                let children: Vec<String> = node.children.iter()
+                    .filter_map(|&c| self.render_node(ast, c).ok())
+                    .collect();
+                Ok(format!(r#"{{"type":"sentence","children":[{}]}}"#, children.join(",")))
+            }
+            NodeKind::Phrase { text } => {
+                Ok(format!(r#"{{"type":"phrase","text":"{}"}}"#, text))
+            }
+            _ => {
+                Ok(format!(r#"{{"type":"unknown","kind":"{:?}"}}"#, node.kind))
+            }
+        }
+    }
+}
+
+impl DecorativeExpander for JsonRenderer {
+    fn render(&self, ast: &Ast) -> Result<String, HdlmError> {
+        let root = ast.root_id().ok_or(HdlmError::EmptyAst)?;
+        let result = self.render_node(ast, root)?;
+        debuglog!("JsonRenderer::render: {} bytes", result.len());
+        Ok(result)
+    }
+}
+
 // ============================================================
 // Tier 2 Tests — Decorative Expansion Proofs
 // Critical invariant: Tier 2 does not mutate the AST.
@@ -194,6 +259,39 @@ mod tests {
         let ast = Ast::new();
         assert!(InfixRenderer.render(&ast).is_err());
         assert!(SExprRenderer.render(&ast).is_err());
+    }
+
+    #[test]
+    fn test_json_simple() -> Result<(), HdlmError> {
+        let gen = ArithmeticGenerator;
+        let ast = gen.generate_from_tokens(&["+", "1", "2"])?;
+        let output = JsonRenderer.render(&ast)?;
+        assert!(output.contains("binop"), "JSON should contain binop: {}", output);
+        assert!(output.contains("\"1\""), "JSON should contain literal 1");
+        assert!(output.contains("\"2\""), "JSON should contain literal 2");
+        assert!(output.contains("\"+\""), "JSON should contain operator +");
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_does_not_mutate() -> Result<(), HdlmError> {
+        let gen = ArithmeticGenerator;
+        let ast = gen.generate_from_tokens(&["*", "3", "4"])?;
+        let count_before = ast.node_count();
+        let _ = JsonRenderer.render(&ast)?;
+        assert_eq!(ast.node_count(), count_before, "JSON renderer must not mutate AST");
+        Ok(())
+    }
+
+    #[test]
+    fn test_all_three_renderers_produce_output() -> Result<(), HdlmError> {
+        let gen = ArithmeticGenerator;
+        let ast = gen.generate_from_tokens(&["-", "10", "5"])?;
+        let infix = InfixRenderer.render(&ast)?;
+        let sexpr = SExprRenderer.render(&ast)?;
+        let json = JsonRenderer.render(&ast)?;
+        assert!(!infix.is_empty() && !sexpr.is_empty() && !json.is_empty());
+        Ok(())
     }
 
     #[test]

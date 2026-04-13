@@ -28,6 +28,7 @@
 
 use crate::memory_bus::{HyperMemory, DIM_PROLETARIAT};
 use crate::hdc::error::HdcError;
+use crate::reasoning_provenance::{TraceArena, TraceId, InferenceSource};
 use tracing::{info, debug, warn};
 
 /// A motor command — bit-level hex representation of a physical action.
@@ -206,6 +207,49 @@ impl ActiveInferenceCore {
     pub fn total_steps(&self) -> u64 {
         self.step_count
     }
+
+    /// Execute one Active Inference step with reasoning provenance recording.
+    ///
+    /// Identical to [`step`] but records the free energy computation, prediction
+    /// error, and outcome type into the provided trace arena. The `parent_trace`
+    /// links this step to the calling reasoning chain.
+    pub fn step_with_provenance(
+        &mut self,
+        observation: &HyperMemory,
+        arena: &mut TraceArena,
+        parent_trace: Option<TraceId>,
+    ) -> Result<(InferenceOutcome, TraceId), HdcError> {
+        let outcome = self.step(observation)?;
+
+        let (free_energy, prediction_error) = match &outcome {
+            InferenceOutcome::Equilibrium { free_energy } => (*free_energy, 0.0),
+            InferenceOutcome::Act { free_energy, prediction_error, .. } => (*free_energy, *prediction_error),
+            InferenceOutcome::Perceive { free_energy, .. } => (*free_energy, 0.0),
+        };
+
+        let outcome_label = match &outcome {
+            InferenceOutcome::Equilibrium { .. } => "Equilibrium",
+            InferenceOutcome::Act { .. } => "Act",
+            InferenceOutcome::Perceive { .. } => "Perceive",
+        };
+
+        let trace_id = arena.record_step(
+            parent_trace,
+            InferenceSource::ActiveInferenceStep {
+                free_energy,
+                prediction_error,
+            },
+            vec![format!("step_{}", self.step_count)],
+            1.0 - free_energy, // confidence = inverse of free energy (low F = high confidence)
+            None,
+            format!("Active Inference step {}: {} (F={:.4}, pred_err={:.4}, EMA={:.4})",
+                self.step_count, outcome_label, free_energy, prediction_error, self.free_energy_ema),
+            0,
+        );
+
+        debuglog!("ActiveInferenceCore::step_with_provenance: trace_id={}, outcome={}", trace_id, outcome_label);
+        Ok((outcome, trace_id))
+    }
 }
 
 #[cfg(test)]
@@ -298,5 +342,52 @@ mod tests {
             assert_eq!(command.hex_payload[1], 0x55, "UART header byte 2");
             assert!(command.hex_payload.len() == 4, "Command should be 4 bytes");
         }
+    }
+
+    #[test]
+    fn test_step_with_provenance_records_trace() {
+        let model = HyperMemory::new(DIM_PROLETARIAT);
+        let mut core = ActiveInferenceCore::new(model.clone());
+        core.set_target(model.clone());
+
+        let mut arena = TraceArena::new();
+        let (outcome, trace_id) = core
+            .step_with_provenance(&model, &mut arena, None)
+            .expect("step should succeed");
+
+        assert!(matches!(outcome, InferenceOutcome::Equilibrium { .. }));
+        assert_eq!(arena.len(), 1);
+
+        let entry = arena.get(trace_id).expect("trace should exist");
+        assert!(
+            matches!(entry.source, InferenceSource::ActiveInferenceStep { .. }),
+            "Source should be ActiveInferenceStep, got {:?}", entry.source
+        );
+        // Equilibrium → low free energy → high confidence
+        assert!(entry.confidence > 0.5, "Equilibrium should have high confidence");
+    }
+
+    #[test]
+    fn test_step_with_provenance_chains_multiple_steps() {
+        let model = HyperMemory::new(DIM_PROLETARIAT);
+        let mut core = ActiveInferenceCore::new(model.clone());
+        core.set_target(HyperMemory::generate_seed(DIM_PROLETARIAT));
+
+        let mut arena = TraceArena::new();
+        let mut last_trace = None;
+
+        // Run 3 chained steps.
+        for _ in 0..3 {
+            let (_, trace_id) = core
+                .step_with_provenance(&model, &mut arena, last_trace)
+                .expect("step should succeed");
+            last_trace = Some(trace_id);
+        }
+
+        assert_eq!(arena.len(), 3, "Should have 3 trace entries");
+
+        // The last entry should chain back through all 3.
+        let chain = arena.trace_chain(last_trace.expect("last trace exists"));
+        assert_eq!(chain.len(), 3, "Chain should span all 3 steps");
     }
 }
