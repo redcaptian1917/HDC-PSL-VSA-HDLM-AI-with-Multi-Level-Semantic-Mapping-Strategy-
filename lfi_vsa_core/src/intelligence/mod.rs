@@ -25,6 +25,7 @@ pub mod continuous_intel;
 pub mod concurrent;
 pub mod answer_verifier;
 pub mod phd_tests;
+pub mod textbook_learning;
 
 pub use osint::{OsintAnalyzer, OsintSignal};
 pub use web_audit::ConnectivityAxiom;
