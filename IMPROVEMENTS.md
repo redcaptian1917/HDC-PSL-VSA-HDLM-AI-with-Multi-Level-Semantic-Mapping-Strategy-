@@ -329,8 +329,14 @@ Deliberately tricky, misleading, and edge-case questions across all 38 domains. 
 
 ### Planned — Medium Priority
 
-#### Spaced Repetition Scheduler
-Time-based concept review scheduling. Track when concepts were last reinforced, schedule re-testing of decaying concepts. Optimal review intervals based on mastery and forgetting curve.
+#### Spaced Repetition Scheduler — ✅ DONE (2026-04-14)
+- [x] `cognition::spaced_repetition::SpacedRepetitionScheduler` — SM-2 / Leitner hybrid
+- [x] `ReviewCard` per concept: ease-factor (clamped to [1.3, 2.5]), interval days, streak, review/failure counts
+- [x] `review(name, q)` — quality 0–5, q<3 resets, q≥3 grows interval (1d → 6d → prev*EF)
+- [x] `due_now(now_ms)` / `top_due(n)` — return overdue cards, sorted by most-overdue first
+- [x] JSON serialize/deserialize with 16 MiB DoS guard
+- [x] Never invents reviews for unregistered concepts (invariant test)
+- [x] 12 new tests (1034 → 1046 lib tests)
 
 #### Distributed Inference
 Split training work across multiple Ollama instances on different machines. Useful when laptop + VPS both run Ollama.

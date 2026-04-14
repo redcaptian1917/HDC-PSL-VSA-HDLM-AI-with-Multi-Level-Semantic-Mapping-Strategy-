@@ -11,6 +11,7 @@ pub mod world_model;
 pub mod active_inference;
 pub mod metacognitive;
 pub mod knowledge_compiler;
+pub mod spaced_repetition;
 
 pub use planner::{Plan, PlanStep, StepStatus, Planner};
 pub use reasoner::{CognitiveMode, CognitiveCore, ThoughtResult};
@@ -21,3 +22,4 @@ pub use world_model::WorldModel;
 pub use active_inference::ActiveInferenceCore;
 pub use metacognitive::{MetaCognitiveProfiler, CognitiveDomain, PerformanceRecord, ImprovementTarget};
 pub use knowledge_compiler::{KnowledgeCompiler, AccelerationMetrics, CompiledEntry};
+pub use spaced_repetition::{SpacedRepetitionScheduler, ReviewCard};
