@@ -911,6 +911,78 @@ impl KnowledgeEngine {
     }
 
     /// Get a knowledge summary: total concepts, average mastery, top gaps.
+    /// Export the concept graph as a Graphviz DOT file.
+    ///
+    /// Nodes are colored by mastery (green ≥ 0.7, yellow ≥ 0.4, red otherwise).
+    /// Edges connect concepts listed in `related_concepts`. Useful for
+    /// visualizing what LFI knows and how concepts interrelate.
+    pub fn export_graph_dot(&self) -> String {
+        debuglog!("KnowledgeEngine::export_graph_dot: exporting {} concepts", self.concepts.len());
+        let mut out = String::from("digraph KnowledgeGraph {\n");
+        out.push_str("  rankdir=LR;\n");
+        out.push_str("  node [shape=box, style=rounded, fontname=\"Helvetica\"];\n");
+
+        for concept in &self.concepts {
+            let color = if concept.mastery >= 0.7 {
+                "palegreen"
+            } else if concept.mastery >= 0.4 {
+                "lightyellow"
+            } else {
+                "mistyrose"
+            };
+            // Escape quotes in names for DOT safety.
+            let safe_name = concept.name.replace('"', "\\\"");
+            out.push_str(&format!(
+                "  \"{}\" [label=\"{}\\nmastery: {:.0}%\\nseen: {}\", fillcolor={}, style=\"rounded,filled\"];\n",
+                safe_name, safe_name, concept.mastery * 100.0,
+                concept.encounter_count, color
+            ));
+        }
+
+        // Only emit edges for concepts that exist on both sides.
+        let known: std::collections::HashSet<&str> =
+            self.concepts.iter().map(|c| c.name.as_str()).collect();
+        for concept in &self.concepts {
+            for related in &concept.related_concepts {
+                if known.contains(related.as_str()) {
+                    let safe_from = concept.name.replace('"', "\\\"");
+                    let safe_to = related.replace('"', "\\\"");
+                    out.push_str(&format!("  \"{}\" -> \"{}\";\n", safe_from, safe_to));
+                }
+            }
+        }
+
+        out.push_str("}\n");
+        out
+    }
+
+    /// Export the concept graph as a JSON document: nodes + edges.
+    ///
+    /// Useful for D3/Cytoscape/Mermaid-Live visualizations in a dashboard.
+    pub fn export_graph_json(&self) -> String {
+        debuglog!("KnowledgeEngine::export_graph_json: exporting {} concepts", self.concepts.len());
+
+        let nodes: Vec<serde_json::Value> = self.concepts.iter().map(|c| {
+            serde_json::json!({
+                "id": c.name,
+                "mastery": c.mastery,
+                "encounter_count": c.encounter_count,
+                "trust_score": c.trust_score,
+                "definition": c.definition,
+            })
+        }).collect();
+
+        let known: std::collections::HashSet<&str> =
+            self.concepts.iter().map(|c| c.name.as_str()).collect();
+        let edges: Vec<serde_json::Value> = self.concepts.iter().flat_map(|c| {
+            c.related_concepts.iter()
+                .filter(|r| known.contains(r.as_str()))
+                .map(move |r| serde_json::json!({ "from": c.name, "to": r }))
+        }).collect();
+
+        serde_json::json!({ "nodes": nodes, "edges": edges }).to_string()
+    }
+
     pub fn summary(&self) -> KnowledgeSummary {
         let total = self.concepts.len();
         let avg_mastery = if total > 0 {
@@ -946,6 +1018,56 @@ pub struct KnowledgeSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_export_graph_dot_has_all_concepts_and_edges() -> Result<(), HdcError> {
+        let engine = KnowledgeEngine::new();
+        let dot = engine.export_graph_dot();
+        assert!(dot.starts_with("digraph KnowledgeGraph {"));
+        assert!(dot.ends_with("}\n"));
+        // At least one mastery/color marker present.
+        assert!(
+            dot.contains("palegreen") || dot.contains("lightyellow") || dot.contains("mistyrose"),
+            "DOT must color-code nodes by mastery"
+        );
+        // Every seeded concept shows up as a node label.
+        for c in engine.concepts() {
+            assert!(dot.contains(&c.name),
+                "DOT must contain concept '{}'", c.name);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_export_graph_json_parses_and_has_nodes_edges() -> Result<(), HdcError> {
+        let engine = KnowledgeEngine::new();
+        let json = engine.export_graph_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert!(parsed.get("nodes").and_then(|v| v.as_array()).is_some(),
+            "JSON must have nodes array");
+        assert!(parsed.get("edges").and_then(|v| v.as_array()).is_some(),
+            "JSON must have edges array");
+        let nodes_len = parsed["nodes"].as_array().unwrap().len();
+        assert_eq!(nodes_len, engine.concept_count(),
+            "JSON nodes count must equal concept count");
+        Ok(())
+    }
+
+    #[test]
+    fn test_export_graph_only_emits_edges_to_known_concepts() -> Result<(), HdcError> {
+        // An edge whose target is unknown must be silently dropped —
+        // the graph should never reference a concept that doesn't exist
+        // as a node. Otherwise visualizations will show orphan arrows.
+        let mut engine = KnowledgeEngine::new();
+        engine.learn("quantum_test_concept_xyz", &["totally_made_up_unknown_target"], true)?;
+        let dot = engine.export_graph_dot();
+        assert!(!dot.contains("totally_made_up_unknown_target"),
+            "DOT must not reference unknown concepts in edges");
+        let json = engine.export_graph_json();
+        assert!(!json.contains("totally_made_up_unknown_target"),
+            "JSON must not reference unknown concepts in edges");
+        Ok(())
+    }
 
     #[test]
     fn test_knowledge_engine_initialization() -> Result<(), HdcError> {

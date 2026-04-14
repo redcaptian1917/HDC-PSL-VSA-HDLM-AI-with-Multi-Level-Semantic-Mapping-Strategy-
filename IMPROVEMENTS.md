@@ -305,8 +305,10 @@ Deliberately tricky, misleading, and edge-case questions across all 38 domains. 
 #### Self-Play Provenance Integration
 Wire traces into MCTS thesis-antithesis-synthesis self-play episodes. Each synthesis records a full trace chain. Traces persist across episodes for strategy evolution analysis.
 
-#### Knowledge Graph Export
-Serialize the learned concept graph (concepts, relationships, mastery levels) as DOT/JSON for visualization. Show what LFI knows and how concepts connect.
+#### Knowledge Graph Export — ✅ DONE (2026-04-14)
+- [x] `KnowledgeEngine::export_graph_dot()` — Graphviz DOT format with nodes colored by mastery (green ≥0.7, yellow ≥0.4, red otherwise). Edges only emitted to concepts that exist as nodes (no orphan arrows).
+- [x] `KnowledgeEngine::export_graph_json()` — `{nodes, edges}` shape for D3/Cytoscape/Mermaid.
+- [x] 3 new tests: DOT contains all concepts + color-coded, JSON parses with correct node count, unknown-concept edges are dropped from both formats.
 
 #### Provenance Serialization — ✅ DONE (2026-04-14)
 - [x] `serde::Serialize` / `Deserialize` on `TraceEntry` and `TraceArena`
