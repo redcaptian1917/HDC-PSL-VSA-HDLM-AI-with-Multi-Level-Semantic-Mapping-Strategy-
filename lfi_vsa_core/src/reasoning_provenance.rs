@@ -111,7 +111,7 @@ pub enum InferenceSource {
 ///
 /// Each entry records one inference step: what went in, what rule
 /// was applied, what came out, and how confident we are.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceEntry {
     /// Unique ID within the trace arena.
     pub id: TraceId,
@@ -159,6 +159,7 @@ pub struct ProvenancedExplanation {
 ///
 /// Follows the same pattern as `hdlm::ast::Ast`: entries stored in a Vec,
 /// referenced by TraceId. Cache-friendly traversal, O(1) insertion.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TraceArena {
     /// All trace entries, arena-allocated.
     entries: Vec<TraceEntry>,
@@ -326,6 +327,48 @@ impl TraceArena {
     /// Count of entries with zero references (logically dead).
     pub fn dead_count(&self) -> usize {
         self.ref_counts.iter().filter(|&&rc| rc == 0).count()
+    }
+
+    /// Serialize the arena to a JSON string for persistence.
+    /// BUG ASSUMPTION: untrusted JSON — caller must bound input size before deserializing.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        debuglog!("TraceArena::to_json: serializing {} entries", self.entries.len());
+        serde_json::to_string(self)
+    }
+
+    /// Deserialize an arena from a JSON string.
+    /// SECURITY: rejects inputs larger than 64 MiB before parsing (DoS guard).
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        const MAX_ARENA_JSON_BYTES: usize = 64 * 1024 * 1024;
+        if json.len() > MAX_ARENA_JSON_BYTES {
+            debuglog!("TraceArena::from_json: REJECTED — input {} bytes exceeds {} limit",
+                json.len(), MAX_ARENA_JSON_BYTES);
+            return Err(serde::de::Error::custom("trace arena JSON exceeds 64 MiB limit"));
+        }
+        let arena: Self = serde_json::from_str(json)?;
+        debuglog!("TraceArena::from_json: loaded {} entries", arena.entries.len());
+        Ok(arena)
+    }
+
+    /// Save the arena to a file at the given path.
+    pub fn save_to_path(&self, path: &std::path::Path) -> std::io::Result<()> {
+        debuglog!("TraceArena::save_to_path: {:?}", path);
+        let json = self.to_json().map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, json)
+    }
+
+    /// Load an arena from a file at the given path.
+    pub fn load_from_path(path: &std::path::Path) -> std::io::Result<Self> {
+        debuglog!("TraceArena::load_from_path: {:?}", path);
+        let json = std::fs::read_to_string(path)?;
+        Self::from_json(&json).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+        })
     }
 
     /// Compact the arena by removing dead entries. Returns count removed.
@@ -907,6 +950,96 @@ mod tests {
             ProvenanceKind::TracedDerivation,
             "Zero-confidence trace is still a TRACE, not a reconstruction"
         );
+    }
+
+    #[test]
+    fn test_trace_arena_roundtrip_json() {
+        // Build a small arena, serialize it, deserialize it, verify equivalence.
+        let mut arena = TraceArena::new();
+        let root = arena.record_step(
+            None,
+            InferenceSource::ExternalAssertion { source: "root".into() },
+            vec!["premise".into()],
+            1.0, None, "root step".into(), 10,
+        );
+        let child = arena.record_step(
+            Some(root),
+            InferenceSource::PslAxiomEvaluation {
+                axiom_id: "Dimensionality".into(),
+                relevance: 0.9,
+            },
+            vec!["psl".into()],
+            0.87, Some(42), "axiom pass".into(), 150,
+        );
+
+        let json = arena.to_json().expect("serialize");
+        let restored = TraceArena::from_json(&json).expect("deserialize");
+
+        assert_eq!(restored.len(), arena.len());
+        let entry = restored.get(child).expect("child survives roundtrip");
+        assert_eq!(entry.parent, Some(root));
+        assert!((entry.confidence - 0.87).abs() < 1e-9);
+        // Conclusion index survives.
+        assert_eq!(restored.traces_for_conclusion(42), vec![child]);
+        // Chain still walks.
+        assert_eq!(restored.trace_chain(child), vec![child, root]);
+    }
+
+    #[test]
+    fn test_trace_arena_roundtrip_file() {
+        let mut arena = TraceArena::new();
+        arena.record_step(
+            None,
+            InferenceSource::System2Deliberation { iterations: 50 },
+            vec![], 0.77, Some(7), "persisted".into(), 0,
+        );
+
+        let dir = std::env::temp_dir().join(format!("lfi_provenance_test_{}",
+            std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let path = dir.join("arena.json");
+
+        arena.save_to_path(&path).expect("save");
+        let restored = TraceArena::load_from_path(&path).expect("load");
+        assert_eq!(restored.len(), 1);
+        assert!(restored.best_trace_for_conclusion(7).is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_from_json_rejects_oversize_input() {
+        // SECURITY: guards against memory-exhaustion via giant JSON payloads.
+        let huge = "a".repeat(64 * 1024 * 1024 + 1);
+        let result = TraceArena::from_json(&huge);
+        assert!(result.is_err(), "must reject >64 MiB input");
+    }
+
+    #[test]
+    fn test_trace_entry_serializes_with_inference_source() {
+        // Every InferenceSource variant must survive roundtrip so an audit
+        // log of traces can be replayed into a fresh ProvenanceEngine.
+        let entry = TraceEntry {
+            id: 0,
+            parent: None,
+            source: InferenceSource::MctsExpansion {
+                action: "Specialize".into(),
+                node_depth: 3,
+            },
+            premise_labels: vec!["a".into(), "b".into()],
+            confidence: 0.93,
+            timestamp_ms: 1234567890,
+            cost_us: 250,
+            conclusion_id: Some(99),
+            description: "mcts step".into(),
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        assert!(json.contains("MctsExpansion"));
+        assert!(json.contains("Specialize"));
+        let decoded: TraceEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.id, 0);
+        assert_eq!(decoded.confidence, 0.93);
+        assert_eq!(decoded.conclusion_id, Some(99));
     }
 
     #[test]

@@ -308,8 +308,11 @@ Wire traces into MCTS thesis-antithesis-synthesis self-play episodes. Each synth
 #### Knowledge Graph Export
 Serialize the learned concept graph (concepts, relationships, mastery levels) as DOT/JSON for visualization. Show what LFI knows and how concepts connect.
 
-#### Provenance Serialization
-`serde::Serialize` / `Deserialize` on `TraceEntry` and `TraceArena`. Traces survive process restarts via the knowledge persistence layer.
+#### Provenance Serialization — ✅ DONE (2026-04-14)
+- [x] `serde::Serialize` / `Deserialize` on `TraceEntry` and `TraceArena`
+- [x] `TraceArena::to_json()` / `from_json()` with 64 MiB DoS guard
+- [x] `TraceArena::save_to_path()` / `load_from_path()` for disk persistence
+- [x] 4 new tests: roundtrip JSON, roundtrip file, oversize rejection, InferenceSource variants survive
 
 #### Provenance Query API
 REST endpoints via `api.rs`:
