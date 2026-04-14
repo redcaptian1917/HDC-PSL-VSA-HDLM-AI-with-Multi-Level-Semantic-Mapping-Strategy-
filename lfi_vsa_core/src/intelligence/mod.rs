@@ -19,6 +19,7 @@ pub mod cross_domain;
 pub mod math_engine;
 pub mod daemon;
 pub mod defensive_ai;
+pub mod epistemic_filter;
 
 pub use osint::{OsintAnalyzer, OsintSignal};
 pub use web_audit::ConnectivityAxiom;
