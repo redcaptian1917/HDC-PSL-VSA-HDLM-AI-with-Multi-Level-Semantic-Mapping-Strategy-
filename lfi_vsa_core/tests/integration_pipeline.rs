@@ -247,3 +247,82 @@ fn test_knowledge_driven_reasoning() {
     assert!(result.confidence > 0.0, "Should produce a result with some confidence");
     assert!(result.intent.is_some(), "Should detect an intent");
 }
+
+// ============================================================
+// LfiAgent end-to-end provenance flow
+// ============================================================
+
+/// Think → provenance arena → query: the full loop an API user would take.
+#[test]
+fn test_agent_think_then_query_provenance() {
+    use lfi_vsa_core::agent::LfiAgent;
+
+    let mut agent = LfiAgent::new().expect("agent init");
+    let input = "what is information sovereignty";
+    let (_result, cid) = agent.think_traced(input).expect("think_traced");
+    assert_eq!(cid, LfiAgent::conclusion_id_for_input(input));
+
+    let engine = agent.provenance.lock();
+    let explanation = engine.explain_conclusion(cid);
+    assert_eq!(explanation.kind, ProvenanceKind::TracedDerivation,
+        "think_traced must produce TracedDerivation");
+    assert!(!explanation.trace_chain.is_empty(),
+        "chain must not be empty after think_traced");
+    for &tid in &explanation.trace_chain {
+        assert!(engine.arena.get(tid).is_some(),
+            "chain references must resolve to live entries");
+    }
+}
+
+/// Chat → provenance: same invariant via the conversational path.
+#[test]
+fn test_agent_chat_then_query_provenance() {
+    use lfi_vsa_core::agent::LfiAgent;
+
+    let mut agent = LfiAgent::new().expect("agent init");
+    let (_resp, cid) = agent.chat_traced("hello who are you").expect("chat_traced");
+
+    let engine = agent.provenance.lock();
+    let explanation = engine.explain_conclusion(cid);
+    assert_eq!(explanation.kind, ProvenanceKind::TracedDerivation,
+        "chat_traced must produce TracedDerivation");
+}
+
+/// Multiple thinks accumulate distinct traces.
+#[test]
+fn test_multiple_thinks_accumulate_distinct_traces() {
+    use lfi_vsa_core::agent::LfiAgent;
+
+    let mut agent = LfiAgent::new().expect("agent init");
+    let (_, cid_a) = agent.think_traced("what is a hypervector").expect("think a");
+    let (_, cid_b) = agent.think_traced("define probabilistic soft logic").expect("think b");
+    let (_, cid_c) = agent.think_traced("explain active inference").expect("think c");
+
+    let engine = agent.provenance.lock();
+    assert_eq!(engine.explain_conclusion(cid_a).kind, ProvenanceKind::TracedDerivation);
+    assert_eq!(engine.explain_conclusion(cid_b).kind, ProvenanceKind::TracedDerivation);
+    assert_eq!(engine.explain_conclusion(cid_c).kind, ProvenanceKind::TracedDerivation);
+    assert!(engine.trace_count() >= 3);
+}
+
+/// Exporting and re-importing the arena preserves query results.
+#[test]
+fn test_export_reimport_preserves_queries() {
+    use lfi_vsa_core::agent::LfiAgent;
+    use lfi_vsa_core::reasoning_provenance::TraceArena;
+
+    let mut agent = LfiAgent::new().expect("agent init");
+    let (_, cid) = agent.think_traced("test input for export").expect("think");
+
+    let json = {
+        let engine = agent.provenance.lock();
+        engine.arena.to_json().expect("serialize")
+    };
+
+    let restored = TraceArena::from_json(&json).expect("deserialize");
+    assert!(restored.len() >= 1);
+    assert!(
+        restored.best_trace_for_conclusion(cid).is_some(),
+        "Restored arena must still answer queries for original cid"
+    );
+}
