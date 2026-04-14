@@ -38,6 +38,7 @@ pub mod network_anomaly;
 pub mod prompt_firewall;
 pub mod honey_tokens;
 pub mod audit_log;
+pub mod config;
 
 pub use osint::{OsintAnalyzer, OsintSignal};
 pub use web_audit::ConnectivityAxiom;
