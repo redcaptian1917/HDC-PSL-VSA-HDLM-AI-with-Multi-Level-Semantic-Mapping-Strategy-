@@ -217,15 +217,19 @@ mod tests {
 
     #[test]
     fn test_qos_audit_nominal() {
-        // Use relaxed policy — real system may be PRoot with <1GB RAM
+        // Use relaxed policy — real system may be PRoot with <1GB RAM.
+        // Thermal threshold raised: laptops during testing can hit 80°C+
+        // under load (gaming, compilation). This tests the logic, not the
+        // specific environmental state.
         let policy = QosPolicy {
             min_ram_bridge_mb: 64,   // PRoot-safe threshold
             min_ram_bigbrain_mb: 256,
+            max_cpu_temp_c: 95.0,    // Allow hot test environments
             ..QosPolicy::default()
         };
         let auditor = QosAuditor::with_policy(policy);
         let report = auditor.audit(1.0);
-        assert!(report.passed, "Nominal conditions should pass QoS with relaxed RAM policy");
+        assert!(report.passed, "Nominal conditions should pass QoS with relaxed policy");
         assert_eq!(report.critical_failures, 0, "No critical failures expected");
     }
 
