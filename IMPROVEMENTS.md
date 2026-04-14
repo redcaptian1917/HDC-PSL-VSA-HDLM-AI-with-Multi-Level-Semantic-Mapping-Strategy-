@@ -297,8 +297,11 @@ Connect InferenceTrainer to actual Ollama models (deepseek-r1:8b, qwen2.5-coder:
 #### Training Data Augmentation
 Auto-generate question variations from existing 300 examples. Rephrasings, harder versions, and related questions. Target: 300→1000+ effective examples. Template-based and domain-specific transformations.
 
-#### Adversarial Training Examples
-Deliberately tricky, misleading, and edge-case questions across all 38 domains. Common misconceptions, ambiguous phrasings, trap questions. Teaches LFI to handle real-world messy inputs.
+#### Adversarial Training Examples — ✅ EXPANDED (2026-04-14)
+- [x] 4 new categories: `historical_misconceptions`, `linguistic_traps`, `security_edge_cases`, `math_traps`
+- [x] 5 new `injection_attempts` variants: markdown injection, social engineering, educational pretext, base64 evasion, grandma-exploit
+- [x] Adversarial corpus: 35 → 60+ examples
+- [x] 2 new tests enforce category population + adversarial-marker tagging invariant
 
 ### Planned — High Priority
 
