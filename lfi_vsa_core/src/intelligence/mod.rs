@@ -35,6 +35,9 @@ pub mod secret_scanner;
 pub mod data_poisoning;
 pub mod model_extraction;
 pub mod network_anomaly;
+pub mod prompt_firewall;
+pub mod honey_tokens;
+pub mod audit_log;
 
 pub use osint::{OsintAnalyzer, OsintSignal};
 pub use web_audit::ConnectivityAxiom;
