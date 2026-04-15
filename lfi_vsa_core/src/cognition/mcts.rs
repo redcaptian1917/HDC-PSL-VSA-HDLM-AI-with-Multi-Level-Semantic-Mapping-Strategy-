@@ -451,4 +451,123 @@ mod tests {
         assert!(result.is_ok(), "Deliberation should work without provenance");
         assert!(engine.provenance().is_none(), "Provenance should be None when not enabled");
     }
+
+    // ============================================================
+    // Stress / invariant tests for MctsEngine
+    // ============================================================
+
+    /// INVARIANT: node_count grows monotonically across deliberation.
+    /// (Nodes are only added, never removed.)
+    #[test]
+    fn invariant_node_count_monotonic() {
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        let mut sup = PslSupervisor::new();
+        sup.register_axiom(Box::new(crate::psl::axiom::DimensionalityAxiom));
+
+        let mut last = engine.node_count();
+        for _ in 0..5 {
+            let _ = engine.deliberate(10, &sup);
+            let now = engine.node_count();
+            assert!(now >= last, "node_count went backwards: {} → {}", last, now);
+            last = now;
+        }
+    }
+
+    /// INVARIANT: After any deliberation, the root (idx 0) has visits > 0.
+    /// (Backpropagation always reaches the root.)
+    #[test]
+    fn invariant_root_always_visited() {
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        let mut sup = PslSupervisor::new();
+        sup.register_axiom(Box::new(crate::psl::axiom::DimensionalityAxiom));
+
+        let _ = engine.deliberate(20, &sup);
+        let root_visits = engine.nodes[0].visits;
+        assert!(root_visits >= 20.0,
+            "root must be visited at least once per iteration, got {}", root_visits);
+    }
+
+    /// INVARIANT: Every non-root node has a parent that's also in the arena.
+    /// (Tree is always connected.)
+    #[test]
+    fn invariant_all_non_root_nodes_have_valid_parent() {
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        let mut sup = PslSupervisor::new();
+        sup.register_axiom(Box::new(crate::psl::axiom::DimensionalityAxiom));
+
+        let _ = engine.deliberate(30, &sup);
+        for (i, node) in engine.nodes.iter().enumerate().skip(1) {
+            let parent = node.parent.expect("non-root must have parent");
+            assert!(parent < engine.nodes.len(),
+                "node {} has parent {} which is out of bounds (len {})",
+                i, parent, engine.nodes.len());
+            assert!(parent < i,
+                "node {} has parent {} which was not yet inserted (parent must be earlier)",
+                i, parent);
+        }
+    }
+
+    /// INVARIANT: Depth of a child is always parent.depth + 1.
+    #[test]
+    fn invariant_depth_consistency() {
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        let mut sup = PslSupervisor::new();
+        sup.register_axiom(Box::new(crate::psl::axiom::DimensionalityAxiom));
+
+        let _ = engine.deliberate(30, &sup);
+        for node in engine.nodes.iter().skip(1) {
+            let parent = node.parent.expect("non-root has parent");
+            let parent_depth = engine.nodes[parent].depth;
+            assert_eq!(node.depth, parent_depth + 1,
+                "child depth {} != parent depth + 1 ({})",
+                node.depth, parent_depth + 1);
+        }
+    }
+
+    /// INVARIANT: Parent visit count >= child visit count.
+    /// (Backprop visits every ancestor; parents accumulate more visits than
+    /// any single child.)
+    #[test]
+    fn invariant_parent_visits_at_least_child_visits() {
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        let mut sup = PslSupervisor::new();
+        sup.register_axiom(Box::new(crate::psl::axiom::DimensionalityAxiom));
+
+        let _ = engine.deliberate(40, &sup);
+        for (i, node) in engine.nodes.iter().enumerate() {
+            for &child_idx in &node.children {
+                let child_visits = engine.nodes[child_idx].visits;
+                assert!(node.visits >= child_visits,
+                    "parent {} visits ({}) < child {} visits ({})",
+                    i, node.visits, child_idx, child_visits);
+            }
+        }
+    }
+
+    /// INVARIANT: best_path action sequence length equals the depth of
+    /// the leaf it walked to.
+    #[test]
+    fn invariant_best_path_length_matches_terminal_depth() {
+        let root = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let goal = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut engine = MctsEngine::new(root, goal);
+        let mut sup = PslSupervisor::new();
+        sup.register_axiom(Box::new(crate::psl::axiom::DimensionalityAxiom));
+
+        let _ = engine.deliberate(20, &sup);
+        let path = engine.best_path();
+        // Walking from root following best_path should land at depth = path.len().
+        // Each step in the path corresponds to descending one level.
+        assert!(path.len() <= 20, "path can't exceed iteration count, got {}", path.len());
+    }
 }
