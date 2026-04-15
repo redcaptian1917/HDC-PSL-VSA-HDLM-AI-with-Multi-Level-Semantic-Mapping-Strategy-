@@ -1111,6 +1111,59 @@ impl TrainingDataGenerator {
         ]
     }
 
+    /// Reasoning provenance — the core defining feature of LFI.
+    /// Teaches the agent to articulate when an answer is traced vs reconstructed.
+    pub fn reasoning_provenance_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("reasoning_provenance", "What is a derivation trace?", "a structural record of every inference step that produced a conclusion — premises, rule applied, confidence, parent step", 0.4, &["concepts", "provenance"]),
+            TrainingExample::new("reasoning_provenance", "What is the difference between a TracedDerivation and a ReconstructedRationalization?", "Traced: the actual reasoning path was recorded and is replayable. Reconstructed: a plausible explanation generated after the fact, may not match real reasoning.", 0.5, &["concepts", "core_invariant"]),
+            TrainingExample::new("reasoning_provenance", "Why is post-hoc rationalization a problem in LLMs?", "models confidently invent explanations that sound coherent but don't reflect the actual computation — users mistake fluency for honesty", 0.5, &["concepts", "llm_failure"]),
+            TrainingExample::new("reasoning_provenance", "How does LFI distinguish recall from confabulation?", "the ProvenanceKind enum tag — TracedDerivation only when an arena entry exists for the conclusion ID, ReconstructedRationalization otherwise", 0.6, &["concepts", "lfi_specific"]),
+            TrainingExample::new("reasoning_provenance", "What is a TraceArena?", "an arena allocator (Vec<TraceEntry>) where every inference step is recorded — referenced by TraceId, supports parent-chain traversal", 0.4, &["concepts", "data_structure"]),
+            TrainingExample::new("reasoning_provenance", "What is a conclusion ID?", "a u64 that names a conclusion the system reached — used to look up the trace chain that produced it", 0.3, &["concepts"]),
+            TrainingExample::new("reasoning_provenance", "What is the depth of a derivation chain?", "the number of parent hops from the leaf entry back to the root premise — depth=0 means the conclusion is its own premise", 0.4, &["concepts"]),
+            TrainingExample::new("reasoning_provenance", "Why must trace serialization include a size cap?", "untrusted arena JSON could be unbounded and exhaust memory at parse time — LFI rejects > 64 MiB before deserializing", 0.5, &["security", "dos_guard"]),
+            TrainingExample::new("reasoning_provenance", "What happens when you query an unknown conclusion ID?", "ProvenanceEngine returns ReconstructedRationalization with a reason field — never fakes a Traced result", 0.4, &["concepts", "core_invariant"]),
+            TrainingExample::new("reasoning_provenance", "What is the InferenceSource enum?", "tags which subsystem produced a trace step: PslAxiomEvaluation, MctsExpansion, ActiveInferenceStep, System1FastPath, System2Deliberation, etc.", 0.4, &["concepts", "taxonomy"]),
+            TrainingExample::new("reasoning_provenance", "Why does LFI record provenance during chat?", "every answer should be queryable for its derivation — chat_traced links the response to a TracedDerivation the user can audit", 0.5, &["design", "ux"]),
+            TrainingExample::new("reasoning_provenance", "What does compaction do to the arena?", "removes entries whose ref_count is 0 and remaps surviving TraceIds — invalidates external references, so call only between sessions", 0.5, &["operations", "memory"]),
+            TrainingExample::new("reasoning_provenance", "Why is provenance a structural rather than behavioral guarantee?", "the TracedDerivation tag is set only when the arena has an entry — the system literally cannot return Traced for an empty arena", 0.6, &["design", "invariants"]),
+            TrainingExample::new("reasoning_provenance", "How does self-play use provenance?", "each thesis-antithesis-synthesis episode records its full chain, persists to ~/.lfi/provenance/self_play_gen_<N>.json so strategy evolution is analyzable", 0.5, &["operations"]),
+            TrainingExample::new("reasoning_provenance", "What is the best_trace_for_conclusion invariant?", "for any cid with multiple traces, the engine returns the entry with the highest confidence — verified by adversarial test", 0.4, &["invariants"]),
+            TrainingExample::new("reasoning_provenance", "Why does LFI cap confidence at 99.99%?", "asymptotic confidence — even formal derivations leave room for systemic error or adversarial input that we haven't yet reasoned about", 0.5, &["philosophy", "calibration"]),
+            TrainingExample::new("reasoning_provenance", "What is the TimingConsistencyAxiom?", "would detect uniform timing across operations as a side-channel signature — currently not implemented but planned", 0.6, &["future_work"]),
+            TrainingExample::new("reasoning_provenance", "How does provenance integrate with PSL?", "audit_with_provenance records each axiom evaluation as a trace entry chained to the calling reasoning step", 0.5, &["integration", "psl"]),
+            TrainingExample::new("reasoning_provenance", "What is the ConfidenceCalibrationAxiom?", "a PSL axiom that fails vectors whose mean exceeds ±0.5 — degenerate or adversarial inputs masquerading as confident outputs", 0.5, &["psl_axioms", "calibration"]),
+            TrainingExample::new("reasoning_provenance", "Why does the EpistemicLedger require provenance?", "commit_belief_with_provenance tags every commitment Traced or Reconstructed — beliefs without traces cannot be presented as derived knowledge", 0.6, &["crypto_epistemology"]),
+            TrainingExample::new("reasoning_provenance", "What is a ProvenanceEngine?", "the wrapper around TraceArena that exposes the introspection API — explain_conclusion, trace_for_conclusion, confidence_chain", 0.4, &["concepts"]),
+            TrainingExample::new("reasoning_provenance", "Why is reclamation safety important?", "after release+compact, queries for cleared cids must return Reconstructed — never accidentally claim a deleted derivation as Traced", 0.6, &["invariants", "safety"]),
+            TrainingExample::new("reasoning_provenance", "How does the HTTP API expose provenance?", "GET /api/provenance/:cid returns kind+chain, /:cid/chain returns full TraceEntry list, /export dumps the arena (auth required)", 0.4, &["api"]),
+            TrainingExample::new("reasoning_provenance", "What is the Provenance Query API auth model?", "read endpoints (stats, :cid, :cid/chain) are open; admin endpoints (export, reset, compact) require agent.authenticated", 0.5, &["api", "security"]),
+            TrainingExample::new("reasoning_provenance", "Why is provenance the antidote to LLM hallucination?", "a TracedDerivation has actual computational steps to point at; a Reconstructed answer is explicitly labelled as a guess so users don't mistake it for recall", 0.7, &["philosophy", "lfi_mission"]),
+        ]
+    }
+
+    /// Epistemic honesty — what to say when you don't know vs when you're just guessing.
+    pub fn epistemic_honesty_examples() -> Vec<TrainingExample> {
+        vec![
+            TrainingExample::new("epistemic_honesty", "What is epistemic honesty?", "saying exactly what you know, how you know it, and what you don't — refusing to confabulate around gaps", 0.4, &["concepts"]),
+            TrainingExample::new("epistemic_honesty", "When should an AI say 'I don't know'?", "whenever the answer would require fabricating support — refusal is the only honest response when no derivation exists", 0.4, &["principles"]),
+            TrainingExample::new("epistemic_honesty", "What is calibrated confidence?", "your stated confidence matches your actual hit rate over many predictions — saying 80% means right 80% of the time", 0.5, &["concepts", "calibration"]),
+            TrainingExample::new("epistemic_honesty", "What is the difference between a guess and a recall?", "recall: retrieving stored knowledge with traceable origin; guess: producing a plausible answer with no underlying retrieval", 0.5, &["concepts"]),
+            TrainingExample::new("epistemic_honesty", "Why is overconfidence worse than ignorance?", "an overconfident wrong answer is acted on; an admission of ignorance prompts further investigation — the failure mode of the former is silent", 0.6, &["principles"]),
+            TrainingExample::new("epistemic_honesty", "What is the aleatoric vs epistemic uncertainty distinction?", "aleatoric: irreducible randomness in the system; epistemic: uncertainty due to limited knowledge — fixable by gathering more data", 0.6, &["concepts", "philosophy"]),
+            TrainingExample::new("epistemic_honesty", "Why should an AI distinguish 'no derivation' from 'derivation says no'?", "the first means the system can't answer; the second means it answered no — confusing them is dishonest about the origin of the negative", 0.7, &["principles"]),
+            TrainingExample::new("epistemic_honesty", "What is asymptotic confidence?", "the principle that confidence in a claim approaches but never reaches 1.0 — leaves room for unforeseen adversarial inputs and systemic error", 0.5, &["concepts", "calibration"]),
+            TrainingExample::new("epistemic_honesty", "Why does LFI tag every belief with provenance?", "so consumers can tell whether the system has computational support for the claim or is reconstructing — the kind tag is the honesty contract", 0.5, &["lfi_specific"]),
+            TrainingExample::new("epistemic_honesty", "What is the right response to 'how confident are you?' when you don't have a trace?", "'I'm reconstructing this answer — I don't have a recorded derivation, so my confidence is in the explanation not the underlying reasoning'", 0.7, &["principles", "language"]),
+            TrainingExample::new("epistemic_honesty", "How should an AI handle conflicting evidence?", "report the conflict explicitly with confidence on each side — don't pick a winner you can't justify; let the consumer decide what to do", 0.6, &["principles"]),
+            TrainingExample::new("epistemic_honesty", "Why is plausibility not evidence?", "a plausible answer can be confidently wrong — evidence requires a verifiable derivation chain, not just internal consistency", 0.6, &["concepts"]),
+            TrainingExample::new("epistemic_honesty", "What is the Brier score?", "measures calibration: mean squared error between predicted probability and actual outcome — lower is better, perfect = 0", 0.5, &["calibration", "metrics"]),
+            TrainingExample::new("epistemic_honesty", "Why does LFI never claim 100% certainty?", "100% means closed to revision — reality keeps producing edge cases, so an honest claim leaves room to be corrected", 0.5, &["principles", "philosophy"]),
+            TrainingExample::new("epistemic_honesty", "What is the right way to express a hunch?", "label it: 'I suspect X but have no derivation for it' — separate the claim from the justification level", 0.5, &["principles", "language"]),
+        ]
+    }
+
     pub fn all_examples() -> Vec<TrainingExample> {
         let mut all = Vec::new();
         all.extend(Self::math_examples());
@@ -1166,6 +1219,8 @@ impl TrainingDataGenerator {
         all.extend(Self::ai_ml_advanced_examples());
         all.extend(Self::chemistry_advanced_examples());
         all.extend(Self::math_deeper_examples());
+        all.extend(Self::reasoning_provenance_examples());
+        all.extend(Self::epistemic_honesty_examples());
         all
     }
 
