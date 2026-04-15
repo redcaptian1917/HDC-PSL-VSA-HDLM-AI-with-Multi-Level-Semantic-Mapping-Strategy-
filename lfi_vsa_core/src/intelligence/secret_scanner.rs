@@ -430,6 +430,12 @@ impl SecretScanner {
         let bytes = text.as_bytes();
         let mut i = 0;
         while i + 11 <= bytes.len() {
+            // SECURITY: text[i..i+11] panics if either index lands inside a
+            // multi-byte char. Guard both endpoints before slicing.
+            if !text.is_char_boundary(i) || !text.is_char_boundary(i + 11) {
+                i += 1;
+                continue;
+            }
             let s = &text[i..i + 11];
             if s.chars().enumerate().all(|(j, c)| match j {
                 3 | 6 => c == '-',
@@ -478,14 +484,17 @@ impl SecretScanner {
                 if digits.len() >= 16 { break; }
             }
             if digits.len() == 16 && Self::luhn_valid(&digits) {
-                out.push(SecretMatch {
-                    kind: SecretKind::CreditCard,
-                    start: i, end,
-                    matched_text: text[i..end].to_string(),
-                    redacted: format!("XXXX-XXXX-XXXX-{}", &digits[12..16]),
-                    severity: Severity::High,
-                });
-                i = end;
+                // SECURITY: same UTF-8 boundary guard as detect_ssn.
+                if text.is_char_boundary(i) && text.is_char_boundary(end) {
+                    out.push(SecretMatch {
+                        kind: SecretKind::CreditCard,
+                        start: i, end,
+                        matched_text: text[i..end].to_string(),
+                        redacted: format!("XXXX-XXXX-XXXX-{}", &digits[12..16]),
+                        severity: Severity::High,
+                    });
+                }
+                i = end.max(i + 1);
             } else {
                 i += 1;
             }
@@ -549,6 +558,11 @@ impl SecretScanner {
         let bytes = text.as_bytes();
         let mut i = 0;
         while i + 12 <= bytes.len() {
+            // SECURITY: skip non-char-boundary positions to avoid UTF-8 panic.
+            if !text.is_char_boundary(i) || !text.is_char_boundary(i + 12) {
+                i += 1;
+                continue;
+            }
             let candidate = &text[i..i + 12];
             let stripped: String = candidate.chars().filter(|c| c.is_ascii_digit()).collect();
             if stripped.len() == 10 {
@@ -912,5 +926,31 @@ mod tests {
         let starts: Vec<usize> = matches.iter().map(|m| m.start).collect();
         let unique: std::collections::HashSet<_> = starts.iter().collect();
         assert_eq!(starts.len(), unique.len(), "Matches should not overlap");
+    }
+
+    #[test]
+    fn test_detect_ssn_does_not_panic_on_multibyte() {
+        // REGRESSION-GUARD: detect_ssn used to byte-slice text[i..i+11]
+        // which panics if i lands inside a multi-byte char (e.g. ω, é,
+        // emoji). Now boundary-guarded.
+        let scanner = SecretScanner::new();
+        let inputs: Vec<String> = vec![
+            "ω contact 555-12-3456 today".into(),
+            "résumé 123-45-6789 included".into(),
+            "🔐 SSN: 999-88-7777 leaked".into(),
+            "ω".repeat(50),
+            String::from("only multibyte: ωωωωωωωωωωωωωωω"),
+        ];
+        for input in &inputs {
+            // Just must not panic.
+            let _matches = scanner.scan(input);
+        }
+    }
+
+    #[test]
+    fn test_detect_credit_card_does_not_panic_on_multibyte() {
+        let scanner = SecretScanner::new();
+        let input = "card é 4532-0151-1283-0366 ω trailing";
+        let _matches = scanner.scan(input);
     }
 }
