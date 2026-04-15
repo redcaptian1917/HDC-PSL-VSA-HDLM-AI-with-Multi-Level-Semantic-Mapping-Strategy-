@@ -192,4 +192,42 @@ mod tests {
         assert_eq!(ForensicNode::Function, ForensicNode::Function);
         assert_ne!(ForensicNode::Function, ForensicNode::Literal);
     }
+
+    // ============================================================
+    // Stress / invariant tests for SemanticMap
+    // ============================================================
+
+    /// INVARIANT: project_node is deterministic — same node + decoration →
+    /// same vector across calls.
+    #[test]
+    fn invariant_project_node_deterministic() -> HdlmResult<()> {
+        let map = SemanticMap::new()?;
+        let dec = BipolarVector::new_random().expect("random");
+        let v1 = map.project_node(ForensicNode::Function, &dec)?;
+        let v2 = map.project_node(ForensicNode::Function, &dec)?;
+        assert_eq!(v1, v2,
+            "deterministic projection required");
+        Ok(())
+    }
+
+    /// INVARIANT: different decorations produce different projections.
+    #[test]
+    fn invariant_different_decorations_different_projections() -> HdlmResult<()> {
+        let map = SemanticMap::new()?;
+        let d1 = BipolarVector::new_random().expect("random");
+        let d2 = BipolarVector::new_random().expect("random");
+        let v1 = map.project_node(ForensicNode::Function, &d1)?;
+        let v2 = map.project_node(ForensicNode::Function, &d2)?;
+        assert_ne!(v1, v2,
+            "different decorations must produce different projections");
+        Ok(())
+    }
+
+    /// INVARIANT: get_pos_base returns Some for index 0.
+    #[test]
+    fn invariant_get_pos_base_low_indices_some() -> HdlmResult<()> {
+        let map = SemanticMap::new()?;
+        assert!(map.get_pos_base(0).is_some());
+        Ok(())
+    }
 }
