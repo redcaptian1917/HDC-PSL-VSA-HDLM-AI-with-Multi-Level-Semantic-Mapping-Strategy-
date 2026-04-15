@@ -452,4 +452,75 @@ mod tests {
         assert_eq!(model.prediction_count(), 1);
         Ok(())
     }
+
+    // ============================================================
+    // Stress / invariant tests for WorldModel
+    // ============================================================
+
+    /// INVARIANT: prediction_accuracy stays in [0.0, 1.0] across any
+    /// sequence of verifications.
+    #[test]
+    fn invariant_prediction_accuracy_in_unit_interval() -> Result<(), Box<dyn std::error::Error>> {
+        let state = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut model = WorldModel::new(state);
+        for _ in 0..30 {
+            let predicted = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            let actual = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            let action = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            model.verify_prediction(&predicted, &actual, &action);
+            let acc = model.prediction_accuracy();
+            assert!(acc >= 0.0 && acc <= 1.0,
+                "accuracy escaped [0, 1]: {}", acc);
+        }
+        Ok(())
+    }
+
+    /// INVARIANT: prediction_count grows by exactly 1 per verify_prediction.
+    #[test]
+    fn invariant_prediction_count_monotonic() -> Result<(), Box<dyn std::error::Error>> {
+        let state = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut model = WorldModel::new(state);
+        for i in 0..15 {
+            let before = model.prediction_count();
+            let pred = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            let actual = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            let action = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            model.verify_prediction(&pred, &actual, &action);
+            assert_eq!(model.prediction_count(), before + 1,
+                "count must grow by 1 at iter {}", i);
+        }
+        Ok(())
+    }
+
+    /// INVARIANT: causal_link_count grows when record_effect is called
+    /// with novel action vectors.
+    #[test]
+    fn invariant_causal_link_count_grows_on_record() -> Result<(), Box<dyn std::error::Error>> {
+        let state = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mut model = WorldModel::new(state);
+        let initial = model.causal_link_count();
+        for i in 0..10 {
+            let action = HyperMemory::from_string(&format!("action_{}", i), DIM_PROLETARIAT);
+            let effect = HyperMemory::from_string(&format!("effect_{}", i), DIM_PROLETARIAT);
+            model.record_effect(action, effect);
+        }
+        assert!(model.causal_link_count() > initial,
+            "causal_link_count must grow: {} → {}",
+            initial, model.causal_link_count());
+        Ok(())
+    }
+
+    /// INVARIANT: predict_sequence with N actions returns N predicted states.
+    #[test]
+    fn invariant_predict_sequence_returns_n_states() -> Result<(), Box<dyn std::error::Error>> {
+        let state = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let model = WorldModel::new(state);
+        let actions: Vec<HyperMemory> = (0..7)
+            .map(|i| HyperMemory::from_string(&format!("a{}", i), DIM_PROLETARIAT))
+            .collect();
+        let states = model.predict_sequence(&actions)?;
+        assert_eq!(states.len(), 7,
+            "predict_sequence(7 actions) must return 7 states, got {}", states.len());
+        Ok(())
+    }
 }
