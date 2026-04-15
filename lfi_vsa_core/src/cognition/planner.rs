@@ -578,4 +578,52 @@ mod tests {
 
         Ok(())
     }
+
+    // ============================================================
+    // Stress / invariant tests for Planner
+    // ============================================================
+
+    /// INVARIANT: progress is in [0.0, 1.0] for any plan state.
+    #[test]
+    fn invariant_progress_in_unit_interval() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let plan = planner.plan("ship a feature")?;
+        let p = Planner::progress(&plan);
+        assert!(p >= 0.0 && p <= 1.0);
+
+        let mut full = plan.clone();
+        for s in &mut full.steps {
+            s.status = StepStatus::Done;
+        }
+        let pf = Planner::progress(&full);
+        assert!(pf <= 1.0,
+            "all-complete plan must progress at most to 1.0, got {}", pf);
+        Ok(())
+    }
+
+    /// INVARIANT: completed + remaining sums to total step count.
+    #[test]
+    fn invariant_completed_plus_remaining_equals_total() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let mut plan = planner.plan("multi-step build")?;
+        for (i, s) in plan.steps.iter_mut().enumerate() {
+            if i % 2 == 0 { s.status = StepStatus::Done; }
+        }
+        let total = plan.steps.len();
+        let c = plan.completed_count();
+        let r = plan.remaining_count();
+        assert_eq!(c + r, total,
+            "completed ({}) + remaining ({}) must equal total ({})", c, r, total);
+        Ok(())
+    }
+
+    /// INVARIANT: validate_plan is OK on freshly-decomposed plans.
+    #[test]
+    fn invariant_fresh_plan_validates() -> Result<(), HdcError> {
+        let planner = Planner::new();
+        let plan = planner.plan("validate after planning")?;
+        assert!(planner.validate_plan(&plan).is_ok(),
+            "freshly-decomposed plan must validate");
+        Ok(())
+    }
 }
