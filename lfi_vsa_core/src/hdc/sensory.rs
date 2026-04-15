@@ -187,4 +187,62 @@ mod tests {
         assert_eq!(Modality::Audio, Modality::Audio);
         assert_ne!(Modality::Audio, Modality::Video);
     }
+
+    // ============================================================
+    // Stress / invariant tests for SensoryCortex / SensoryEncoder
+    // ============================================================
+
+    /// INVARIANT: encoding the same frame is deterministic.
+    #[test]
+    fn invariant_encode_frame_deterministic() -> Result<(), HdcError> {
+        let cortex = SensoryCortex::new()?;
+        let frame = SensoryFrame {
+            group: SensorGroup::IMU,
+            timestamp: 1700000000,
+            raw_signal: vec![0.1, 0.2, 0.3],
+        };
+        let v1 = cortex.encode_frame(&frame)?;
+        let v2 = cortex.encode_frame(&frame)?;
+        assert_eq!(v1, v2,
+            "encoding the same frame must produce identical vectors");
+        Ok(())
+    }
+
+    /// INVARIANT: serial encoder handles empty/extreme inputs without panic.
+    #[test]
+    fn invariant_serial_encoder_arbitrary_inputs_safe() {
+        let inputs: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![0u8; 1],
+            vec![255u8; 256],
+            (0..=255).collect::<Vec<u8>>(),
+            vec![0xFF; 10_000],
+        ];
+        for input in &inputs {
+            let result = SensoryEncoder::encode_serial(input);
+            assert_eq!(result.dimensions, crate::memory_bus::DIM_PROLETARIAT,
+                "result dim must be DIM_PROLETARIAT for input len {}", input.len());
+        }
+    }
+
+    /// INVARIANT: different raw_signal vectors produce different encodings.
+    #[test]
+    fn invariant_different_signals_different_encodings() -> Result<(), HdcError> {
+        let cortex = SensoryCortex::new()?;
+        let f1 = SensoryFrame {
+            group: SensorGroup::IMU,
+            timestamp: 1700000000,
+            raw_signal: vec![0.1, 0.1, 0.1],
+        };
+        let f2 = SensoryFrame {
+            group: SensorGroup::IMU,
+            timestamp: 1700000000,
+            raw_signal: vec![0.9, 0.9, 0.9],
+        };
+        let v1 = cortex.encode_frame(&f1)?;
+        let v2 = cortex.encode_frame(&f2)?;
+        assert_ne!(v1, v2,
+            "different raw_signal must produce different vectors");
+        Ok(())
+    }
 }
