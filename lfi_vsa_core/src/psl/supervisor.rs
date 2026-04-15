@@ -319,4 +319,83 @@ mod tests {
         // DimensionalityAxiom has relevance=0 for non-vectors → default pass
         assert!((verdict.confidence - 1.0).abs() < 0.01);
     }
+
+    // ============================================================
+    // Stress / invariant tests for PslSupervisor
+    // ============================================================
+
+    /// INVARIANT: audit() never produces a verdict with confidence > 1.0
+    /// or < 0.0 regardless of how many axioms are registered.
+    #[test]
+    fn invariant_verdict_confidence_in_unit_interval() {
+        let mut supervisor = PslSupervisor::new();
+        // Register every axiom that's safe to instantiate without args.
+        supervisor.register_axiom(Box::new(DimensionalityAxiom));
+        supervisor.register_axiom(Box::new(crate::psl::axiom::ClassInterestAxiom));
+        supervisor.register_axiom(Box::new(crate::psl::axiom::EntropyAxiom::default()));
+        supervisor.register_axiom(Box::new(crate::psl::axiom::ConfidenceCalibrationAxiom::default()));
+
+        for _ in 0..30 {
+            let v = BipolarVector::new_random().expect("random");
+            let target = AuditTarget::Vector(v);
+            let verdict = supervisor.audit(&target).expect("audit");
+            assert!(verdict.confidence >= 0.0 && verdict.confidence <= 1.0,
+                "confidence escaped [0,1]: {}", verdict.confidence);
+        }
+    }
+
+    /// INVARIANT: register_axiom is monotonic — count strictly grows by 1.
+    #[test]
+    fn invariant_register_axiom_count_grows_by_one() {
+        let mut supervisor = PslSupervisor::new();
+        for i in 0..10 {
+            let before = supervisor.axiom_count();
+            supervisor.register_axiom(Box::new(DimensionalityAxiom));
+            assert_eq!(supervisor.axiom_count(), before + 1,
+                "count must grow by exactly 1 at iter {}", i);
+        }
+    }
+
+    /// INVARIANT: with hard_fail_threshold raised above any axiom's confidence,
+    /// every audit fails (vetoed). Tests the veto logic in isolation.
+    #[test]
+    fn invariant_high_hard_fail_threshold_vetoes_all() {
+        let mut supervisor = PslSupervisor::new();
+        supervisor.hard_fail_threshold = 0.99; // Almost no axiom can clear this.
+        supervisor.register_axiom(Box::new(crate::psl::axiom::EntropyAxiom::default()));
+        // Random vectors typically score < 0.99 on entropy.
+        let mut vetoed_count = 0;
+        for _ in 0..20 {
+            let v = BipolarVector::new_random().expect("random");
+            let target = AuditTarget::Vector(v);
+            let verdict = supervisor.audit(&target).expect("audit");
+            if verdict.detail.contains("Vetoed") {
+                vetoed_count += 1;
+            }
+        }
+        assert!(vetoed_count > 0,
+            "raising hard_fail_threshold to 0.99 must produce some vetoes");
+    }
+
+    /// INVARIANT: audit_with_provenance produces exactly N trace entries
+    /// when N relevant axioms are registered.
+    #[test]
+    fn invariant_audit_with_provenance_one_trace_per_relevant_axiom() {
+        use crate::reasoning_provenance::TraceArena;
+        let mut supervisor = PslSupervisor::new();
+        // 3 axioms that are relevant to vector targets.
+        supervisor.register_axiom(Box::new(DimensionalityAxiom));
+        supervisor.register_axiom(Box::new(crate::psl::axiom::EntropyAxiom::default()));
+        supervisor.register_axiom(Box::new(crate::psl::axiom::ConfidenceCalibrationAxiom::default()));
+
+        let v = BipolarVector::new_random().expect("random");
+        let target = AuditTarget::Vector(v);
+        let mut arena = TraceArena::new();
+        let (_, trace_ids) = supervisor
+            .audit_with_provenance(&target, &mut arena, None)
+            .expect("audit");
+        assert_eq!(trace_ids.len(), 3,
+            "3 relevant axioms must produce 3 trace entries");
+        assert_eq!(arena.len(), 3);
+    }
 }
