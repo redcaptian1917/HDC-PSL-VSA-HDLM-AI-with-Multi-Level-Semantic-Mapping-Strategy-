@@ -390,4 +390,58 @@ mod tests {
         let chain = arena.trace_chain(last_trace.expect("last trace exists"));
         assert_eq!(chain.len(), 3, "Chain should span all 3 steps");
     }
+
+    // ============================================================
+    // Stress / invariant tests for ActiveInferenceCore
+    // ============================================================
+
+    /// INVARIANT: free_energy_ema stays finite and non-negative across
+    /// any sequence of step() calls.
+    #[test]
+    fn invariant_free_energy_ema_finite_and_nonnegative() {
+        let mut core = ActiveInferenceCore::new(HyperMemory::generate_seed(DIM_PROLETARIAT));
+        core.set_target(HyperMemory::generate_seed(DIM_PROLETARIAT));
+        for _ in 0..50 {
+            let obs = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            let _ = core.step(&obs);
+            assert!(core.free_energy_ema.is_finite(),
+                "EMA must stay finite, got {}", core.free_energy_ema);
+            assert!(core.free_energy_ema >= 0.0,
+                "EMA must stay non-negative, got {}", core.free_energy_ema);
+        }
+    }
+
+    /// INVARIANT: every step() returns a deterministic outcome variant
+    /// (Equilibrium, Act, or Perceive) — never panics on arbitrary input.
+    #[test]
+    fn invariant_step_always_returns_outcome() {
+        let mut core = ActiveInferenceCore::new(HyperMemory::generate_seed(DIM_PROLETARIAT));
+        for _ in 0..30 {
+            let obs = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            let outcome = core.step(&obs).expect("step never errors on valid input");
+            // Just must be one of the three variants — exhaustive match
+            // would be checked at compile-time.
+            match outcome {
+                InferenceOutcome::Equilibrium { .. } |
+                InferenceOutcome::Act { .. } |
+                InferenceOutcome::Perceive { .. } => {}
+            }
+        }
+    }
+
+    /// INVARIANT: provenance trace count equals number of step_with_provenance calls.
+    #[test]
+    fn invariant_provenance_count_equals_calls() {
+        let mut core = ActiveInferenceCore::new(HyperMemory::generate_seed(DIM_PROLETARIAT));
+        core.set_target(HyperMemory::generate_seed(DIM_PROLETARIAT));
+        let mut arena = TraceArena::new();
+        let n = 25;
+        let mut last = None;
+        for _ in 0..n {
+            let obs = HyperMemory::generate_seed(DIM_PROLETARIAT);
+            let (_, tid) = core.step_with_provenance(&obs, &mut arena, last).expect("step ok");
+            last = Some(tid);
+        }
+        assert_eq!(arena.len(), n);
+    }
 }
