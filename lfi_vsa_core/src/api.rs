@@ -327,6 +327,77 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 if socket.send(Message::Text(response_payload.to_string())).await.is_err() {
                     break;
                 }
+
+                // Streaming Ollama enrichment: for knowledge questions where
+                // the reasoner used Ollama, the initial response already contains
+                // the full answer. For inputs where the reasoner gave a template
+                // (Ollama was unavailable or not triggered), try streaming now
+                // to enrich the response. The frontend displays chat_chunk tokens
+                // appended after the initial response.
+                let intent_str = response_payload.get("intent")
+                    .and_then(|v| v.as_str()).unwrap_or("");
+                let should_stream = intent_str.contains("Search") ||
+                    intent_str.contains("Analyze") ||
+                    intent_str.contains("Explain");
+                let content_is_template = {
+                    let c = response_payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    c.contains("let me look into") || c.contains("let me think") ||
+                    c.contains("I'll break down") || c.contains("Let me take a closer")
+                };
+
+                if should_stream && content_is_template {
+                    // Stream from Ollama to enrich the template response
+                    let safe_input = input.replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n");
+                    let body = format!(
+                        r#"{{"model":"qwen2.5-coder:7b","prompt":"You are a helpful AI. Answer thoroughly but concisely. Question: {}","stream":true,"options":{{"temperature":0.4,"num_predict":500}}}}"#,
+                        safe_input
+                    );
+                    // Start streaming in a spawned task to not block the WS loop
+                    let body_clone = body.clone();
+                    let mut child = match tokio::process::Command::new("curl")
+                        .args(&["-sN", "--max-time", "60", "-X", "POST",
+                            "http://localhost:11434/api/generate",
+                            "-H", "Content-Type: application/json",
+                            "-d", &body_clone])
+                        .stdout(std::process::Stdio::piped())
+                        .spawn()
+                    {
+                        Ok(c) => c,
+                        Err(_) => { continue; }  // No Ollama, skip enrichment
+                    };
+
+                    if let Some(stdout) = child.stdout.take() {
+                        use tokio::io::{AsyncBufReadExt, BufReader};
+                        let mut reader = BufReader::new(stdout).lines();
+                        let mut token_count = 0u32;
+                        while let Ok(Some(line)) = reader.next_line().await {
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
+                                if let Some(token) = parsed.get("response").and_then(|v| v.as_str()) {
+                                    if !token.is_empty() {
+                                        let chunk = json!({
+                                            "type": "chat_chunk",
+                                            "token": token,
+                                        });
+                                        if socket.send(Message::Text(chunk.to_string())).await.is_err() {
+                                            break;
+                                        }
+                                        token_count += 1;
+                                    }
+                                }
+                                if parsed.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                    break;
+                                }
+                            }
+                        }
+                        if token_count > 0 {
+                            let done = json!({ "type": "chat_done", "tokens": token_count });
+                            let _ = socket.send(Message::Text(done.to_string())).await;
+                        }
+                    }
+                    let _ = child.kill().await;
+                }
             }
             Message::Close(_) => break,
             _ => {}

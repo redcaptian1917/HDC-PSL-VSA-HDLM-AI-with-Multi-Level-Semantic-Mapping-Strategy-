@@ -155,6 +155,50 @@ impl BrainDb {
         let _ = conn.execute("DELETE FROM facts WHERE key = ?1", params![key]);
     }
 
+    /// Search facts by keyword — used for RAG (Retrieval-Augmented Generation).
+    /// Uses a single keyword LIKE search on value column.
+    /// BUG ASSUMPTION: LIKE on 51M rows without FTS is slow for broad queries.
+    /// For production, add FTS5 virtual table. This is a pragmatic first version.
+    pub fn search_facts(&self, query: &str, limit: usize) -> Vec<(String, String, f64)> {
+        let conn = self.conn.lock().unwrap();
+        // Extract the most significant keyword (longest non-stopword)
+        let stopwords = ["the","and","for","are","but","not","you","all","can","had",
+            "her","was","one","our","out","has","its","how","who","what","when",
+            "where","why","this","that","with","from","they","been","have","many"];
+        let keyword = query.split_whitespace()
+            .filter(|w| w.len() >= 3 && !stopwords.contains(&w.to_lowercase().as_str()))
+            .max_by_key(|w| w.len())
+            .map(|w| format!("%{}%", w.to_lowercase()));
+
+        let keyword = match keyword {
+            Some(k) => k,
+            None => return vec![],
+        };
+
+        let mut results = Vec::new();
+        let mut stmt = match conn.prepare(
+            "SELECT key, value, COALESCE(quality_score, confidence, 0.5) \
+             FROM facts WHERE LOWER(value) LIKE ?1 \
+             ORDER BY COALESCE(quality_score, confidence, 0.5) DESC LIMIT ?2"
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+
+        if let Ok(rows) = stmt.query_map(params![keyword, limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        }) {
+            for row in rows {
+                if let Ok(r) = row { results.push(r); }
+            }
+        }
+        results
+    }
+
     // ---- Conversations ----
 
     pub fn save_conversation(&self, id: &str, title: &str, pinned: bool, starred: bool) {
