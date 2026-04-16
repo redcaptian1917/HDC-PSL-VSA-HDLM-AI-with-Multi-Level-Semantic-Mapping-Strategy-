@@ -45,6 +45,10 @@ pub struct LfiAgent {
     pub psl_feedback: PslFeedbackLoop,
     /// Reasoning provenance engine — derivation traces for every conclusion.
     pub provenance: Arc<Mutex<ProvenanceEngine>>,
+    /// RAG context — relevant facts from brain.db, set by the API layer
+    /// before each chat call so the reasoner can inject them into Ollama prompts.
+    /// SUPERSOCIETY: This is how 51M+ facts improve every answer.
+    pub rag_context: Vec<(String, String, f64)>,
 }
 
 impl LfiAgent {
@@ -129,6 +133,7 @@ impl LfiAgent {
             background_learner,
             psl_feedback: PslFeedbackLoop::new(),
             provenance: Arc::new(Mutex::new(ProvenanceEngine::new())),
+            rag_context: Vec::new(),
         })
     }
 
@@ -234,6 +239,10 @@ impl LfiAgent {
     pub fn chat(&mut self, input: &str) -> Result<crate::cognition::reasoner::ConversationResponse, HdcError> {
         let input_hv = HyperMemory::from_string(input, DIM_PROLETARIAT);
         let _active_tier = self.govern_substrate(&input_hv);
+
+        // Set RAG context on the reasoner before responding
+        // SUPERSOCIETY: This is how 51M+ facts ground every answer
+        self.reasoner.rag_context = std::mem::take(&mut self.rag_context);
 
         // Execute reasoning via the tiered governor
         self.reasoner.respond(input)

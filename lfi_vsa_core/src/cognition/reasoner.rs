@@ -106,6 +106,9 @@ pub struct CognitiveCore {
     pub profiler: MetaCognitiveProfiler,
     /// Knowledge Compiler — System 2 → System 1 pipeline.
     pub compiler: KnowledgeCompiler,
+    /// RAG context — relevant facts from brain.db injected by the API layer.
+    /// SUPERSOCIETY: 51M+ facts ground every Ollama response.
+    pub rag_context: Vec<(String, String, f64)>,
 }
 
 impl CognitiveCore {
@@ -122,6 +125,7 @@ impl CognitiveCore {
             max_context: 10,
             profiler: MetaCognitiveProfiler::new(),
             compiler: KnowledgeCompiler::new(),
+            rag_context: Vec::new(),
         };
         core.seed_intents()?;
         Ok(core)
@@ -1038,20 +1042,51 @@ impl CognitiveCore {
     }
 
     /// Generate a response string based on intent and thought analysis.
-    /// Query local Ollama for a substantive answer. Returns None if Ollama
-    /// is unavailable or times out — callers should fall back to templates.
+    /// Query local Ollama for a substantive answer with optional RAG context.
+    /// When `rag_context` is provided, relevant facts from brain.db are injected
+    /// into the prompt, grounding the LLM's answer in the knowledge base.
+    ///
+    /// SUPERSOCIETY: This is the core intelligence amplification mechanism.
+    /// A 7B model with 51M+ facts as context produces qualitatively different
+    /// answers than the same model without grounding. The RAG context turns
+    /// a generic chatbot into a knowledge-grounded reasoning system.
+    ///
     /// BUG ASSUMPTION: Ollama may not be running. This must never block startup
-    /// or cause a panic. Timeout is 30s to keep chat responsive.
-    fn query_ollama(prompt: &str) -> Option<String> {
+    /// or cause a panic. Timeout is 60s to keep chat responsive.
+    pub fn query_ollama(prompt: &str) -> Option<String> {
+        Self::query_ollama_with_context(prompt, &[])
+    }
+
+    /// Query Ollama with RAG context — the facts are prepended to the prompt
+    /// so the model can reference them when generating the answer.
+    pub fn query_ollama_with_context(prompt: &str, rag_facts: &[(String, String, f64)]) -> Option<String> {
         let safe = prompt.replace('\\', "\\\\")
             .replace('"', "\\\"")
             .replace('\n', "\\n")
             .replace('\r', "\\r")
             .replace('\t', "\\t");
 
+        // Build RAG context block — inject relevant facts into the prompt
+        let context_block = if !rag_facts.is_empty() {
+            let facts_text: String = rag_facts.iter()
+                .take(5) // Max 5 facts to stay within context window
+                .map(|(_, value, score)| {
+                    let truncated = if value.len() > 500 { &value[..500] } else { value.as_str() };
+                    format!("- [relevance {:.0}%] {}", score * 100.0, truncated)
+                })
+                .collect::<Vec<_>>()
+                .join("\\n");
+            format!(
+                "You have access to the following knowledge from your database:\\n{}\\n\\nUse this knowledge to inform your answer where relevant. If the knowledge doesn't apply, answer from your general understanding.\\n\\n",
+                facts_text.replace('"', "\\\"")
+            )
+        } else {
+            String::new()
+        };
+
         let body = format!(
-            r#"{{"model":"qwen2.5-coder:7b","prompt":"You are a helpful, warm AI assistant. Answer naturally and conversationally. Be concise but thorough. Question: {}","stream":false,"options":{{"temperature":0.4,"num_predict":500}}}}"#,
-            safe
+            r#"{{"model":"qwen2.5-coder:7b","prompt":"You are PlausiDen AI — a helpful, warm, knowledgeable assistant. Answer naturally and conversationally. Be concise but thorough.\\n\\n{}Question: {}","stream":false,"options":{{"temperature":0.4,"num_predict":500}}}}"#,
+            context_block, safe
         );
 
         let output = std::process::Command::new("curl")
@@ -1120,7 +1155,7 @@ impl CognitiveCore {
             }
             Some(Intent::Search { query }) => {
                 // Try Ollama for a real answer first
-                if let Some(answer) = Self::query_ollama(query) {
+                if let Some(answer) = Self::query_ollama_with_context(query, &self.rag_context) {
                     answer
                 } else {
                     let q = crate::truncate_str(query, 80);
@@ -1152,7 +1187,7 @@ impl CognitiveCore {
             Some(Intent::Analyze { target }) => {
                 // Try Ollama for substantive analysis
                 let prompt = format!("Analyze this topic thoroughly: {}", target);
-                if let Some(answer) = Self::query_ollama(&prompt) {
+                if let Some(answer) = Self::query_ollama_with_context(&prompt, &self.rag_context) {
                     answer
                 } else {
                     let t = crate::truncate_str(target, 80);
@@ -1433,7 +1468,7 @@ impl CognitiveCore {
                     let topic = input_lower_pre[prefix.len()..].trim_end_matches('?').trim();
                     if !topic.is_empty() && topic.len() < 100 {
                         // Try Ollama for a real, substantive answer
-                        if let Some(answer) = Self::query_ollama(input) {
+                        if let Some(answer) = Self::query_ollama_with_context(input, &self.rag_context) {
                             return answer;
                         }
                         // Fallback template if Ollama unavailable

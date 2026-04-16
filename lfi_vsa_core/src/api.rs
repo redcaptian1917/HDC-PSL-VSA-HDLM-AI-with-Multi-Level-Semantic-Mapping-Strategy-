@@ -26,6 +26,7 @@ use serde_json::json;
 use serde::Deserialize;
 use tracing::{info, debug, warn};
 use tower_http::cors::CorsLayer;
+use axum::http;
 
 use crate::agent::LfiAgent;
 use crate::telemetry::MaterialAuditor;
@@ -163,7 +164,15 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                if input.is_empty() {
+                // SECURITY: Cap input size to prevent DoS via oversized messages.
+                // AVP-2 AUDIT: WebSocket had no size limit.
+                if input.is_empty() || input.len() > 16_384 {
+                    if input.len() > 16_384 {
+                        let _ = socket.send(Message::Text(json!({
+                            "type": "chat_error",
+                            "error": "Message too long (max 16KB). Please shorten your input."
+                        }).to_string())).await;
+                    }
                     continue;
                 }
                 state.metrics.inc_counter("lfi_chat_total", &[], 1);
@@ -253,6 +262,12 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                         }
                     }
 
+                    // RAG: Query brain.db for relevant facts and inject into agent
+                    // SUPERSOCIETY: This is the core intelligence mechanism —
+                    // 51M+ facts grounding every response through retrieval.
+                    let rag_facts = state.db.search_facts(input, 5);
+                    agent.rag_context = rag_facts;
+
                     match agent.chat_traced(input) {
                         Ok((response, conclusion_id)) => {
                             let thought = &response.thought;
@@ -300,7 +315,8 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                         Err(e) => {
                             json!({
                                 "type": "chat_error",
-                                "error": format!("{:?}", e),
+                                // SECURITY: scrub internal error details
+                                "error": "An internal error occurred. Please try again.",
                             })
                         }
                     }
@@ -347,27 +363,34 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 };
 
                 if should_stream && content_is_template {
-                    // Stream from Ollama to enrich the template response
-                    let safe_input = input.replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                        .replace('\n', "\\n");
-                    let body = format!(
-                        r#"{{"model":"qwen2.5-coder:7b","prompt":"You are a helpful AI. Answer thoroughly but concisely. Question: {}","stream":true,"options":{{"temperature":0.4,"num_predict":500}}}}"#,
-                        safe_input
-                    );
-                    // Start streaming in a spawned task to not block the WS loop
-                    let body_clone = body.clone();
+                    // SECURITY: Build JSON body via serde, pipe via stdin — never interpolate user input into args
+                    // AVP-PASS-13: 2026-04-16 command injection fix — user input was previously format!()-interpolated into curl -d arg
+                    let ollama_body = serde_json::json!({
+                        "model": "qwen2.5-coder:7b",
+                        "prompt": format!("You are a helpful AI. Answer thoroughly but concisely. Question: {}", input),
+                        "stream": true,
+                        "options": { "temperature": 0.4, "num_predict": 500 }
+                    });
+                    let body_bytes = serde_json::to_vec(&ollama_body).unwrap_or_default();
+                    // Pipe body via stdin to curl — no shell interpolation, no arg injection
                     let mut child = match tokio::process::Command::new("curl")
                         .args(&["-sN", "--max-time", "60", "-X", "POST",
                             "http://localhost:11434/api/generate",
                             "-H", "Content-Type: application/json",
-                            "-d", &body_clone])
+                            "-d", "@-"])
+                        .stdin(std::process::Stdio::piped())
                         .stdout(std::process::Stdio::piped())
                         .spawn()
                     {
                         Ok(c) => c,
                         Err(_) => { continue; }  // No Ollama, skip enrichment
                     };
+                    // Write body to stdin, then close it
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use tokio::io::AsyncWriteExt;
+                        let _ = stdin.write_all(&body_bytes).await;
+                        drop(stdin);
+                    }
 
                     if let Some(stdout) = child.stdout.take() {
                         use tokio::io::{AsyncBufReadExt, BufReader};
@@ -533,11 +556,16 @@ async fn tier_handler(
 /// /var/log/lfi/chat.jsonl. Lets the operator (and the AI itself) review
 /// conversation behavior without cross-device sync. Default limit 50.
 async fn chat_log_handler(
+    State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    // SECURITY: Chat logs contain conversation history — require auth.
+    // AVP-2 AUDIT 2026-04-16: was unguarded, leaked path + conversations.
+    if !state.agent.lock().authenticated {
+        return Json(json!({ "error": "Authentication required" }));
+    }
     let limit: usize = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).min(500);
-    let path = "/var/log/lfi/chat.jsonl";
-    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let content = std::fs::read_to_string("/var/log/lfi/chat.jsonl").unwrap_or_default();
     // Collect the tail without allocating the whole thing twice.
     let mut lines: Vec<serde_json::Value> = content
         .lines()
@@ -546,9 +574,9 @@ async fn chat_log_handler(
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
     lines.reverse();
+    // SECURITY: Don't leak filesystem paths in response.
     Json(json!({
         "count": lines.len(),
-        "path": path,
         "entries": lines,
     }))
 }
@@ -1855,7 +1883,19 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
-    let cors = CorsLayer::permissive();
+    // SECURITY: Restrict CORS to localhost origins only.
+    // AVP-2 AUDIT 2026-04-16: CorsLayer::permissive() was CRITICAL —
+    // allowed any website to make authenticated cross-origin requests.
+    let cors = CorsLayer::new()
+        .allow_origin([
+            "http://localhost:5173".parse::<http::HeaderValue>().unwrap(),
+            "http://127.0.0.1:5173".parse::<http::HeaderValue>().unwrap(),
+            "http://localhost:3000".parse::<http::HeaderValue>().unwrap(),
+            "http://127.0.0.1:3000".parse::<http::HeaderValue>().unwrap(),
+            "http://0.0.0.0:5173".parse::<http::HeaderValue>().unwrap(),
+        ])
+        .allow_methods([http::Method::GET, http::Method::POST, http::Method::DELETE, http::Method::OPTIONS])
+        .allow_headers(tower_http::cors::Any);
 
     Ok(Router::new()
         .route("/ws/telemetry", get(telemetry_handler))
