@@ -9,6 +9,9 @@ export interface KgCounters { facts: number; concepts: number; sources: number; 
 export const useStatusPoll = (host: string, active: boolean) => {
   const [kg, setKg] = useState<KgCounters>({ facts: 0, concepts: 0, sources: 0, entropy: 0 });
   const [lastOk, setLastOk] = useState<number | null>(null);
+  // Surfaces the most recent fetch error so the UI can distinguish "loading"
+  // from "server returned 0" — previously both rendered as 0 with no signal.
+  const [lastError, setLastError] = useState<string | null>(null);
   useEffect(() => {
     if (!active) return;
     const fetchStatus = async () => {
@@ -18,6 +21,7 @@ export const useStatusPoll = (host: string, active: boolean) => {
         const to = setTimeout(() => ctrl.abort(), 8000);
         const res = await fetch(`http://${host}:3000/api/status`, { signal: ctrl.signal });
         clearTimeout(to);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         setKg(k => ({
           facts: typeof data.facts_count === 'number' ? data.facts_count : k.facts,
@@ -26,13 +30,16 @@ export const useStatusPoll = (host: string, active: boolean) => {
           entropy: typeof data.entropy === 'number' ? data.entropy : k.entropy,
         }));
         setLastOk(Date.now());
-      } catch (_) { /* server might not be up yet — lastOk stays frozen, UI shows stale */ }
+        setLastError(null);
+      } catch (e: any) {
+        setLastError(String(e?.message || e || 'fetch failed'));
+      }
     };
     fetchStatus();
     const id = setInterval(fetchStatus, 5000);
     return () => clearInterval(id);
   }, [host, active]);
-  return { kg, lastOk };
+  return { kg, lastOk, lastError };
 };
 
 // -------- /api/quality/report (30s) --------

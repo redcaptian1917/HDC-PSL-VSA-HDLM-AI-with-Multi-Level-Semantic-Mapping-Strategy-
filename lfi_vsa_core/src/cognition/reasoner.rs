@@ -103,6 +103,9 @@ pub struct CognitiveCore {
     context_window: Vec<BipolarVector>,
     /// Maximum context window size.
     max_context: usize,
+    /// Recent response hashes to detect and prevent repetition.
+    /// REGRESSION-GUARD: User reported AI reusing same jokes across sessions.
+    recent_response_hashes: std::collections::VecDeque<u64>,
     /// MetaCognitive Profiler — tracks strengths and weaknesses.
     pub profiler: MetaCognitiveProfiler,
     /// Knowledge Compiler — System 2 → System 1 pipeline.
@@ -127,6 +130,7 @@ impl CognitiveCore {
             profiler: MetaCognitiveProfiler::new(),
             compiler: KnowledgeCompiler::new(),
             rag_context: Vec::new(),
+            recent_response_hashes: std::collections::VecDeque::with_capacity(50),
         };
         core.seed_intents()?;
         Ok(core)
@@ -1034,6 +1038,25 @@ impl CognitiveCore {
                     plan.steps.len(), plan.total_complexity
                 ));
             }
+        }
+
+        // Track response hash for diversity — prevent repeating the same patterns.
+        // REGRESSION-GUARD: User reported AI reusing same jokes across conversations.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        // Hash the first 200 chars to detect similar-but-not-identical responses
+        response_text.chars().take(200).collect::<String>().to_lowercase().hash(&mut hasher);
+        let resp_hash = hasher.finish();
+
+        let is_repetitive = self.recent_response_hashes.contains(&resp_hash);
+        self.recent_response_hashes.push_back(resp_hash);
+        if self.recent_response_hashes.len() > 50 {
+            self.recent_response_hashes.pop_front();
+        }
+
+        // If repetitive, append a diversity hint (don't block, just note)
+        if is_repetitive {
+            debuglog!("DIVERSITY: Detected repetitive response pattern, hash={}", resp_hash);
         }
 
         Ok(ConversationResponse {

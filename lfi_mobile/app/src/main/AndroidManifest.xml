@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AndroidManifest.xml — PlausiDen AI mobile WebView client.
+
+  Permissions:
+    - INTERNET: required for the WebView to load the PlausiDen server.
+    - ACCESS_NETWORK_STATE: lets MainActivity.isNetworkAvailable() check
+      offline state before attempting load (offline page shown otherwise).
+    - DOWNLOAD_WITHOUT_NOTIFICATION (implicit via DownloadManager): used by
+      the in-app updater to fetch a new APK from GitHub Releases.
+
+  usesCleartextTraffic + network_security_config: needed because the dashboard
+  is served from a local LAN IP over HTTP (no public TLS cert in dev). The
+  config restricts cleartext to the local 10.* / 172.16/12 / 192.168/16 ranges
+  and the loopback so we don't open the door to plaintext traffic on the
+  open internet (AVP-2 §3 — TLS 1.3 only on outbound public traffic).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.lfi.sovereign">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application
+        android:label="PlausiDen AI"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/Theme.PlausiDen"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

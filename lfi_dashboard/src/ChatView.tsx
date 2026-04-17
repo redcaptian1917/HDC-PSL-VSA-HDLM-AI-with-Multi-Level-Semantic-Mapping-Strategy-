@@ -1,5 +1,5 @@
-import React from 'react';
-import { Virtuoso } from 'react-virtuoso';
+import React, { useRef, useImperativeHandle, forwardRef } from 'react';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 // Thin virtualized message list. Parent keeps its handler/state soup —
 // ChatView just wires Virtuoso and asks the parent to render each message
@@ -8,6 +8,10 @@ import { Virtuoso } from 'react-virtuoso';
 //
 // Scales to 10k+ messages without re-rendering the whole list on state
 // changes elsewhere in App.tsx.
+export interface ChatViewHandle {
+  scrollToBottom: () => void;
+}
+
 export interface ChatViewProps<T extends { id: number | string }> {
   messages: T[];
   renderMessage: (msg: T, index: number) => React.ReactNode;
@@ -16,13 +20,24 @@ export interface ChatViewProps<T extends { id: number | string }> {
   chatMaxWidth: string;
   chatPadding: string;
   isDesktop: boolean;
+  // Notified whenever the at-bottom state changes. Parent uses this to render
+  // a floating "scroll to bottom" affordance when the user has scrolled up.
+  onAtBottomChange?: (atBottom: boolean) => void;
   WebkitOverflowScrolling?: 'touch' | 'auto';
 }
 
-export function ChatView<T extends { id: number | string }>({
-  messages, renderMessage, renderEmpty, renderFooter,
-  chatMaxWidth, chatPadding, isDesktop,
-}: ChatViewProps<T>) {
+function ChatViewInner<T extends { id: number | string }>(
+  { messages, renderMessage, renderEmpty, renderFooter, chatMaxWidth, chatPadding, isDesktop, onAtBottomChange }: ChatViewProps<T>,
+  ref: React.ForwardedRef<ChatViewHandle>,
+) {
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  useImperativeHandle(ref, () => ({
+    scrollToBottom: () => {
+      if (messages.length > 0) {
+        virtuosoRef.current?.scrollToIndex({ index: messages.length - 1, align: 'end', behavior: 'smooth' });
+      }
+    },
+  }), [messages.length]);
   if (messages.length === 0) {
     return (
       <div style={{ flex: 1, overflowY: 'auto', padding: chatPadding, WebkitOverflowScrolling: 'touch' as any }}>
@@ -35,9 +50,11 @@ export function ChatView<T extends { id: number | string }>({
   }
   return (
     <Virtuoso
+      ref={virtuosoRef}
       style={{ flex: 1 }}
       data={messages}
       followOutput='smooth'
+      atBottomStateChange={onAtBottomChange}
       computeItemKey={(_i, m) => String(m.id)}
       components={{
         Header: () => <div style={{ height: isDesktop ? '24px' : '12px' }} />,
@@ -60,3 +77,8 @@ export function ChatView<T extends { id: number | string }>({
     />
   );
 }
+
+// forwardRef wrapper preserves the generic. Cast to keep the inferred type.
+export const ChatView = forwardRef(ChatViewInner) as <T extends { id: number | string }>(
+  props: ChatViewProps<T> & { ref?: React.ForwardedRef<ChatViewHandle> },
+) => ReturnType<typeof ChatViewInner>;

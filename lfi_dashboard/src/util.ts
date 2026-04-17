@@ -72,6 +72,33 @@ export const exportConversationMd = (convo: ExportableConversation): void => {
   URL.revokeObjectURL(url);
 };
 
+// Full-backup export. Bundles all conversations, settings, and a schema
+// version into a single JSON blob the user can re-import (or version-control
+// outside the browser). Schema version lets the importer reject incompatible
+// future formats safely.
+export interface FullBackup {
+  schemaVersion: 1;
+  exportedAt: string;
+  conversations: unknown[];
+  settings: unknown;
+}
+export const exportAllAsJson = (conversations: unknown[], settings: unknown): void => {
+  const payload: FullBackup = {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    conversations,
+    settings,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  a.download = `plausiden-backup-${stamp}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
+
 // Auto-title a conversation from its message list. Used once, but extracted so
 // the heuristic (questions preserved, first clause preferred, 52-char cap) is
 // easy to test + tune without scrolling through App.tsx.

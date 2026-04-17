@@ -1,0 +1,43 @@
+// PlausiDen AI mobile WebView client — module-level build script.
+// Targets Android 7.0 (API 24) minimum; compiles against API 34.
+
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.lfi.sovereign'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.lfi.sovereign"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    buildTypes {
+        release {
+            // Debuggable false for release; minify off until proguard rules
+            // are written and the WebView JS interface confirmed reflective-safe.
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.activity:activity-ktx:1.8.2'
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+}

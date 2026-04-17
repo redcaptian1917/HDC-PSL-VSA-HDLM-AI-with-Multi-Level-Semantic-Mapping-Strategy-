@@ -1,4 +1,5 @@
 import React from 'react';
+import { T } from './tokens';
 
 // Sub-components of the chat message list. Extracted from App.tsx in stages —
 // system + web first (zero-closure, trivial) so the pattern is proven before
@@ -6,7 +7,7 @@ import React from 'react';
 
 export const SystemMessage: React.FC<{ content: string; C: any }> = React.memo(({ content, C }) => (
   <div style={{
-    textAlign: 'center', padding: '8px 16px', fontSize: '12px',
+    textAlign: 'center', padding: `${T.spacing.sm} ${T.spacing.lg}`, fontSize: T.typography.sizeSm,
     color: C.textMuted, fontStyle: 'italic',
   }}>
     {content}
@@ -40,7 +41,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
     <div style={{
       maxWidth: isDesktop ? '80%' : '96%',
       border: `1px solid ${C.borderSubtle}`,
-      borderRadius: '10px', overflow: 'hidden',
+      borderRadius: T.radii.lg, overflow: 'hidden',
       background: C.bgCard,
     }}>
       <button onClick={onToggle}
@@ -165,7 +166,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       <div style={{
         maxWidth, width: '100%',
         background: C.bgCard, border: `1px solid ${C.accent}`,
-        borderRadius: '12px', padding: '10px',
+        borderRadius: T.radii.xl, padding: '10px',
       }}>
         <textarea value={editText}
           onChange={(e) => setEditText(e.target.value)}
@@ -196,9 +197,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       </div>
     ) : (
       <div style={{
-        maxWidth, padding: '12px 16px',
+        maxWidth, padding: `${T.spacing.md} ${T.spacing.lg}`,
         background: C.accent,
-        borderRadius: '16px 16px 4px 16px', fontSize: '14px', lineHeight: '1.6',
+        borderRadius: `${T.radii.xxl} ${T.radii.xxl} ${T.radii.xs} ${T.radii.xxl}`, fontSize: T.typography.sizeBody, lineHeight: T.typography.lineLoose,
         color: '#fff',
         wordBreak: 'break-word',
         boxShadow: `0 1px 4px rgba(0,0,0,0.10)`,

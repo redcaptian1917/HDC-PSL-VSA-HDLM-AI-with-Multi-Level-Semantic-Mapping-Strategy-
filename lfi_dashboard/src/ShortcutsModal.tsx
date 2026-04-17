@@ -15,6 +15,7 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', 'K'], label: 'Open command palette' },
       { keys: ['⌘', 'B'], label: 'Toggle conversation sidebar' },
       { keys: ['⌘', 'Shift', 'K'], label: 'Open knowledge browser' },
+      { keys: ['⌘', 'Shift', 'F'], label: 'Search this conversation' },
     ],
   },
   {
@@ -23,8 +24,10 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', 'N'], label: 'New conversation' },
       { keys: ['⌘', 'E'], label: 'Focus the message input' },
       { keys: ['⌘', '/'], label: 'Focus the message input' },
+      { keys: ['any letter'], label: 'Auto-focuses input + types it' },
       { keys: ['Enter'], label: 'Send (when sendOnEnter is on)' },
       { keys: ['Shift', 'Enter'], label: 'New line in the input' },
+      { keys: ['Esc'], label: 'Stop in-flight request (or close modal)' },
     ],
   },
   {

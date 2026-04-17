@@ -36,7 +36,7 @@ import css from 'highlight.js/lib/languages/css';
 import xml from 'highlight.js/lib/languages/xml';
 import go from 'highlight.js/lib/languages/go';
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, formatRelative } from './util';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportAllAsJson, formatRelative } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -58,7 +58,7 @@ import { renderMessageBody as renderMdBody, type MarkdownCtx } from './markdown'
 import { useTicTacToe } from './useTicTacToe';
 import { useStatusPoll, useQualityPoll, useSysInfoPoll } from './usePolls';
 import { useAutoScroll } from './useAutoScroll';
-import { ChatView } from './ChatView';
+import { ChatView, type ChatViewHandle } from './ChatView';
 const ShortcutsModal = React.lazy(() => import('./ShortcutsModal').then(m => ({ default: m.ShortcutsModal })));
 
 const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
@@ -188,6 +188,27 @@ const SovereignCommandConsole: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isConnected, setIsConnected] = useState(false);
+  // Debounced disconnect banner — avoid flashing the banner on the initial
+  // pre-connect moment or on momentary reconnects under 2s.
+  const [showDisconnectBanner, setShowDisconnectBanner] = useState(false);
+  // Distinguishes "WS dropped (reconnecting)" from "backend is fully offline"
+  // (probe to /api/status fails too). Lets the disconnect banner show a
+  // different, more actionable message when the dev server is down.
+  const [backendOffline, setBackendOffline] = useState(false);
+  // Ephemeral toast (copy feedback, etc). Single-slot — newer toasts replace.
+  const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
+  // Tracks whether the chat is scrolled to the latest message. False = user
+  // is reading history; we surface a "scroll to bottom" affordance.
+  const [chatAtBottom, setChatAtBottom] = useState(true);
+  const chatViewRef = useRef<ChatViewHandle>(null);
+  // In-conversation message search (Cmd+Shift+F). When non-empty, the chat
+  // list renders only matching messages.
+  const [chatSearch, setChatSearch] = useState<string>('');
+  const [showChatSearch, setShowChatSearch] = useState<boolean>(false);
+  const chatSearchInputRef = useRef<HTMLInputElement>(null);
+  const showToast = useCallback((msg: string) => {
+    setToast({ id: Date.now(), msg });
+  }, []);
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingStart, setThinkingStart] = useState<number | null>(null);
   const [thinkingStep, setThinkingStep] = useState<string>('');
@@ -535,6 +556,45 @@ ${cmdList}
     console.debug("// SCC: Persisting auth:", isAuthenticated);
     localStorage.setItem('lfi_auth', isAuthenticated.toString());
   }, [isAuthenticated]);
+
+  // Disconnect banner: only show after 2s of !isConnected, hide instantly on
+  // reconnect. Skips the initial pre-connect window (avoids flash on load).
+  useEffect(() => {
+    if (isConnected) { setShowDisconnectBanner(false); setBackendOffline(false); return; }
+    const t = setTimeout(() => setShowDisconnectBanner(true), 2000);
+    return () => clearTimeout(t);
+  }, [isConnected]);
+
+  // Backend health probe — when WS is down, periodically GET /api/status to
+  // distinguish "WS hiccup, REST still works" (transient) from "whole backend
+  // gone" (worth telling the user to start the dev server). Only runs while
+  // disconnected to avoid pestering the server when WS is healthy.
+  useEffect(() => {
+    if (isConnected) return;
+    const probe = async () => {
+      try {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 4000);
+        const res = await fetch(`http://${getHost()}:3000/api/status`, { signal: ctrl.signal });
+        clearTimeout(to);
+        setBackendOffline(!res.ok);
+      } catch {
+        setBackendOffline(true);
+      }
+    };
+    probe();
+    const id = setInterval(probe, 10000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
+
+  // Toast auto-dismiss after 1.5s. Re-keys on toast.id so a new toast resets
+  // the timer cleanly even if the previous one is mid-fade.
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 1500);
+    return () => clearTimeout(t);
+  }, [toast?.id]);
 
   // ---- Eruda FAB repositioning ----
   // Moves the Eruda floating action button above the input bar on mobile
@@ -903,6 +963,27 @@ ${cmdList}
         const isEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
         if (!isEditable) { e.preventDefault(); setShowShortcuts(true); return; }
       }
+
+      // Auto-focus chat input on a printable keystroke when no modal is open
+      // and focus is on body/main (not an input). Matches ChatGPT/Claude UX:
+      // user lands on the page, types — text goes into the chat box without
+      // needing to click. Skip combos and named keys (Tab, Esc, Arrow*, etc.).
+      // NOTE: focus alone loses the original keystroke (it fires while focus
+      // is still on body), so we forward the character into `input` state and
+      // preventDefault to stop any default behaviour like page scrolling on
+      // Space.
+      if (!mod && !e.altKey && e.key.length === 1) {
+        const target = e.target as HTMLElement | null;
+        const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome;
+        if (!isEditable && !anyModalOpen && inputRef.current) {
+          e.preventDefault();
+          setInput(prev => prev + e.key);
+          inputRef.current.focus();
+          return;
+        }
+      }
+
       if (mod && k === 'k') { e.preventDefault(); setShowCmdPalette(v => !v); setCmdQuery(''); setCmdIndex(0); }
       else if (mod && k === 'n') { e.preventDefault(); createNewConversation(); }
       else if (mod && k === 'd') { e.preventDefault(); setSettings(s => ({ ...s, developerMode: !s.developerMode })); }
@@ -910,8 +991,17 @@ ${cmdList}
       else if (mod && k === 'e') { e.preventDefault(); inputRef.current?.focus(); }
       else if (mod && k === '/') { e.preventDefault(); inputRef.current?.focus(); }
       else if (mod && e.shiftKey && k === 'k') { e.preventDefault(); setShowKnowledge(true); fetchKnowledge(); }
-      else if (mod && e.shiftKey && k === 'd') { e.preventDefault(); const themes: Array<typeof settings.theme> = ['dark','light','midnight','forest','sunset','rose','contrast']; const idx = themes.indexOf(settings.theme); setSettings(s => ({...s, theme: themes[(idx+1) % themes.length]})); }
+      else if (mod && e.shiftKey && k === 'd') { e.preventDefault(); const themes: Array<typeof settings.theme> = ['dark','light','midnight','forest','sunset','rose','contrast']; const idx = themes.indexOf(settings.theme); const next = themes[(idx+1) % themes.length]; setSettings(s => ({...s, theme: next})); showToast(`Theme: ${next}`); }
       else if (mod && k === 'b') { e.preventDefault(); setShowConvoSidebar(v => !v); }
+      else if (mod && e.shiftKey && k === 'f') {
+        e.preventDefault();
+        setShowChatSearch(v => {
+          const next = !v;
+          if (next) setTimeout(() => chatSearchInputRef.current?.focus(), 0);
+          else setChatSearch('');
+          return next;
+        });
+      }
       else if (e.key === 'Escape') {
         if (showShortcuts) setShowShortcuts(false);
         else if (showCmdPalette) setShowCmdPalette(false);
@@ -919,6 +1009,16 @@ ${cmdList}
         else if (showKnowledge) setShowKnowledge(false);
         else if (showActivity) setShowActivity(false);
         else if (showGame) setShowGame(null);
+        else if (showChatSearch) { setShowChatSearch(false); setChatSearch(''); }
+        // Last-resort Esc binding: cancel an in-flight request when no modal
+        // is open. Mirrors the on-screen Stop button so power users can abort
+        // without reaching for the mouse.
+        else if (isThinking) {
+          setIsThinking(false);
+          setThinkingStart(null);
+          fetch(`http://${getHost()}:3000/api/stop`, { method: 'POST' }).catch(() => {});
+          showToast('Stopped');
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -929,7 +1029,7 @@ ${cmdList}
   // Three polling hooks — see ./usePolls.ts for the fetch logic. Each manages
   // its own interval + abort handling; parent just reads the state they return.
   const host = getHost();
-  const { kg, lastOk: kgLastOk } = useStatusPoll(host, isAuthenticated);
+  const { kg, lastOk: kgLastOk, lastError: kgLastError } = useStatusPoll(host, isAuthenticated);
   const quality = useQualityPoll(host, isAuthenticated);
   const sysInfo = useSysInfoPoll(host, isAuthenticated);
 
@@ -1082,15 +1182,31 @@ ${cmdList}
       const rest = conversations.filter(c => c.id !== id);
       setCurrentConversationId(rest[0]?.id || '');
     }
+    showToast('Conversation deleted');
   };
   const renameConversation = (id: string, title: string) => {
     const clean = title.trim().slice(0, 80) || 'Untitled';
     setConversations(prev => prev.map(c => c.id === id ? { ...c, title: clean } : c));
+    showToast('Renamed');
   };
-  const togglePinned = (id: string) => setConversations(prev =>
-    prev.map(c => c.id === id ? { ...c, pinned: !c.pinned } : c));
-  const toggleStarred = (id: string) => setConversations(prev =>
-    prev.map(c => c.id === id ? { ...c, starred: !c.starred } : c));
+  const togglePinned = (id: string) => {
+    let nowPinned = false;
+    setConversations(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      nowPinned = !c.pinned;
+      return { ...c, pinned: nowPinned };
+    }));
+    showToast(nowPinned ? 'Pinned' : 'Unpinned');
+  };
+  const toggleStarred = (id: string) => {
+    let nowStarred = false;
+    setConversations(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      nowStarred = !c.starred;
+      return { ...c, starred: nowStarred };
+    }));
+    showToast(nowStarred ? 'Starred' : 'Unstarred');
+  };
 
   // Smart auto-title: look at the first user turn + first assistant reply,
   // pick a short key-phrase that beats simple truncation. Falls back to
@@ -1369,9 +1485,15 @@ ${cmdList}
 
   // Markdown renderer lives in ./markdown.tsx; we build a ctx each render so the
   // current theme key + copy-handler flow through. Cheap — just a tiny object.
+  // Wrap copyToClipboard so every copy fires a 'Copied' toast — without this
+  // the user has no signal whether the click took.
+  const copyWithToast = async (text: string) => {
+    await copyToClipboard(text);
+    showToast('Copied');
+  };
   const mdCtx: MarkdownCtx = {
     C, themeKey: settings.theme,
-    onCopy: copyToClipboard,
+    onCopy: copyWithToast,
     onCopyEvent: (lang, length) => logEvent('code_copied', { lang, length }),
   };
   const renderMessageBody = (text: string) => renderMdBody(text, mdCtx);
@@ -1503,6 +1625,42 @@ ${cmdList}
       overflow: 'hidden',
       fontSize: `${fontScale}em`,
     }}>
+      {/* ========== EPHEMERAL TOAST (copy feedback, etc.) ========== */}
+      {toast && (
+        <div role='status' aria-live='polite' key={toast.id}
+          style={{
+            position: 'fixed', top: '20px', right: '20px', zIndex: T.z.toast + 10,
+            padding: `${T.spacing.sm} ${T.spacing.lg}`,
+            background: C.bgCard, color: C.text,
+            border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.md,
+            fontSize: T.typography.sizeMd, fontWeight: T.typography.weightSemibold,
+            boxShadow: T.shadows.card,
+            animation: 'scc-toast-in 0.18s ease-out',
+          }}>
+          {toast.msg}
+          <style>{`@keyframes scc-toast-in { from { opacity: 0; transform: translateY(-6px) } to { opacity: 1; transform: translateY(0) } }`}</style>
+        </div>
+      )}
+      {/* ========== GLOBAL DISCONNECT BANNER ========== */}
+      {showDisconnectBanner && (
+        <div role='status' aria-live='polite'
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, zIndex: T.z.toast,
+            background: C.redBg, color: C.red, borderBottom: `1px solid ${C.redBorder}`,
+            padding: `${T.spacing.sm} ${T.spacing.lg}`, textAlign: 'center',
+            fontSize: T.typography.sizeMd, fontWeight: T.typography.weightSemibold,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: T.spacing.sm,
+          }}>
+          <span style={{
+            width: '8px', height: '8px', borderRadius: T.radii.round,
+            background: C.red, animation: 'scc-pulse 1.4s infinite ease-in-out',
+          }} />
+          <span>{backendOffline
+            ? `Backend offline — start the server at ${getHost()}:3000`
+            : 'Connection lost — reconnecting…'}</span>
+          <style>{`@keyframes scc-pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }`}</style>
+        </div>
+      )}
       {/* ========== TOOL CONFIRMATION DIALOG ========== */}
       {pendingConfirm && (
         <div style={{
@@ -1543,29 +1701,29 @@ ${cmdList}
       {/* ========== TERMS OF SERVICE (first run, before welcome) ========== */}
       {!tosAccepted && (
         <div style={{
-          position: 'fixed', inset: 0, zIndex: 260,
+          position: 'fixed', inset: 0, zIndex: T.z.modal + 60,
           background: C.bg,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '16px',
+          padding: T.spacing.lg,
         }}>
           <div role='dialog' aria-modal='true' aria-labelledby='scc-tos-title'
             style={{
             width: '100%', maxWidth: '560px',
-            background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: '16px',
-            padding: isMobile ? '24px' : '36px',
+            background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
+            padding: isMobile ? T.spacing.xl : '36px',
             boxShadow: '0 32px 80px rgba(0,0,0,0.5)',
           }}>
-            <h1 id='scc-tos-title' style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: 700, color: C.text }}>
+            <h1 id='scc-tos-title' style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: T.typography.weightBold, color: C.text }}>
               PlausiDen <span style={{ color: C.accent }}>AI</span> — Terms of Use
             </h1>
-            <p style={{ margin: '0 0 16px', fontSize: '13px', color: C.textMuted }}>
+            <p style={{ margin: '0 0 16px', fontSize: T.typography.sizeMd, color: C.textMuted }}>
               Please review before continuing.
             </p>
             <div style={{
               maxHeight: '300px', overflowY: 'auto',
-              padding: '16px', background: C.bgInput, borderRadius: '10px',
-              fontSize: '13px', lineHeight: 1.7, color: C.textSecondary,
-              marginBottom: '20px',
+              padding: T.spacing.lg, background: C.bgInput, borderRadius: T.radii.lg,
+              fontSize: T.typography.sizeMd, lineHeight: T.typography.lineLoose, color: C.textSecondary,
+              marginBottom: T.spacing.xl,
             }}>
               <p><strong>1. Sovereignty.</strong> PlausiDen AI runs entirely on your hardware. Your conversations, knowledge, and data never leave your machine unless you explicitly initiate it (e.g., web search, file export).</p>
               <p><strong>2. Privacy.</strong> No telemetry, analytics, or usage data is collected or transmitted. Diagnostics are local-only and off by default.</p>
@@ -1586,8 +1744,8 @@ ${cmdList}
               style={{
                 width: '100%', padding: '14px',
                 background: C.accent, border: 'none',
-                borderRadius: '10px', color: '#fff',
-                fontSize: '15px', fontWeight: 700,
+                borderRadius: T.radii.lg, color: '#fff',
+                fontSize: '15px', fontWeight: T.typography.weightBold,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}>
               I accept — continue
@@ -1599,16 +1757,16 @@ ${cmdList}
       {/* ========== FIRST-RUN WELCOME ========== */}
       {showWelcome && (
         <div style={{
-          position: 'fixed', inset: 0, zIndex: 250,
+          position: 'fixed', inset: 0, zIndex: T.z.modal + 50,
           background: 'rgba(0,0,0,0.70)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '16px',
+          padding: T.spacing.lg,
         }}>
           <div role='dialog' aria-modal='true' aria-labelledby='scc-welcome-title'
             style={{
             width: '100%', maxWidth: '520px',
-            background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: '16px',
-            padding: isMobile ? '24px' : '36px',
+            background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
+            padding: isMobile ? T.spacing.xl : '36px',
             boxShadow: '0 32px 80px rgba(0,0,0,0.5)',
             textAlign: 'center',
           }}>
@@ -1792,8 +1950,8 @@ ${cmdList}
           thermalThrottled={stats.is_throttled}
           ramLabel={`${ramFmt.value} ${ramFmt.unit}`}
           cpuTempC={stats.cpu_temp_c}
-          factsLabel={`${kg.facts}`}
-          conceptsLabel={`${kg.concepts}`}
+          factsLabel={kg.facts ? compactNum(kg.facts) : (kgLastOk ? '0' : kgLastError ? 'Unreachable' : 'Loading…')}
+          conceptsLabel={kg.concepts ? String(kg.concepts) : (kgLastOk ? '0' : kgLastError ? 'Unreachable' : 'Loading…')}
           logicDensity={stats.logic_density}
           qosReport={qosReport}
           onRefreshQos={fetchQos}
@@ -1826,7 +1984,15 @@ ${cmdList}
               document.body.appendChild(a); a.click(); a.remove();
               setTimeout(() => URL.revokeObjectURL(url), 1000);
               logEvent('export_conversations', { count: conversations.length });
+              showToast('Conversations exported');
             } catch (e) { console.warn(e); }
+          }}
+          onExportAllJson={() => {
+            try {
+              exportAllAsJson(conversations, settings);
+              logEvent('export_all', { conversations: conversations.length });
+              showToast('Full backup exported');
+            } catch (e) { console.warn(e); showToast('Export failed'); }
           }}
           onClearHistory={() => {
             if (confirm('Clear all saved conversations from this device?')) {
@@ -2415,13 +2581,74 @@ ${cmdList}
             instead of the viewport. */}
         <main id='main-content' role='main' aria-label='Chat' style={{
           flex: 1, display: 'flex', flexDirection: 'column',
-          overflow: 'hidden', minWidth: 0,
+          overflow: 'hidden', minWidth: 0, position: 'relative',
         }}>
+          {/* Inline message search (Cmd+Shift+F). Slides down from the top of
+              main while open; clearing the input or closing restores the full
+              list. Filters the messages array passed to ChatView. */}
+          {showChatSearch && (
+            <div role='search' style={{
+              padding: T.spacing.sm + ' ' + T.spacing.lg,
+              background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`,
+              display: 'flex', alignItems: 'center', gap: T.spacing.sm,
+            }}>
+              <input
+                ref={chatSearchInputRef}
+                type='search'
+                aria-label='Search this conversation'
+                placeholder='Search messages…'
+                autoComplete='off' spellCheck={false}
+                value={chatSearch}
+                onChange={(e) => setChatSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') { setShowChatSearch(false); setChatSearch(''); } }}
+                style={{
+                  flex: 1, padding: T.spacing.sm + ' ' + T.spacing.md,
+                  background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                  borderRadius: T.radii.md, color: C.text, outline: 'none',
+                  fontSize: T.typography.sizeMd, fontFamily: 'inherit',
+                }}
+              />
+              <span style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                {chatSearch ? `${messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())).length} of ${messages.length}` : `${messages.length} msgs`}
+              </span>
+              <button onClick={() => { setShowChatSearch(false); setChatSearch(''); }}
+                aria-label='Close search'
+                style={{
+                  background: 'transparent', border: 'none', color: C.textMuted,
+                  cursor: 'pointer', fontSize: '18px', padding: '4px 8px',
+                }}>{'\u2715'}</button>
+            </div>
+          )}
+          {/* Floating "scroll to bottom" — appears when user has scrolled
+              up away from the latest message in a non-empty chat. Avoids the
+              UX trap where new AI replies arrive but the user is reading
+              history and never sees them. */}
+          {!chatAtBottom && messages.length > 0 && (
+            <button onClick={() => chatViewRef.current?.scrollToBottom()}
+              aria-label='Scroll to latest message'
+              title='Scroll to latest'
+              style={{
+                position: 'absolute', bottom: '120px', right: '24px',
+                width: '40px', height: '40px', borderRadius: T.radii.round,
+                background: C.bgCard, border: `1px solid ${C.accentBorder}`,
+                color: C.accent, cursor: 'pointer', boxShadow: T.shadows.card,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: T.z.sticky, fontFamily: 'inherit',
+              }}>
+              <svg width='18' height='18' viewBox='0 0 24 24' fill='none'
+                stroke='currentColor' strokeWidth='2.5' strokeLinecap='round' strokeLinejoin='round'>
+                <line x1='12' y1='5' x2='12' y2='19' />
+                <polyline points='19 12 12 19 5 12' />
+              </svg>
+            </button>
+          )}
           <ChatView
-            messages={messages}
+            ref={chatViewRef}
+            messages={chatSearch ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())) : messages}
             chatMaxWidth={chatMaxWidth}
             chatPadding={chatPadding}
             isDesktop={isDesktop}
+            onAtBottomChange={setChatAtBottom}
             renderEmpty={() => (
               <WelcomeScreen
                 C={C} isDesktop={isDesktop}
@@ -2430,39 +2657,58 @@ ${cmdList}
             )}
             renderFooter={() => (
               <>
-                {isThinking && (
+                {isThinking && (() => {
+                  // Color shifts as latency grows so the user knows when the
+                  // run is unusually slow without interrupting them. <15s green
+                  // (normal), 15-30s yellow (slow), >30s red (probably stuck).
+                  const slow = thinkingElapsed >= 15 && thinkingElapsed < 30;
+                  const stuck = thinkingElapsed >= 30;
+                  const dotColor = stuck ? C.red : slow ? C.yellow : C.accent;
+                  const borderColor = stuck ? C.redBorder : slow ? C.accentBorder : C.borderSubtle;
+                  return (
                   <div role="status" aria-live="polite" style={{
                     display: 'flex', alignItems: 'center', gap: '12px',
                     padding: '12px 16px', margin: '8px 0',
-                    background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+                    background: C.bgCard, border: `1px solid ${borderColor}`,
                     borderRadius: '10px', fontSize: '13px',
+                    transition: 'border-color 0.4s',
                   }}>
                     <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
                       {[0, 1, 2].map(i => (
                         <div key={i} style={{
-                          width: '7px', height: '7px', background: C.accent, borderRadius: '50%',
+                          width: '7px', height: '7px', background: dotColor, borderRadius: '50%',
                           animation: 'scc-bounce 1.4s infinite ease-in-out',
                           animationDelay: `${i * 0.16}s`,
+                          transition: 'background 0.4s',
                         }} />
                       ))}
                     </div>
                     <span style={{ color: C.text, fontWeight: 500 }}>{thinkingStep || 'Thinking'}</span>
-                    <span style={{ color: C.textDim, fontSize: '11px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    <span style={{ color: stuck ? C.red : C.textDim, fontSize: '11px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
                       {Math.floor(thinkingElapsed / 60) > 0 ? `${Math.floor(thinkingElapsed / 60)}m ` : ''}{thinkingElapsed % 60}s
                     </span>
+                    {stuck && (
+                      <span style={{ color: C.red, fontSize: '11px', fontStyle: 'italic' }}>
+                        unusually slow
+                      </span>
+                    )}
                     <button onClick={() => {
                       setIsThinking(false);
                       setThinkingStart(null);
                       fetch(`http://${getHost()}:3000/api/stop`, { method: 'POST' }).catch(() => {});
                       logEvent('chat_stop', { elapsed: thinkingElapsed });
-                    }} style={{
+                      showToast('Stopped');
+                    }}
+                      title='Stop (Esc)' aria-label='Stop in-flight request'
+                      style={{
                       marginLeft: 'auto', padding: '4px 12px', fontSize: '12px',
                       background: 'transparent', border: `1px solid ${C.border}`,
                       color: C.textMuted, borderRadius: '6px', cursor: 'pointer',
                       fontFamily: 'inherit',
                     }}>Stop</button>
                   </div>
-                )}
+                  );
+                })()}
                 <div ref={messagesEndRef} />
               </>
             )}
@@ -2511,7 +2757,7 @@ ${cmdList}
                     renderBody={(text) => renderMessageBody(text)}
                     onToggleReasoning={() => setExpandedReasoning(expandedReasoning === msg.id ? null : msg.id)}
                     onRegenerate={regenerateLast}
-                    onCopy={copyToClipboard}
+                    onCopy={copyWithToast}
                     onOpenProvenance={(cid) => {
                       fetch(`http://${getHost()}:3000/api/provenance/${cid}`)
                         .then(r => r.json())

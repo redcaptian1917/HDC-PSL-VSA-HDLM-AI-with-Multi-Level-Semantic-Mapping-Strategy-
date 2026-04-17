@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher icon foreground — minimalist shield silhouette mirroring the
+  LoginScreen lock icon. Designed for the 108dp adaptive-icon spec; the
+  visible area is the inner 72dp.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:strokeColor="#8b7bf7"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:pathData="M54,30 L78,42 L78,60 C78,72 54,84 54,84 C54,84 30,72 30,60 L30,42 Z" />
+    <path
+        android:strokeColor="#8b7bf7"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:pathData="M54,48 L54,60" />
+    <path
+        android:strokeColor="#8b7bf7"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:pathData="M54,68 L54.01,68" />
+</vector>

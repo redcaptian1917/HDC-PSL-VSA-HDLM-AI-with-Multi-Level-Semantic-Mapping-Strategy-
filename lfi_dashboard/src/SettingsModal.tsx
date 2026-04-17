@@ -37,6 +37,7 @@ export interface SettingsModalProps {
   onTierSelect: (tier: string) => void;
   onExportEvents: () => void;
   onExportConversations: () => void;
+  onExportAllJson: () => void;
   onClearHistory: () => void;
   onResetSettings: () => void;
   onDeleteAccount: () => void;
@@ -47,7 +48,7 @@ export interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   C, isMobile, settings, setSettings, tab, onTabChange, onClose,
   currentTier, onTierSelect,
-  onExportEvents, onExportConversations, onClearHistory, onResetSettings, onDeleteAccount,
+  onExportEvents, onExportConversations, onExportAllJson, onClearHistory, onResetSettings, onDeleteAccount,
   conversationCount, messageCount,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -395,6 +396,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <div style={{ marginTop: '8px', fontSize: '10px', color: C.textDim }}>
             {messageCount} messages across {conversationCount} conversation{conversationCount === 1 ? '' : 's'}.
+          </div>
+          <button onClick={onExportAllJson}
+            style={{
+              width: '100%', marginTop: '12px', padding: '10px',
+              background: C.greenBg, border: `1px solid ${C.greenBorder}`,
+              color: C.green, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+            }}>Full backup (JSON)</button>
+          <div style={{ marginTop: '6px', fontSize: '10px', color: C.textDim }}>
+            Includes all conversations + settings. Schema v1.
           </div>
 
           <div style={{ marginTop: '22px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
