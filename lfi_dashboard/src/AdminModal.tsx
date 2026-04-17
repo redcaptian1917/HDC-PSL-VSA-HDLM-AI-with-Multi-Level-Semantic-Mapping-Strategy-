@@ -665,6 +665,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   placeholder={`Filter ${domains?.length ?? 0} domains…`}
                   value={domainFilter}
                   onChange={(e) => setDomainFilter(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape' && domainFilter) { e.preventDefault(); setDomainFilter(''); } }}
                   style={{
                     flex: 1, padding: '10px 12px',
                     background: C.bgInput, border: `1px solid ${C.borderSubtle}`,

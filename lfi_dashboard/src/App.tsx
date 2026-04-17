@@ -3125,6 +3125,7 @@ ${cmdList}
                 spellCheck={false}
                 value={convoSearch}
                 onChange={(e) => setConvoSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape' && convoSearch) { e.preventDefault(); setConvoSearch(''); } }}
                 placeholder='Search conversations...'
                 style={{
                   width: '100%', padding: '8px 10px',

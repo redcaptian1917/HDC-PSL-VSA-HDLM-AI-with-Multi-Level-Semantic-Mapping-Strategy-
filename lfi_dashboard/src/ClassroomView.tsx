@@ -878,6 +878,7 @@ const LibraryTab: React.FC<{ C: any; domains: Array<{ domain: string; count: num
       </p>
       <input
         type='search' value={q} onChange={e => setQ(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.preventDefault(); setQ(''); } }}
         autoComplete='off' spellCheck={false}
         placeholder={`Filter ${domains.length} domains / ${files.length} files…`}
         aria-label='Library search'
