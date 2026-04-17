@@ -3744,7 +3744,9 @@ ${cmdList}
             </AppErrorBoundary>
           </React.Suspense>
         )}
-        <main id='main-content' role='main' aria-label='Chat' style={{
+        <main id='main-content' role='main' aria-label='Chat'
+          aria-busy={isThinking || undefined}
+          style={{
           flex: 1, display: activeView === 'classroom' ? 'none' : 'flex', flexDirection: 'column',
           overflow: 'hidden', minWidth: 0, position: 'relative',
         }}>
