@@ -1395,7 +1395,7 @@ ${cmdList}
 
   // Desktop sidebar
   const renderSidebar = () => (
-    <aside style={{
+    <aside aria-label='Substrate telemetry and admin' style={{
       width: `${sidebarWidth}px`, flexShrink: 0,
       background: C.bgCard, borderLeft: `1px solid ${C.border}`,
       display: 'flex', flexDirection: 'column', overflowY: 'auto',
@@ -2136,7 +2136,7 @@ ${cmdList}
             a transform+overlay on mobile. REGRESSION-GUARD: prior setup used
             both translateX AND negative margin, which caused layout jitter and
             a "small/can't hide" feel. */}
-        <aside style={{
+        <aside aria-label='Conversations' style={{
             alignSelf: 'stretch',           // fill parent row height
             background: C.bgCard,
             borderRight: `1px solid ${C.border}`,
@@ -2813,7 +2813,7 @@ ${cmdList}
           if (!latestWithPlan || !latestWithPlan.plan) return null;
           const plan = latestWithPlan.plan;
           return (
-            <aside style={{
+            <aside aria-label='Plan panel' style={{
               alignSelf: 'stretch',
               background: C.bgCard,
               borderLeft: `1px solid ${C.border}`,
