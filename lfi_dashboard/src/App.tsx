@@ -4192,16 +4192,25 @@ ${cmdList}
                   display: 'flex', flexWrap: 'wrap', gap: '6px',
                   padding: '10px 14px 0', alignItems: 'center',
                 }}>
-                  {pastedImages.map(img => (
+                  {pastedImages.map((img, idx) => {
+                    // c2-286: include image type + size in alt/title so the
+                    // preview carries more than "Pasted image preview" —
+                    // assistive tech users get the metadata sighted users
+                    // can infer from the thumbnail, and the hover tooltip
+                    // matches.
+                    const mimeShort = img.type.replace(/^image\//, '').toUpperCase();
+                    const kb = (img.size / 1024).toFixed(0);
+                    const label = `Pasted image ${idx + 1} (${mimeShort}, ${kb} KB)`;
+                    return (
                     <div key={img.id} style={{ position: 'relative' }}>
-                      <img src={img.dataUrl} alt='Pasted image preview'
+                      <img src={img.dataUrl} alt={label} title={label}
                         style={{
                           width: '56px', height: '56px', objectFit: 'cover',
                           borderRadius: T.radii.sm, border: `1px solid ${C.border}`,
                           display: 'block',
                         }} />
                       <button onClick={() => setPastedImages(prev => prev.filter(p => p.id !== img.id))}
-                        aria-label='Remove pasted image'
+                        aria-label={`Remove ${label}`}
                         title='Remove'
                         style={{
                           position: 'absolute', top: '-6px', right: '-6px',
@@ -4212,9 +4221,10 @@ ${cmdList}
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>{'\u2715'}</button>
                     </div>
-                  ))}
+                    );
+                  })}
                   <span style={{ fontSize: '11px', color: C.textDim, marginLeft: '4px' }}>
-                    {pastedImages.length === 1 ? '1 image' : `${pastedImages.length} images`} ready \u2014 backend upload not yet wired
+                    {pastedImages.length === 1 ? '1 image' : `${pastedImages.length} images`} ready {'\u2014'} backend upload not yet wired
                   </span>
                 </div>
               )}
