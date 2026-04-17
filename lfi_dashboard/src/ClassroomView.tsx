@@ -5,6 +5,8 @@ import { T } from './tokens';
 import { typography as dsType } from './design-system';
 // c2-346 / task 24: shared uppercase meta-label component.
 import { Label } from './components/Label';
+// c2-348 / task 28: shared error banner.
+import { ErrorAlert } from './components/ErrorAlert';
 import { compactNum, formatRelative } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
@@ -284,26 +286,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
       <div role='tabpanel' aria-label={sub}
         style={{ flex: 1, overflowY: 'auto', padding: T.spacing.xl, maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
         {err && (
-          <div role='alert' style={{
-            padding: '12px 14px', marginBottom: T.spacing.lg,
-            background: C.redBg, border: `1px solid ${C.redBorder}`,
-            color: C.red, borderRadius: T.radii.md, fontSize: T.typography.sizeMd,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.md,
-          }}>
-            <span><strong>Could not load:</strong> {err}</span>
-            {/* c2-301: inline Retry so users don't have to scroll to the
-                top-right refresh button to recover from a transient fault. */}
-            <button onClick={load} disabled={loading}
-              style={{
-                background: 'transparent', border: `1px solid ${C.redBorder}`,
-                color: C.red, borderRadius: T.radii.sm,
-                padding: `${T.spacing.xs} ${T.spacing.md}`,
-                cursor: loading ? 'wait' : 'pointer',
-                fontFamily: 'inherit', fontSize: T.typography.sizeXs,
-                fontWeight: T.typography.weightBold, textTransform: 'uppercase',
-                letterSpacing: '0.06em', flexShrink: 0,
-              }}>{loading ? 'Retrying…' : 'Retry'}</button>
-          </div>
+          <ErrorAlert C={C} message={err} onRetry={load} retrying={loading} mb={T.spacing.lg} />
         )}
 
         {/* --- Student Profile --- */}
