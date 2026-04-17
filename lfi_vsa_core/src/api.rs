@@ -2827,9 +2827,40 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/admin/training/:action", post(admin_training_control_handler))
         .route("/api/admin/logs", get(admin_logs_handler))
         .layer(cors)
+        // OBSERVABILITY: Request logging — method, path, status, latency
+        .layer(axum::middleware::from_fn(request_logging_middleware))
         // SECURITY: Add security headers to all responses
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(state))
+}
+
+/// OBSERVABILITY: Request logging middleware — logs method, path, status, latency.
+/// Runs on every request for audit trail and performance monitoring.
+async fn request_logging_middleware(
+    request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    let start = std::time::Instant::now();
+
+    let response = next.run(request).await;
+
+    let latency_ms = start.elapsed().as_millis();
+    let status = response.status().as_u16();
+
+    // Skip noisy endpoints (WebSocket upgrades logged elsewhere, health checks)
+    if !path.contains("/ws") {
+        tracing::info!(
+            method = %method,
+            path = %path,
+            status = status,
+            latency_ms = latency_ms,
+            "request"
+        );
+    }
+
+    response
 }
 
 /// SECURITY: Middleware that adds security headers to every response.

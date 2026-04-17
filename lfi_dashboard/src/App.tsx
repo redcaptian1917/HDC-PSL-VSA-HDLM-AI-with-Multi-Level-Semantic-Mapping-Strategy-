@@ -1371,6 +1371,10 @@ ${cmdList}
   }, [conversations.length]);
 
   // Persist the list + current id. Incognito conversations are excluded.
+  // c2-267: surface quota-exceeded to the user once per session — silently
+  // losing writes was confusing people who wondered why conversations
+  // stopped saving. Ref ensures the toast fires at most once.
+  const quotaWarnedRef = useRef(false);
   useEffect(() => {
     if (!settings.persistConversations) return;
     try {
@@ -1378,7 +1382,13 @@ ${cmdList}
         ...c, messages: c.messages.slice(-500),
       }));
       localStorage.setItem(LS_CONVERSATIONS_KEY, JSON.stringify(saveable));
-    } catch { /* quota exceeded */ }
+    } catch (e) {
+      if (!quotaWarnedRef.current) {
+        quotaWarnedRef.current = true;
+        console.warn('[lfi] conversations write failed — likely quota exceeded:', e);
+        showToast('Storage full — new messages may not persist across reloads.');
+      }
+    }
   }, [conversations, settings.persistConversations]);
   useEffect(() => {
     if (!currentConversationId) return;
@@ -1431,6 +1441,11 @@ ${cmdList}
   // outgoing conversation before it's replaced.
   const lastActiveConvoRef = useRef<string>('');
   useEffect(() => {
+    // c2-268: reset the chat-search cursor on convo switch so the N/M
+    // counter and the jump-to-match arrows start from the first match of
+    // the new conversation. The query itself is preserved — users often
+    // want to apply the same filter to a different thread.
+    setChatSearchCursor(0);
     const outgoingId = lastActiveConvoRef.current;
     if (outgoingId && outgoingId !== currentConversationId) {
       // Capture `input` into the outgoing conversation's draft.
