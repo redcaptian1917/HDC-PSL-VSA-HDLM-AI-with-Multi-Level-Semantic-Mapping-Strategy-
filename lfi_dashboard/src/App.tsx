@@ -188,6 +188,10 @@ const SovereignCommandConsole: React.FC = () => {
   // c2-370 / task 84: drag-and-drop file upload overlay state. True while a
   // drag is in progress over the chat pane; drives the dashed-border hint.
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  // c2-371 / task 79: set when the last assistant turn errored out -- lets
+  // us render an inline Retry affordance that resends the prior user
+  // message. Cleared on successful next send or manual dismiss.
+  const [lastErrorRetry, setLastErrorRetry] = useState<{ userContent: string; at: number } | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   // Debounced disconnect banner — avoid flashing the banner on the initial
   // pre-connect moment or on momentary reconnects under 2s.
@@ -1001,10 +1005,19 @@ ${cmdList}
           } else if (msg.type === 'chat_error') {
             console.debug("// SCC: Chat error:", msg.error);
             setIsThinking(false);
-            applyToStreamingConvo(prev => [...prev, {
-              id: msgId(), role: 'system',
-              content: `Error: ${msg.error}`, timestamp: Date.now(),
-            }]);
+            applyToStreamingConvo(prev => {
+              // c2-371 / task 79: remember the most recent user turn so the
+              // Retry button has something to resend. Scanned from the end
+              // to tolerate streaming_convo prepending system messages.
+              const lastUser = [...prev].reverse().find(m => m.role === 'user');
+              if (lastUser) {
+                setLastErrorRetry({ userContent: lastUser.content, at: Date.now() });
+              }
+              return [...prev, {
+                id: msgId(), role: 'system',
+                content: `Error: ${msg.error}`, timestamp: Date.now(),
+              }];
+            });
           }
         } catch (e) {
           // c0-020/E3: JSON.parse or handler exceptions used to drop silently
@@ -1974,6 +1987,8 @@ ${cmdList}
   // disturbing the conversation flow.
   const handleSend = async () => {
     if (sendingRef.current) return; // guard: in-flight send in progress
+    // c2-371 / task 79: a fresh send supersedes any stale retry affordance.
+    if (lastErrorRetry) setLastErrorRetry(null);
     const trimmed = input.trim();
     console.debug("// SCC: handleSend, len:", trimmed.length, "skill:", activeSkill);
     // c2-230 / #71: allow send when there are pasted images, even if the
@@ -4597,6 +4612,54 @@ ${cmdList}
                   </div>
                 );
               })()}
+
+              {/* c2-371 / task 79: retry affordance surfaced when the last
+                  assistant turn errored. Renders above the input bar with
+                  red-accent styling so it reads as a recovery action rather
+                  than a primary CTA. Dismiss button lets the user drop the
+                  prompt without resending. */}
+              {lastErrorRetry && (
+                <div role='alert' style={{
+                  display: 'flex', alignItems: 'center', gap: T.spacing.sm,
+                  marginBottom: T.spacing.sm,
+                  padding: `${T.spacing.sm} ${T.spacing.md}`,
+                  background: C.redBg, border: `1px solid ${C.redBorder}`,
+                  borderRadius: T.radii.md, fontSize: T.typography.sizeSm,
+                  color: C.red,
+                }}>
+                  <span style={{ flex: 1 }}>
+                    <strong>Last reply failed.</strong>{' '}
+                    <span style={{ color: C.textSecondary }}>Resend that prompt?</span>
+                  </span>
+                  <button
+                    onClick={() => {
+                      const prompt = lastErrorRetry.userContent;
+                      setLastErrorRetry(null);
+                      setInput(prompt);
+                      // Give React a tick to commit the input state before
+                      // handleSend reads from it.
+                      setTimeout(() => { handleSend(); }, 50);
+                      logEvent('chat_retry', { len: prompt.length });
+                    }}
+                    aria-label='Retry last message'
+                    style={{
+                      background: C.red, color: '#fff',
+                      border: 'none', borderRadius: T.radii.sm,
+                      padding: `${T.spacing.xs} ${T.spacing.md}`,
+                      fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                      cursor: 'pointer', fontFamily: 'inherit',
+                    }}>Retry</button>
+                  <button
+                    onClick={() => setLastErrorRetry(null)}
+                    aria-label='Dismiss retry prompt'
+                    style={{
+                      background: 'transparent', border: 'none',
+                      color: C.textMuted, cursor: 'pointer',
+                      fontSize: T.typography.sizeMd, padding: '0 4px',
+                    }}>{'\u2715'}</button>
+                </div>
+              )}
 
               <div
                 key={`input-${sendPulseId}`}
