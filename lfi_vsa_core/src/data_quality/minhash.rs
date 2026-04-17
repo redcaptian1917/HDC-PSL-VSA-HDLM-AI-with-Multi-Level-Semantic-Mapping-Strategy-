@@ -82,7 +82,7 @@ impl MinHashDedup {
             for i in 0..self.num_hashes {
                 // BUG ASSUMPTION: Using XOR with seed is a fast but imperfect
                 // universal hash family. For production, use Murmur3 or xxHash.
-                let h = shingle.wrapping_mul(i as u64 + 1).wrapping_add(i as u64 * 0x9E3779B97F4A7C15);
+                let h = shingle.wrapping_mul(i as u64 + 1).wrapping_add((i as u64).wrapping_mul(0x9E3779B97F4A7C15));
                 if h < hashes[i] {
                     hashes[i] = h;
                 }
