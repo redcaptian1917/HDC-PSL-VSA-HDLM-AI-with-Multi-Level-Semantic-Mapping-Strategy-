@@ -710,22 +710,50 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 );
                 return (
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.md, marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.md, marginBottom: '6px', flexWrap: 'wrap' }}>
                       <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
                         Client events ({filtered.length} of {localEvents.length}, this session)
                       </div>
-                      <input
-                        type='search' value={logFilter} onChange={e => setLogFilter(e.target.value)}
-                        placeholder='Filter kind or data…'
-                        autoComplete='off' spellCheck={false}
-                        aria-label='Filter client events'
-                        style={{
-                          minWidth: '220px', padding: '6px 10px',
-                          background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
-                          borderRadius: T.radii.sm, color: C.text, fontFamily: 'inherit',
-                          fontSize: '12px', outline: 'none',
+                      <div style={{ display: 'flex', gap: T.spacing.sm, alignItems: 'center' }}>
+                        <input
+                          type='search' value={logFilter} onChange={e => setLogFilter(e.target.value)}
+                          placeholder='Filter kind or data…'
+                          autoComplete='off' spellCheck={false}
+                          aria-label='Filter client events'
+                          style={{
+                            minWidth: '200px', padding: '6px 10px',
+                            background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                            borderRadius: T.radii.sm, color: C.text, fontFamily: 'inherit',
+                            fontSize: '12px', outline: 'none',
+                          }}
+                        />
+                        <button onClick={() => {
+                          // Export the currently-filtered events as JSON so the
+                          // user can attach them to a support ticket without
+                          // copying from the table manually.
+                          const payload = { exportedAt: new Date().toISOString(), filter: logFilter, events: filtered };
+                          const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+                          a.download = `plausiden-events-${stamp}.json`;
+                          document.body.appendChild(a); a.click(); a.remove();
+                          URL.revokeObjectURL(url);
                         }}
-                      />
+                          aria-label='Export client events as JSON'
+                          title={filtered.length === 0 ? 'No events to export' : 'Export filtered events as JSON'}
+                          disabled={filtered.length === 0}
+                          style={{
+                            padding: '6px 12px', fontSize: '11px', fontWeight: T.typography.weightBold,
+                            background: filtered.length === 0 ? C.bgInput : C.accentBg,
+                            border: `1px solid ${filtered.length === 0 ? C.borderSubtle : C.accentBorder}`,
+                            color: filtered.length === 0 ? C.textMuted : C.accent,
+                            borderRadius: T.radii.sm,
+                            cursor: filtered.length === 0 ? 'not-allowed' : 'pointer',
+                            fontFamily: 'inherit', textTransform: 'uppercase',
+                          }}>Export JSON</button>
+                      </div>
                     </div>
                     <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden', maxHeight: '45vh', overflowY: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>

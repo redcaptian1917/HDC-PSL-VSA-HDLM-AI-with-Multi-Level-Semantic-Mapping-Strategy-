@@ -12,3 +12,4 @@
 pub mod minhash;
 pub mod bloom;
 pub mod temporal;
+pub mod classifier;
