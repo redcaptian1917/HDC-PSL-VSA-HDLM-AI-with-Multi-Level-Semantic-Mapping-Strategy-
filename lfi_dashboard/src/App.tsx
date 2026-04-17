@@ -3393,6 +3393,56 @@ ${cmdList}
           rendered above (c0-017). The `showAdmin` state now drives that modal
           on all viewports. */}
 
+      {/* ========== TOP-NAV — c0-037 #6 / c2-330 ==========
+          Visible section switcher. 5 destinations: Agora (chat) / Classroom /
+          Fleet / Library / Admin. Hotkeys ⌘1..5 already cover every
+          target; this just surfaces the map. aria-current on the active
+          item so screen readers announce it. Hidden on mobile because the
+          chat-first layout needs the vertical space (mobile users still
+          have the palette + slash + hotkeys). */}
+      {isDesktop && (
+        <nav role='navigation' aria-label='Top level sections'
+          style={{
+            display: 'flex', alignItems: 'stretch', gap: 0,
+            background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`,
+            padding: `0 ${T.spacing.lg}`, flexShrink: 0,
+          }}>
+          {([
+            { id: 'chat', label: 'Agora', mod: '1', act: () => { setActiveView('chat'); setShowAdmin(false); } },
+            { id: 'classroom', label: 'Classroom', mod: '2', act: () => { setActiveView('classroom'); setShowAdmin(false); } },
+            { id: 'admin', label: 'Admin', mod: '3', act: () => { setShowAdmin(true); } },
+            { id: 'fleet', label: 'Fleet', mod: '4', act: () => { setActiveView('fleet'); setShowAdmin(false); } },
+            { id: 'library', label: 'Library', mod: '5', act: () => { setActiveView('library'); setShowAdmin(false); } },
+          ] as const).map(item => {
+            const isActive = (item.id === 'admin' ? showAdmin : (activeView === item.id && !showAdmin));
+            return (
+              <button key={item.id} onClick={item.act}
+                aria-current={isActive ? 'page' : undefined}
+                title={`${item.label} (${mod()}${item.mod})`}
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  padding: `${T.spacing.sm} ${T.spacing.lg}`,
+                  fontFamily: 'inherit', fontSize: T.typography.sizeMd,
+                  fontWeight: T.typography.weightSemibold,
+                  color: isActive ? C.accent : C.textMuted,
+                  borderBottom: `2px solid ${isActive ? C.accent : 'transparent'}`,
+                  marginBottom: '-1px', display: 'flex', alignItems: 'center', gap: '6px',
+                  transition: `color ${T.motion.fast}, border-color ${T.motion.fast}`,
+                }}
+                onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.color = C.text; }}
+                onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = C.textMuted; }}>
+                {item.label}
+                <kbd aria-hidden='true' style={{
+                  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  fontSize: '10px', color: isActive ? C.accent : C.textDim,
+                  opacity: 0.7,
+                }}>{mod()}{item.mod}</kbd>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
       {/* ========== BODY: Conversation sidebar + Chat + Right sidebar ========== */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* LEFT: Conversations sidebar (Claude.ai / ChatGPT / Gemini style) */}
