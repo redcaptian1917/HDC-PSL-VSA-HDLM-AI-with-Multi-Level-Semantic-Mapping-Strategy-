@@ -123,7 +123,20 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
         {/* --- Student Profile --- */}
         {sub === 'profile' && (
           <div>
-            <div style={{ textAlign: 'center', marginBottom: T.spacing.xl }}>
+            {/* Skeleton on first load (no cached data) — silent on subsequent
+                auto-refreshes so the grade doesn't re-skeleton every 10s. */}
+            {loading && !data && (
+              <div aria-busy='true' aria-live='polite' style={{ textAlign: 'center', marginBottom: T.spacing.xl }}>
+                <div style={{
+                  width: isDesktop ? '180px' : '140px', height: isDesktop ? '128px' : '96px',
+                  margin: '0 auto', borderRadius: T.radii.lg,
+                  background: `linear-gradient(90deg, ${C.bgCard} 0%, ${C.bgHover} 50%, ${C.bgCard} 100%)`,
+                  backgroundSize: '200% 100%', animation: 'scc-skel-cls 1.3s ease-in-out infinite',
+                }} />
+                <style>{`@keyframes scc-skel-cls { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }`}</style>
+              </div>
+            )}
+            <div style={{ textAlign: 'center', marginBottom: T.spacing.xl, display: loading && !data ? 'none' : 'block' }}>
               <div style={{ fontSize: '11px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
                 Accuracy grade
               </div>
