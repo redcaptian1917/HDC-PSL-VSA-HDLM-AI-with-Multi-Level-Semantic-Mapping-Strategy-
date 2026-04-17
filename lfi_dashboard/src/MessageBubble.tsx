@@ -64,7 +64,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
         {/* Tool name */}
         <span style={{
           fontSize: '13px', fontWeight: 600,
-          fontFamily: "'JetBrains Mono','Fira Code',monospace",
+          fontFamily: T.typography.fontMono,
         }}>{msg.toolName || 'tool'}</span>
         {/* Summary */}
         <span style={{
@@ -81,7 +81,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
         {msg.toolDuration != null && (
           <span style={{
             fontSize: '10px', color: C.textDim, flexShrink: 0,
-            fontFamily: "'JetBrains Mono','Fira Code',monospace",
+            fontFamily: T.typography.fontMono,
           }}>{msg.toolDuration}ms</span>
         )}
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.textMuted}
@@ -96,7 +96,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
               <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>Input</div>
               <pre style={{
                 padding: '8px 10px', background: C.bgInput, borderRadius: '6px',
-                fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                fontFamily: T.typography.fontMono,
                 fontSize: '11.5px', color: C.textSecondary,
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
               }}>{msg.toolInput}</pre>
@@ -107,7 +107,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
               <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>Output</div>
               <pre style={{
                 padding: '8px 10px', background: C.bgInput, borderRadius: '6px',
-                fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                fontFamily: T.typography.fontMono,
                 fontSize: '11.5px', color: C.textSecondary,
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
                 maxHeight: '300px', overflowY: 'auto',
@@ -327,7 +327,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 padding: '1px 6px', fontSize: '10px',
                 background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
                 borderRadius: '4px', color: C.textDim,
-                cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace",
+                cursor: 'pointer', fontFamily: T.typography.fontMono,
               }}>
               #{msg.conclusion_id}
             </span>
@@ -423,7 +423,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 style={{
                   fontSize: '10px', fontWeight: 700, color, background: bg,
                   padding: '2px 8px', borderRadius: '4px', alignSelf: 'center',
-                  fontFamily: "'JetBrains Mono', monospace",
+                  fontFamily: T.typography.fontMono,
                 }}>
                 {pct}% confident
               </span>

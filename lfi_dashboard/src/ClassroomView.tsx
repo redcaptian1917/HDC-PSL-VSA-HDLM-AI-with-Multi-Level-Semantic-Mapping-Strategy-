@@ -252,7 +252,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
         {lastUpdated != null && (
           <span aria-live='polite' style={{
             alignSelf: 'center', fontSize: T.typography.sizeXs, color: C.textDim,
-            marginRight: T.spacing.sm, fontFamily: 'ui-monospace, monospace',
+            marginRight: T.spacing.sm, fontFamily: T.typography.fontMono,
           }}>Updated {formatRelative(lastUpdated)}</span>
         )}
         <button onClick={load} disabled={loading} aria-label='Refresh classroom data'
@@ -325,10 +325,10 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                 fontSize: isDesktop ? '128px' : '96px', fontWeight: T.typography.weightBlack,
                 color: gradeColor(C, data?.score?.grade),
                 lineHeight: 1, marginTop: '8px',
-                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                fontFamily: T.typography.fontMono,
               }}>{data?.score?.grade || (loading ? '…' : '—')}</div>
               {typeof data?.score?.accuracy_score === 'number' && (
-                <div style={{ fontSize: '15px', color: C.textSecondary, marginTop: '6px', fontFamily: 'ui-monospace, monospace' }}>
+                <div style={{ fontSize: '15px', color: C.textSecondary, marginTop: '6px', fontFamily: T.typography.fontMono }}>
                   {data.score.accuracy_score.toFixed(1)} / 100
                 </div>
               )}
@@ -352,7 +352,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                       <div style={{ flex: 1, background: C.bgInput, height: '12px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
                         <div style={{ width: `${pc}%`, height: '100%', background: col, transition: 'width 0.4s' }} />
                       </div>
-                      <span style={{ width: '56px', textAlign: 'right', fontSize: '13px', color: col, fontFamily: 'ui-monospace, monospace', fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
+                      <span style={{ width: '56px', textAlign: 'right', fontSize: '13px', color: col, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
                     </div>
                   );
                 })}
@@ -390,9 +390,9 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                   <tbody>
                     {[...data.training_files].sort((a, b) => b.pairs - a.pairs).map(f => (
                       <tr key={f.file}>
-                        <td style={{ padding: '10px 14px', fontFamily: 'ui-monospace, monospace', color: C.text }}>{f.file}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.accent, fontWeight: T.typography.weightBold }}>{f.pairs.toLocaleString()}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
+                        <td style={{ padding: '10px 14px', fontFamily: T.typography.fontMono, color: C.text }}>{f.file}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.accent, fontWeight: T.typography.weightBold }}>{f.pairs.toLocaleString()}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
                       </tr>
                     ))}
                   </tbody>
@@ -482,7 +482,7 @@ const Stat: React.FC<{ C: any; label: string; value: string; color: string }> = 
     background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
   }}>
     <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{label}</div>
-    <div style={{ fontSize: '26px', fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>{value}</div>
+    <div style={{ fontSize: '26px', fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: T.typography.fontMono }}>{value}</div>
   </div>
 );
 
@@ -532,7 +532,7 @@ const DomainBars: React.FC<{
             <div style={{ width: '64px', flexShrink: 0 }}>
               <Sparkline values={series} color={colorFor(r.count)} />
             </div>
-            <span style={{ width: '96px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{r.count.toLocaleString()}</span>
+            <span style={{ width: '96px', textAlign: 'right', fontSize: '12px', fontFamily: T.typography.fontMono, color: C.textMuted }}>{r.count.toLocaleString()}</span>
           </div>
         );
       })}
@@ -770,13 +770,13 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
                     <span style={{
                       width: '8px', height: '8px', borderRadius: '50%', background: color, flexShrink: 0,
                     }} aria-hidden='true' />
-                    <span style={{ fontSize: '11px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>
+                    <span style={{ fontSize: '11px', color: C.textMuted, fontFamily: T.typography.fontMono, flexShrink: 0 }}>
                       {new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
                     <span style={{ fontSize: '12px', color: C.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {h.prompt}
                     </span>
-                    {h.verdict && <span style={{ fontSize: '11px', color, fontFamily: 'ui-monospace, monospace', fontWeight: T.typography.weightBold }}>{h.verdict}</span>}
+                    {h.verdict && <span style={{ fontSize: '11px', color, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{h.verdict}</span>}
                     <span style={{ color: C.textDim, fontSize: '10px' }}>{isOpen ? '▴' : '▾'}</span>
                   </button>
                   {isOpen && (
@@ -840,10 +840,10 @@ const LessonsTab: React.FC<{
                   const share = totalPairs > 0 ? (f.pairs / totalPairs) * 100 : 0;
                   return (
                     <tr key={f.file}>
-                      <td style={{ padding: '8px 12px', fontFamily: 'ui-monospace, monospace', color: C.text }}>{f.file}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.accent }}>{f.pairs.toLocaleString()}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{share.toFixed(1)}%</td>
+                      <td style={{ padding: '8px 12px', fontFamily: T.typography.fontMono, color: C.text }}>{f.file}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.accent }}>{f.pairs.toLocaleString()}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.textMuted }}>{share.toFixed(1)}%</td>
                     </tr>
                   );
                 })}
@@ -873,11 +873,11 @@ const OfficeHoursTab: React.FC<{ C: any; events: Array<{ t: number; kind: string
       <div style={{ display: 'flex', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
         <div style={{ flex: 1, padding: T.spacing.md, background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: T.radii.md }}>
           <div style={{ fontSize: '10px', fontWeight: T.typography.weightBold, color: C.green, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Positive</div>
-          <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: C.green, fontFamily: 'ui-monospace, monospace' }}>{posCount}</div>
+          <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: C.green, fontFamily: T.typography.fontMono }}>{posCount}</div>
         </div>
         <div style={{ flex: 1, padding: T.spacing.md, background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
           <div style={{ fontSize: '10px', fontWeight: T.typography.weightBold, color: C.red, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Negative</div>
-          <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: C.red, fontFamily: 'ui-monospace, monospace' }}>{negCount}</div>
+          <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: C.red, fontFamily: T.typography.fontMono }}>{negCount}</div>
         </div>
       </div>
       {feedback.length === 0 ? (
@@ -902,14 +902,14 @@ const OfficeHoursTab: React.FC<{ C: any; events: Array<{ t: number; kind: string
                 const msgId = e.data?.msgId != null ? `msg ${e.data.msgId}` : '';
                 return (
                   <tr key={i}>
-                    <td style={{ padding: '8px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                    <td style={{ padding: '8px 12px', color: C.textMuted, fontFamily: T.typography.fontMono }}>
                       {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td style={{ padding: '8px 12px', color: isPos ? C.green : C.red, fontWeight: T.typography.weightBold }}>
                       {isPos ? 'Positive' : 'Negative'}
                     </td>
                     <td style={{ padding: '8px 12px', color: C.text }}>{category}</td>
-                    <td style={{ padding: '8px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{msgId}</td>
+                    <td style={{ padding: '8px 12px', color: C.textMuted, fontFamily: T.typography.fontMono }}>{msgId}</td>
                   </tr>
                 );
               })}
@@ -996,7 +996,7 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
                   fontSize: '12px',
                 }}>
                   <span style={{ color: C.text }}>{d.domain}</span>
-                  <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{d.count.toLocaleString()}</span>
+                  <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>{d.count.toLocaleString()}</span>
                 </div>
               ))}
             </div>
@@ -1016,8 +1016,8 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
                   padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
                   fontSize: '12px',
                 }}>
-                  <span style={{ color: C.text, fontFamily: 'ui-monospace, monospace' }}>{f.file}</span>
-                  <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{f.pairs.toLocaleString()} pairs</span>
+                  <span style={{ color: C.text, fontFamily: T.typography.fontMono }}>{f.file}</span>
+                  <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>{f.pairs.toLocaleString()} pairs</span>
                 </div>
               ))}
             </div>
@@ -1051,9 +1051,9 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
                     padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
                     fontSize: '12px',
                   }}>
-                    <span style={{ color: C.text, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}
+                    <span style={{ color: C.text, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}
                       title={s.url || label}>{label}</span>
-                    {tail && <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{tail}</span>}
+                    {tail && <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono, flexShrink: 0 }}>{tail}</span>}
                   </div>
                 );
               })}

@@ -1,6 +1,10 @@
 import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { useModalFocus } from './useModalFocus';
 import { T } from './tokens';
+// c2-337 / c0-auto-2 task 21: 28px heading font sourced from the cross-platform
+// design-system so desktop/Android builds share the same scale (T.typography
+// caps at 22px which is visually a large shrink for the big dashboard numbers).
+import { typography as dsType } from './design-system';
 import { compactNum, formatRelative } from './util';
 
 // Full-screen admin modal per c0-017. Six tabs: Dashboard / Domains /
@@ -285,7 +289,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             {lastLoadedAt[tab] != null && (
               <span aria-live='polite' style={{
                 fontSize: T.typography.sizeXs, color: C.textDim,
-                fontFamily: 'ui-monospace, monospace',
+                fontFamily: T.typography.fontMono,
               }}>Updated {formatRelative(lastLoadedAt[tab]!)}</span>
             )}
             {/* c2-258 / #120: manual refresh for the active tab. Spins the
@@ -400,7 +404,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
                 }}>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+                    <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
                       Accuracy grade
                     </div>
                     <div style={{
@@ -413,16 +417,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         return C.red;
                       })(),
                       lineHeight: 1, marginTop: '4px',
-                      fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                      fontFamily: T.typography.fontMono,
                     }}>{dashboard.score.grade || '—'}</div>
                     {typeof dashboard.score.accuracy_score === 'number' && (
-                      <div style={{ fontSize: '13px', color: C.textSecondary, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>
+                      <div style={{ fontSize: '13px', color: C.textSecondary, marginTop: '4px', fontFamily: T.typography.fontMono }}>
                         {dashboard.score.accuracy_score.toFixed(1)} / 100
                       </div>
                     )}
                   </div>
                   <div>
-                    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+                    <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
                       Score breakdown
                     </div>
                     {dashboard.score.breakdown && (
@@ -438,7 +442,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               <div style={{ flex: 1, background: C.bg, height: '10px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
                                 <div style={{ width: `${pc}%`, height: '100%', background: col, transition: 'width 0.4s' }} />
                               </div>
-                              <span style={{ width: '56px', textAlign: 'right', fontSize: '12px', color: col, fontFamily: 'ui-monospace, monospace', fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
+                              <span style={{ width: '56px', textAlign: 'right', fontSize: '12px', color: col, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
                             </div>
                           );
                         })}
@@ -477,10 +481,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     padding: '16px 18px', borderRadius: T.radii.lg,
                     background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
                   }}>
-                    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+                    <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
                       {card.label}
                     </div>
-                    <div style={{ fontSize: '28px', fontWeight: T.typography.weightBlack, color: card.color, marginTop: '4px', fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
+                    <div style={{ fontSize: dsType.sizes['3xl'], fontWeight: T.typography.weightBlack, color: card.color, marginTop: '4px', fontFamily: T.typography.fontMono }}>
                       {card.value}
                     </div>
                   </div>
@@ -514,7 +518,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               transition: 'width 0.4s',
                             }} />
                           </div>
-                          <span style={{ width: '84px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>
+                          <span style={{ width: '84px', textAlign: 'right', fontSize: '12px', fontFamily: T.typography.fontMono, color: C.textMuted }}>
                             {d.value.toLocaleString()}
                           </span>
                         </div>
@@ -541,9 +545,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       <tbody>
                         {[...dashboard.training_files].sort((a, b) => b.pairs - a.pairs).map(f => (
                           <tr key={f.file}>
-                            <td style={{ padding: '8px 12px', fontFamily: 'ui-monospace, monospace', color: C.text }}>{f.file}</td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.accent }}>{f.pairs.toLocaleString()}</td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
+                            <td style={{ padding: '8px 12px', fontFamily: T.typography.fontMono, color: C.text }}>{f.file}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.accent }}>{f.pairs.toLocaleString()}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
                           </tr>
                         ))}
                       </tbody>
@@ -597,8 +601,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       padding: '14px 16px', borderRadius: T.radii.md,
                       background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
                     }}>
-                      <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{c.label}</div>
-                      <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: c.color, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>{c.value}</div>
+                      <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{c.label}</div>
+                      <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: c.color, marginTop: '4px', fontFamily: T.typography.fontMono }}>{c.value}</div>
                     </div>
                   ));
                 })()}
@@ -622,7 +626,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
                         Training files ({files.length})
                       </div>
-                      <div style={{ fontSize: '11px', color: C.textDim, fontFamily: 'ui-monospace, monospace' }}>
+                      <div style={{ fontSize: '11px', color: C.textDim, fontFamily: T.typography.fontMono }}>
                         {compactNum(totalPairs)} pairs · {totalMb.toFixed(1)} MB
                       </div>
                     </div>
@@ -638,9 +642,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         <tbody>
                           {sorted.map((f, i) => (
                             <tr key={f.file} style={{ background: i % 2 === 0 ? 'transparent' : C.bgHover }}>
-                              <td style={{ padding: '6px 10px', color: C.text, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '420px' }}>{f.file}</td>
-                              <td style={{ padding: '6px 10px', textAlign: 'right', color: C.text, fontFamily: 'ui-monospace, monospace' }}>{compactNum(f.pairs)}</td>
-                              <td style={{ padding: '6px 10px', textAlign: 'right', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{f.size_mb.toFixed(2)}</td>
+                              <td style={{ padding: '6px 10px', color: C.text, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '420px' }}>{f.file}</td>
+                              <td style={{ padding: '6px 10px', textAlign: 'right', color: C.text, fontFamily: T.typography.fontMono }}>{compactNum(f.pairs)}</td>
+                              <td style={{ padding: '6px 10px', textAlign: 'right', color: C.textMuted, fontFamily: T.typography.fontMono }}>{f.size_mb.toFixed(2)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -661,7 +665,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '6px 14px' }}>
                       {top.map(d => (
-                        <div key={d.domain} style={{ display: 'flex', justifyContent: 'space-between', gap: T.spacing.sm, fontSize: '12px', fontFamily: 'ui-monospace, monospace', padding: '3px 0' }}>
+                        <div key={d.domain} style={{ display: 'flex', justifyContent: 'space-between', gap: T.spacing.sm, fontSize: '12px', fontFamily: T.typography.fontMono, padding: '3px 0' }}>
                           <span style={{ color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.domain}</span>
                           <span style={{ color: countColor(d.count) }}>{d.count.toLocaleString()}</span>
                         </div>
@@ -755,13 +759,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     {filteredDomains.map((d, i) => (
                       <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
                         <td style={{ padding: '10px 14px', fontWeight: T.typography.weightSemibold }}>{d.domain}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: countColor(d.facts), fontWeight: T.typography.weightBold, fontFamily: 'ui-monospace, monospace' }}>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', color: countColor(d.facts), fontWeight: T.typography.weightBold, fontFamily: T.typography.fontMono }}>
                           {d.facts.toLocaleString()}
                         </td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: typeof d.avg_quality === 'number' ? qualityColor(d.avg_quality) : C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', color: typeof d.avg_quality === 'number' ? qualityColor(d.avg_quality) : C.textMuted, fontFamily: T.typography.fontMono }}>
                           {typeof d.avg_quality === 'number' ? d.avg_quality.toFixed(2) : '—'}
                         </td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', color: C.textMuted, fontFamily: T.typography.fontMono }}>
                           {typeof d.avg_length === 'number' ? d.avg_length.toFixed(0) : '—'}
                         </td>
                       </tr>
@@ -795,25 +799,25 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           padding: '16px 18px', borderRadius: T.radii.xl,
                           background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
                         }}>
-                          <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+                          <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
                             Pass rate
                           </div>
                           <div style={{
-                            fontSize: '28px', fontWeight: T.typography.weightBlack,
+                            fontSize: dsType.sizes['3xl'], fontWeight: T.typography.weightBlack,
                             color: p != null ? (p >= 95 ? C.green : p >= 80 ? C.yellow : C.red) : C.textMuted,
-                            marginTop: '4px', fontFamily: 'ui-monospace, monospace',
+                            marginTop: '4px', fontFamily: T.typography.fontMono,
                           }}>{p != null ? `${p.toFixed(1)}%` : '—'}</div>
                         </div>
                       );
                     })()}
                     <div style={{ padding: '16px 18px', borderRadius: T.radii.xl, background: C.bgInput, border: `1px solid ${C.borderSubtle}` }}>
-                      <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Samples</div>
-                      <div style={{ fontSize: '28px', fontWeight: T.typography.weightBlack, color: C.text, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>
+                      <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Samples</div>
+                      <div style={{ fontSize: dsType.sizes['3xl'], fontWeight: T.typography.weightBlack, color: C.text, marginTop: '4px', fontFamily: T.typography.fontMono }}>
                         {typeof accuracy.samples === 'number' ? accuracy.samples.toLocaleString() : '—'}
                       </div>
                     </div>
                     <div style={{ padding: '16px 18px', borderRadius: T.radii.xl, background: C.bgInput, border: `1px solid ${C.borderSubtle}` }}>
-                      <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Last run</div>
+                      <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Last run</div>
                       <div style={{ fontSize: '13px', color: C.text, marginTop: '10px' }}>
                         {accuracy.last_run ? (typeof accuracy.last_run === 'number' ? new Date(accuracy.last_run * 1000).toLocaleString() : accuracy.last_run) : '—'}
                       </div>
@@ -836,7 +840,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                   background: p >= 95 ? C.green : p >= 80 ? C.yellow : C.red,
                                 }} />
                               </div>
-                              <span style={{ width: '64px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{p.toFixed(1)}%</span>
+                              <span style={{ width: '64px', textAlign: 'right', fontSize: '12px', fontFamily: T.typography.fontMono, color: C.textMuted }}>{p.toFixed(1)}%</span>
                             </div>
                           );
                         })}
@@ -898,11 +902,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             const pct = (n / total) * 100;
                             return (
                               <div key={bucket} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
-                                <span style={{ width: '120px', fontSize: '12px', color: C.text, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>{bucket}</span>
+                                <span style={{ width: '120px', fontSize: '12px', color: C.text, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap' }}>{bucket}</span>
                                 <div style={{ flex: 1, background: C.bgInput, height: '18px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
                                   <div style={{ width: `${(n / max) * 100}%`, height: '100%', background: color, transition: 'width 0.4s' }} />
                                 </div>
-                                <span style={{ width: '96px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>
+                                <span style={{ width: '96px', textAlign: 'right', fontSize: '12px', fontFamily: T.typography.fontMono, color: C.textMuted }}>
                                   {n.toLocaleString()} ({pct.toFixed(1)}%)
                                 </span>
                               </div>
@@ -963,7 +967,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             <div key={r.label}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
                                 <span style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{r.label}</span>
-                                <span style={{ fontSize: '12px', color: r.color, fontFamily: 'ui-monospace, monospace', fontWeight: T.typography.weightBold }}>{r.right}</span>
+                                <span style={{ fontSize: '12px', color: r.color, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{r.right}</span>
                               </div>
                               <div style={{ background: C.bgInput, height: '14px', borderRadius: T.radii.xs, overflow: 'hidden', border: `1px solid ${C.borderSubtle}` }}>
                                 <div style={{
@@ -1038,7 +1042,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               </div>
                               <span style={{
                                 display: 'inline-flex', alignItems: 'center', gap: '6px',
-                                fontSize: '10px', fontWeight: T.typography.weightBold,
+                                fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
                                 color: statusColor, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
                               }}>
                                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: statusColor }} aria-hidden='true' />
@@ -1053,13 +1057,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             {inst.current_task && (
                               <div style={{
                                 padding: '6px 8px', background: C.bg, borderRadius: T.radii.sm,
-                                fontSize: '11px', color: C.textMuted, fontFamily: 'ui-monospace, monospace',
+                                fontSize: '11px', color: C.textMuted, fontFamily: T.typography.fontMono,
                                 marginBottom: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                               }}>
                                 {inst.current_task}
                               </div>
                             )}
-                            <div style={{ display: 'flex', gap: T.spacing.md, fontSize: '11px', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                            <div style={{ display: 'flex', gap: T.spacing.md, fontSize: '11px', color: C.textMuted, fontFamily: T.typography.fontMono }}>
                               {typeof inst.tasks_completed === 'number' && <span>✓ {inst.tasks_completed}</span>}
                               {typeof inst.tasks_pending === 'number' && <span>⏳ {inst.tasks_pending}</span>}
                               {inst.last_seen && <span style={{ marginLeft: 'auto' }}>
@@ -1088,11 +1092,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           <tbody>
                             {fleet.timeline.slice(0, 100).map((row, i) => (
                               <tr key={i}>
-                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap' }}>
                                   {typeof row.t === 'number' ? new Date(row.t * (row.t < 1e12 ? 1000 : 1)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : row.t}
                                 </td>
-                                <td style={{ padding: '6px 12px', color: C.accent, fontFamily: 'ui-monospace, monospace' }}>{row.instance}</td>
-                                <td style={{ padding: '6px 12px', color: C.text, fontFamily: 'ui-monospace, monospace' }}>{row.event}</td>
+                                <td style={{ padding: '6px 12px', color: C.accent, fontFamily: T.typography.fontMono }}>{row.instance}</td>
+                                <td style={{ padding: '6px 12px', color: C.text, fontFamily: T.typography.fontMono }}>{row.event}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1237,8 +1241,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               fontFamily: 'inherit', fontWeight: T.typography.weightSemibold,
                             }}>
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: dotColor }} aria-hidden='true' />
-                            <span style={{ fontFamily: 'ui-monospace, monospace' }}>{kind}</span>
-                            <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{n}</span>
+                            <span style={{ fontFamily: T.typography.fontMono }}>{kind}</span>
+                            <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>{n}</span>
                           </button>
                         );
                       })}
@@ -1264,14 +1268,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               : C.accent;
                             return (
                               <tr key={i}>
-                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap' }}>
                                   {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                 </td>
-                                <td style={{ padding: '6px 12px', fontFamily: 'ui-monospace, monospace', color: C.text, whiteSpace: 'nowrap' }}>
+                                <td style={{ padding: '6px 12px', fontFamily: T.typography.fontMono, color: C.text, whiteSpace: 'nowrap' }}>
                                   <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: dotColor, marginRight: '8px', verticalAlign: 'middle' }} aria-hidden='true' />
                                   <span style={{ color: dotColor }}>{e.kind}</span>
                                 </td>
-                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: T.typography.fontMono, maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {e.data ? JSON.stringify(e.data) : ''}
                                 </td>
                               </tr>
@@ -1326,10 +1330,10 @@ const DashCard: React.FC<{ C: any; label: string; value: string; color: string }
     padding: '16px 18px', borderRadius: T.radii.xl,
     background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
   }}>
-    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+    <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
       {label}
     </div>
-    <div style={{ fontSize: '16px', fontWeight: T.typography.weightBlack, color, marginTop: '6px', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-word' }}>
+    <div style={{ fontSize: '16px', fontWeight: T.typography.weightBlack, color, marginTop: '6px', fontFamily: T.typography.fontMono, wordBreak: 'break-word' }}>
       {value}
     </div>
   </div>
