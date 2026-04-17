@@ -936,6 +936,72 @@ async fn conversations_sync_handler(
     Json(json!({ "status": "ok", "id": req.id, "messages_synced": req.messages.len() }))
 }
 
+/// POST /api/conversations/switch — switch to a different conversation.
+/// Clears conversation-scoped agent state to prevent session bleed.
+/// REGRESSION-GUARD: Without this, conversation_facts from one session
+/// leak into another, causing the AI to reference the wrong context.
+async fn conversation_switch_handler(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let conversation_id = body.get("conversation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    // Clear conversation-scoped state
+    {
+        let mut agent = state.agent.lock();
+        // Keep persistent facts (sovereign_name, etc.) but clear session-specific ones
+        let persistent_keys: Vec<String> = agent.conversation_facts.keys()
+            .filter(|k| k.starts_with("sovereign_") || k.starts_with("user_"))
+            .cloned()
+            .collect();
+        let persistent: std::collections::HashMap<String, String> = persistent_keys.iter()
+            .filter_map(|k| agent.conversation_facts.get(k).map(|v| (k.clone(), v.clone())))
+            .collect();
+        agent.conversation_facts = persistent;
+        // Clear RAG context from previous conversation
+        agent.rag_context.clear();
+    }
+
+    info!("// SESSION: Switched to conversation {}, cleared session state", conversation_id);
+    Json(json!({ "status": "ok", "switched_to": conversation_id }))
+}
+
+/// POST /api/feedback — submit feedback on an AI response.
+/// Supports: thumbs up/down, categories, free text.
+async fn feedback_handler(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let rating = body.get("rating").and_then(|v| v.as_str()).unwrap_or("neutral");
+    let category = body.get("category").and_then(|v| v.as_str()).unwrap_or("none");
+    let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    let message_id = body.get("message_id").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Capture as learning signal
+    use crate::intelligence::experience_learning::{LearningSignal, SignalType};
+    let signal_type = match rating {
+        "positive" | "thumbs_up" => SignalType::PositiveFeedback,
+        "negative" | "thumbs_down" => SignalType::Correction,
+        _ => SignalType::FollowUp,
+    };
+
+    state.experience.lock().capture(LearningSignal {
+        signal_type,
+        user_input: format!("FEEDBACK [{}]: {} - {}", category, rating, text),
+        system_response: message_id.to_string(),
+        correction: if rating == "negative" || rating == "thumbs_down" { Some(text.to_string()) } else { None },
+        conversation_id: None,
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0),
+    });
+
+    info!("// FEEDBACK: {} ({}) on msg {}: {}", rating, category, message_id, &text[..text.len().min(100)]);
+    Json(json!({ "status": "ok", "rating": rating, "category": category }))
+}
+
 /// DELETE /api/conversations/:id — delete a conversation and its messages.
 async fn conversation_delete_handler(
     State(state): State<Arc<AppState>>,
@@ -2291,6 +2357,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/system/clipboard", get(clipboard_get_handler).post(clipboard_set_handler))
         .route("/api/conversations", get(conversations_list_handler))
         .route("/api/conversations/sync", post(conversations_sync_handler))
+        .route("/api/conversations/switch", post(conversation_switch_handler))
+        .route("/api/feedback", post(feedback_handler))
         .route("/api/conversations/:id", get(conversation_get_handler).delete(conversation_delete_handler))
         .route("/api/research", post(research_handler))
         .route("/api/training/status", get(training_status_handler))
