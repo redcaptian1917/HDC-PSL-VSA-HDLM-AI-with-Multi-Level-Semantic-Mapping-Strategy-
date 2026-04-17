@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { T } from './tokens';
+// c2-343: 18/22/26px heading sizes need the design-system scale since
+// T.typography caps at 22; sourced cross-platform so desktop/Android match.
+import { typography as dsType } from './design-system';
 import { compactNum, formatRelative } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
@@ -277,7 +280,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
 
       {/* Body */}
       <div role='tabpanel' aria-label={sub}
-        style={{ flex: 1, overflowY: 'auto', padding: '24px', maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
+        style={{ flex: 1, overflowY: 'auto', padding: T.spacing.xl, maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
         {err && (
           <div role='alert' style={{
             padding: '12px 14px', marginBottom: T.spacing.lg,
@@ -318,7 +321,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
               </div>
             )}
             <div style={{ textAlign: 'center', marginBottom: T.spacing.xl, display: loading && !data ? 'none' : 'block' }}>
-              <div style={{ fontSize: '11px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+              <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
                 Accuracy grade
               </div>
               <div style={{
@@ -328,7 +331,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                 fontFamily: T.typography.fontMono,
               }}>{data?.score?.grade || (loading ? '…' : '—')}</div>
               {typeof data?.score?.accuracy_score === 'number' && (
-                <div style={{ fontSize: '15px', color: C.textSecondary, marginTop: '6px', fontFamily: T.typography.fontMono }}>
+                <div style={{ fontSize: T.typography.sizeLg, color: C.textSecondary, marginTop: '6px', fontFamily: T.typography.fontMono }}>
                   {data.score.accuracy_score.toFixed(1)} / 100
                 </div>
               )}
@@ -338,7 +341,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                 maxWidth: '640px', margin: '0 auto', padding: T.spacing.lg,
                 background: C.bgCard, border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.lg,
               }}>
-                <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+                <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
                   Strengths &amp; weaknesses
                 </div>
                 {(['quality', 'adversarial', 'coverage', 'training'] as const).map(k => {
@@ -347,12 +350,12 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                   const pc = v <= 1.5 ? v * 100 : v;
                   const col = pc >= 80 ? C.green : pc >= 60 ? C.yellow : C.red;
                   return (
-                    <div key={k} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm, marginBottom: '8px' }}>
-                      <span style={{ width: '110px', fontSize: '13px', color: C.text, textTransform: 'capitalize' }}>{k}</span>
+                    <div key={k} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm, marginBottom: T.spacing.sm }}>
+                      <span style={{ width: '110px', fontSize: T.typography.sizeMd, color: C.text, textTransform: 'capitalize' }}>{k}</span>
                       <div style={{ flex: 1, background: C.bgInput, height: '12px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
                         <div style={{ width: `${pc}%`, height: '100%', background: col, transition: 'width 0.4s' }} />
                       </div>
-                      <span style={{ width: '56px', textAlign: 'right', fontSize: '13px', color: col, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
+                      <span style={{ width: '56px', textAlign: 'right', fontSize: T.typography.sizeMd, color: col, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
                     </div>
                   );
                 })}
@@ -364,9 +367,9 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
         {/* --- Curriculum --- */}
         {sub === 'curriculum' && (
           <div>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 16px' }}>Curriculum</h2>
+            <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 16px' }}>Curriculum</h2>
             {loading && !data && (
-              <div aria-busy='true' aria-live='polite' style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div aria-busy='true' aria-live='polite' style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.sm }}>
                 {[0, 1, 2, 3, 4].map(i => (
                   <div key={i} style={{
                     height: '40px', borderRadius: T.radii.md,
@@ -409,7 +412,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
         {/* --- Gradebook --- */}
         {sub === 'gradebook' && (
           <div>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 16px' }}>Gradebook</h2>
+            <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 16px' }}>Gradebook</h2>
             {loading && !data && (
               <div aria-busy='true' aria-live='polite' style={{
                 display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
@@ -436,7 +439,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
             </div>
             {sortedDomains.length > 0 && (
               <div>
-                <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+                <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
                   Coverage by domain
                 </div>
                 <DomainBars C={C} rows={sortedDomains.slice(0, 15)} historyByDomain={historyByDomain} />
@@ -481,8 +484,8 @@ const Stat: React.FC<{ C: any; label: string; value: string; color: string }> = 
     padding: '16px 18px', borderRadius: T.radii.lg,
     background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
   }}>
-    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{label}</div>
-    <div style={{ fontSize: '26px', fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: T.typography.fontMono }}>{value}</div>
+    <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{label}</div>
+    <div style={{ fontSize: dsType.sizes['2xl'], fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: T.typography.fontMono }}>{value}</div>
   </div>
 );
 
@@ -525,14 +528,14 @@ const DomainBars: React.FC<{
         const series = historyByDomain[r.domain] || [];
         return (
           <div key={r.domain} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
-            <span style={{ width: '160px', fontSize: '12px', color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.domain}</span>
+            <span style={{ width: '160px', fontSize: T.typography.sizeSm, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.domain}</span>
             <div style={{ flex: 1, background: C.bgCard, height: '16px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
               <div style={{ width: `${(r.count / max) * 100}%`, height: '100%', background: colorFor(r.count), transition: 'width 0.4s' }} />
             </div>
             <div style={{ width: '64px', flexShrink: 0 }}>
               <Sparkline values={series} color={colorFor(r.count)} />
             </div>
-            <span style={{ width: '96px', textAlign: 'right', fontSize: '12px', fontFamily: T.typography.fontMono, color: C.textMuted }}>{r.count.toLocaleString()}</span>
+            <span style={{ width: '96px', textAlign: 'right', fontSize: T.typography.sizeSm, fontFamily: T.typography.fontMono, color: C.textMuted }}>{r.count.toLocaleString()}</span>
           </div>
         );
       })}
@@ -550,8 +553,8 @@ const ReportsTab: React.FC<{ C: any; data: DashboardShape | null; sortedDomains:
   const grade = data?.score?.grade || '—';
   return (
     <div>
-      <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Report Cards</h2>
-      <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+      <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Report Cards</h2>
+      <p style={{ fontSize: T.typography.sizeMd, color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
         Point-in-time scorecard. A proper weekly rollup (deltas vs last week) will populate once
         /api/classroom/reports ships historical aggregates.
       </p>
@@ -578,30 +581,30 @@ const ReportsTab: React.FC<{ C: any; data: DashboardShape | null; sortedDomains:
       <div style={{
         padding: T.spacing.lg, background: C.bgCard,
         border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
-        fontSize: '13px', color: C.textSecondary, lineHeight: 1.6,
+        fontSize: T.typography.sizeMd, color: C.textSecondary, lineHeight: 1.6,
       }}>
         {typeof data?.system?.uptime_hours === 'number' && (
-          <div style={{ marginBottom: '8px' }}>
+          <div style={{ marginBottom: T.spacing.sm }}>
             <strong style={{ color: C.text }}>Server uptime:</strong> {data.system.uptime_hours.toFixed(1)} hours
           </div>
         )}
         {typeof data?.training?.sessions === 'number' && (
-          <div style={{ marginBottom: '8px' }}>
+          <div style={{ marginBottom: T.spacing.sm }}>
             <strong style={{ color: C.text }}>Training sessions logged:</strong> {data.training.sessions.toLocaleString()}
           </div>
         )}
         {typeof data?.training?.learning_signals === 'number' && (
-          <div style={{ marginBottom: '8px' }}>
+          <div style={{ marginBottom: T.spacing.sm }}>
             <strong style={{ color: C.text }}>Learning signals received:</strong> {data.training.learning_signals.toLocaleString()}
           </div>
         )}
         {typeof data?.training?.total_tested === 'number' && typeof data?.training?.total_correct === 'number' && (
-          <div style={{ marginBottom: '8px' }}>
+          <div style={{ marginBottom: T.spacing.sm }}>
             <strong style={{ color: C.text }}>Evaluation record:</strong> {data.training.total_correct.toLocaleString()} correct of {data.training.total_tested.toLocaleString()} tested
           </div>
         )}
         {data?.quality?.high_quality_count != null && data?.quality?.low_quality_count != null && (
-          <div style={{ marginBottom: '8px' }}>
+          <div style={{ marginBottom: T.spacing.sm }}>
             <strong style={{ color: C.text }}>Quality distribution:</strong> {data.quality.high_quality_count.toLocaleString()} high &middot; {data.quality.low_quality_count.toLocaleString()} low
           </div>
         )}
@@ -667,8 +670,8 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
   const psl = data?.quality?.psl_calibration;
   return (
     <div>
-      <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Test Center</h2>
-      <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+      <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Test Center</h2>
+      <p style={{ fontSize: T.typography.sizeMd, color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
         Run a PSL audit against any text using the existing /api/audit endpoint. PSL calibration below shows the
         system-wide pass rate the last time a full sweep ran.
       </p>
@@ -693,7 +696,7 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
         padding: T.spacing.lg, border: `1px solid ${C.borderSubtle}`,
         borderRadius: T.radii.md, background: C.bgCard,
       }}>
-        <div style={{ fontSize: '12px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+        <div style={{ fontSize: T.typography.sizeSm, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
           Ad-hoc PSL audit
         </div>
         <textarea value={auditInput}
@@ -709,7 +712,7 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
             fontSize: T.typography.sizeBody, outline: 'none', resize: 'vertical', boxSizing: 'border-box',
           }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: T.spacing.md }}>
-          <span style={{ fontSize: '11px', color: C.textDim }}>{auditInput.length}/10000</span>
+          <span style={{ fontSize: T.typography.sizeXs, color: C.textDim }}>{auditInput.length}/10000</span>
           <button onClick={runAudit} disabled={auditLoading || !auditInput.trim()}
             style={{
               padding: '8px 18px', background: auditLoading || !auditInput.trim() ? C.bgInput : C.accent,
@@ -722,14 +725,14 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
           <div role='alert' style={{
             marginTop: T.spacing.md, padding: '8px 12px',
             background: C.redBg, border: `1px solid ${C.redBorder}`, color: C.red,
-            borderRadius: T.radii.md, fontSize: '12px',
+            borderRadius: T.radii.md, fontSize: T.typography.sizeSm,
           }}>{auditError}</div>
         )}
         {auditResult && (
           <pre style={{
-            marginTop: T.spacing.md, padding: '12px', background: C.bgInput,
+            marginTop: T.spacing.md, padding: T.spacing.md, background: C.bgInput,
             border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
-            fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12px',
+            fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: T.typography.sizeSm,
             color: C.text, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '320px',
           }}>
             {JSON.stringify(auditResult, null, 2)}
@@ -739,13 +742,13 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
       {/* Rolling audit history — last 10, localStorage-backed */}
       {history.length > 0 && (
         <div style={{ marginTop: T.spacing.xl }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-            <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: T.spacing.md }}>
+            <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
               History ({history.length})
             </div>
             <button onClick={clearHistory}
               style={{
-                padding: '4px 10px', fontSize: '10px', fontWeight: T.typography.weightBold,
+                padding: '4px 10px', fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
                 background: 'transparent', border: `1px solid ${C.borderSubtle}`,
                 color: C.textMuted, borderRadius: T.radii.sm, cursor: 'pointer',
                 fontFamily: 'inherit', textTransform: 'uppercase',
@@ -770,20 +773,20 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
                     <span style={{
                       width: '8px', height: '8px', borderRadius: '50%', background: color, flexShrink: 0,
                     }} aria-hidden='true' />
-                    <span style={{ fontSize: '11px', color: C.textMuted, fontFamily: T.typography.fontMono, flexShrink: 0 }}>
+                    <span style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: T.typography.fontMono, flexShrink: 0 }}>
                       {new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
-                    <span style={{ fontSize: '12px', color: C.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontSize: T.typography.sizeSm, color: C.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {h.prompt}
                     </span>
-                    {h.verdict && <span style={{ fontSize: '11px', color, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{h.verdict}</span>}
-                    <span style={{ color: C.textDim, fontSize: '10px' }}>{isOpen ? '▴' : '▾'}</span>
+                    {h.verdict && <span style={{ fontSize: T.typography.sizeXs, color, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{h.verdict}</span>}
+                    <span style={{ color: C.textDim, fontSize: T.typography.sizeXs }}>{isOpen ? '▴' : '▾'}</span>
                   </button>
                   {isOpen && (
                     <pre style={{
                       margin: 0, padding: '10px 12px', background: C.bgInput,
                       borderTop: `1px solid ${C.borderSubtle}`,
-                      fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '11px',
+                      fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: T.typography.sizeXs,
                       color: C.text, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '240px',
                     }}>{JSON.stringify(h.raw, null, 2)}</pre>
                   )}
@@ -806,8 +809,8 @@ const LessonsTab: React.FC<{
   const totalMb = files.reduce((s, f) => s + f.size_mb, 0);
   return (
     <div>
-      <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Lesson Plans</h2>
-      <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+      <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Lesson Plans</h2>
+      <p style={{ fontSize: T.typography.sizeMd, color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
         Snapshot of the training roster. Full run-control (start/stop/queue) lands when /api/classroom/lessons
         exposes session controls; for now this reflects what the consolidated dashboard reports.
       </p>
@@ -822,11 +825,11 @@ const LessonsTab: React.FC<{
       </div>
       {files.length > 0 && (
         <div>
-          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
             Active roster (by pairs)
           </div>
           <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeSm }}>
               <thead>
                 <tr>
                   <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Dataset</th>
@@ -865,28 +868,28 @@ const OfficeHoursTab: React.FC<{ C: any; events: Array<{ t: number; kind: string
   const negCount = feedback.length - posCount;
   return (
     <div>
-      <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Office Hours</h2>
-      <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+      <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Office Hours</h2>
+      <p style={{ fontSize: T.typography.sizeMd, color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
         Review user feedback captured from thumbs-up/down on AI responses.
         Session-local only until /api/classroom/feedback aggregates server-side history.
       </p>
       <div style={{ display: 'flex', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
         <div style={{ flex: 1, padding: T.spacing.md, background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: T.radii.md }}>
-          <div style={{ fontSize: '10px', fontWeight: T.typography.weightBold, color: C.green, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Positive</div>
-          <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: C.green, fontFamily: T.typography.fontMono }}>{posCount}</div>
+          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.green, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Positive</div>
+          <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: C.green, fontFamily: T.typography.fontMono }}>{posCount}</div>
         </div>
         <div style={{ flex: 1, padding: T.spacing.md, background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
-          <div style={{ fontSize: '10px', fontWeight: T.typography.weightBold, color: C.red, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Negative</div>
-          <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: C.red, fontFamily: T.typography.fontMono }}>{negCount}</div>
+          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.red, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Negative</div>
+          <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: C.red, fontFamily: T.typography.fontMono }}>{negCount}</div>
         </div>
       </div>
       {feedback.length === 0 ? (
-        <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted, fontSize: '13px', fontStyle: 'italic' }}>
+        <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted, fontSize: T.typography.sizeMd, fontStyle: 'italic' }}>
           No feedback captured this session yet. Use 👍 / 👎 on any AI response to populate this log.
         </div>
       ) : (
         <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeSm }}>
             <thead>
               <tr>
                 <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>When</th>
@@ -963,8 +966,8 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
     : sources);
   return (
     <div>
-      <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Library</h2>
-      <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+      <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Library</h2>
+      <p style={{ fontSize: T.typography.sizeMd, color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
         Browse what the AI has learned — sources the knowledge was drawn from, the domains they map to, and the training files generated.
       </p>
       <input
@@ -982,18 +985,18 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
       />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: T.spacing.lg }}>
         <div>
-          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
             Domains ({matchedDomains.length})
           </div>
           {matchedDomains.length === 0 ? (
-            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }}>No domains match.</div>
+            <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.lg, textAlign: 'center' }}>No domains match.</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.xs }}>
               {matchedDomains.slice(0, 50).map(d => (
                 <div key={d.domain} style={{
                   display: 'flex', justifyContent: 'space-between',
                   padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
-                  fontSize: '12px',
+                  fontSize: T.typography.sizeSm,
                 }}>
                   <span style={{ color: C.text }}>{d.domain}</span>
                   <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>{d.count.toLocaleString()}</span>
@@ -1003,18 +1006,18 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
           )}
         </div>
         <div>
-          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
             Training files ({matchedFiles.length})
           </div>
           {matchedFiles.length === 0 ? (
-            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }}>No files match.</div>
+            <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.lg, textAlign: 'center' }}>No files match.</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.xs }}>
               {matchedFiles.slice(0, 50).map(f => (
                 <div key={f.file} style={{
                   display: 'flex', justifyContent: 'space-between',
                   padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
-                  fontSize: '12px',
+                  fontSize: T.typography.sizeSm,
                 }}>
                   <span style={{ color: C.text, fontFamily: T.typography.fontMono }}>{f.file}</span>
                   <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>{f.pairs.toLocaleString()} pairs</span>
@@ -1027,19 +1030,19 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
             resolves — loading and error states are explicit so users know
             whether the backend has the endpoint up. */}
         <div>
-          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
             Sources ({sources ? matchedSources.length : '…'})
           </div>
           {sourcesErr ? (
-            <div style={{ fontSize: '12px', color: C.red, padding: '10px 12px', background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
+            <div style={{ fontSize: T.typography.sizeSm, color: C.red, padding: '10px 12px', background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
               Sources unavailable: {sourcesErr}
             </div>
           ) : !sources ? (
-            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }} aria-busy='true'>Loading sources…</div>
+            <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.lg, textAlign: 'center' }} aria-busy='true'>Loading sources…</div>
           ) : matchedSources.length === 0 ? (
-            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }}>No sources match.</div>
+            <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.lg, textAlign: 'center' }}>No sources match.</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '420px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.xs, maxHeight: '420px', overflowY: 'auto' }}>
               {matchedSources.slice(0, 400).map((s, i) => {
                 const label = s.name || s.url || s.domain || `(source ${i + 1})`;
                 const tail = typeof s.facts === 'number' ? `${s.facts.toLocaleString()} facts`
@@ -1047,9 +1050,9 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
                   : '';
                 return (
                   <div key={`${label}-${i}`} style={{
-                    display: 'flex', justifyContent: 'space-between', gap: '8px',
+                    display: 'flex', justifyContent: 'space-between', gap: T.spacing.sm,
                     padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
-                    fontSize: '12px',
+                    fontSize: T.typography.sizeSm,
                   }}>
                     <span style={{ color: C.text, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}
                       title={s.url || label}>{label}</span>
@@ -1067,18 +1070,18 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
 
 const Placeholder: React.FC<{ C: any; title: string; body: string; data: unknown }> = ({ C, title, body, data }) => (
   <div>
-    <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>{title}</h2>
+    <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 12px' }}>{title}</h2>
     <div style={{
-      padding: '24px', background: C.bgCard,
+      padding: T.spacing.xl, background: C.bgCard,
       border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.lg,
-      fontSize: '14px', color: C.textSecondary, lineHeight: 1.6,
+      fontSize: T.typography.sizeBody, color: C.textSecondary, lineHeight: 1.6,
     }}>
       {body}
       {data !== null && (
         <pre style={{
-          marginTop: T.spacing.md, padding: '12px', background: C.bgInput,
+          marginTop: T.spacing.md, padding: T.spacing.md, background: C.bgInput,
           border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
-          fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12px',
+          fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: T.typography.sizeSm,
           color: C.textMuted, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '240px',
         }}>{JSON.stringify(data, null, 2)}</pre>
       )}
