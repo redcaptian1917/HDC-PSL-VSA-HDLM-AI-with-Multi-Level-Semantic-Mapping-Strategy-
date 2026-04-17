@@ -2336,7 +2336,7 @@ ${cmdList}
         {/* CHAT AREA — now a flex column so the input bar lives inside main
             and centers within the *available* width (shifts with the sidebar)
             instead of the viewport. */}
-        <main style={{
+        <main id='main-content' role='main' aria-label='Chat' style={{
           flex: 1, display: 'flex', flexDirection: 'column',
           overflow: 'hidden', minWidth: 0,
         }}>
