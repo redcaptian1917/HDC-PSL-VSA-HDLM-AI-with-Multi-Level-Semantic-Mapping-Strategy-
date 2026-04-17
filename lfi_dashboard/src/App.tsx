@@ -1076,8 +1076,12 @@ ${cmdList}
       if (!mod && !e.altKey && e.key.length === 1) {
         const target = e.target as HTMLElement | null;
         const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
-        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome;
-        if (!isEditable && !anyModalOpen && inputRef.current) {
+        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin;
+        // c0-020: only forward keystrokes to the chat input when the Chat
+        // view is the active top-level section. Typing in Classroom should
+        // not hijack to chat — users may be scanning tables etc.
+        const inChatView = activeView === 'chat';
+        if (!isEditable && !anyModalOpen && inChatView && inputRef.current) {
           e.preventDefault();
           setInput(prev => prev + e.key);
           inputRef.current.focus();
