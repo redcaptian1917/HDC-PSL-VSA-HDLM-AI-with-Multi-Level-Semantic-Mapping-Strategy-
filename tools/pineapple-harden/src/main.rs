@@ -12,6 +12,7 @@
 
 use clap::Parser;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

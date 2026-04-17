@@ -2930,7 +2930,7 @@ ${cmdList}
                     padding: '12px 16px', margin: '8px 0',
                     background: C.bgCard, border: `1px solid ${borderColor}`,
                     borderRadius: '10px', fontSize: '13px',
-                    transition: 'border-color 0.4s',
+                    transition: 'border-color 0.4s', flexWrap: 'wrap',
                   }}>
                     <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
                       {[0, 1, 2].map(i => (
