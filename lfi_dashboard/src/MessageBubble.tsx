@@ -118,7 +118,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
             </div>
           )}
           {msg.toolOutput && (
-            <div>
+            <div style={{ position: 'relative' }}>
               <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>Output</div>
               <pre style={{
                 padding: '8px 10px', background: C.bgInput, borderRadius: T.radii.md,
@@ -127,6 +127,16 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
                 maxHeight: '300px', overflowY: 'auto',
               }}>{msg.toolOutput}</pre>
+              {/* c2-359 / task 66: copy button over the output pane.
+                  position:absolute so it floats in the pre's top-right
+                  without displacing content. Uses the shared CopyButton
+                  so the 2s checkmark flash is consistent with the other
+                  copy affordances in the app. */}
+              <div style={{ position: 'absolute', top: '20px', right: '8px', zIndex: 1 }}>
+                <CopyButton C={C} size={26} iconSize={14}
+                  title='Copy output'
+                  onCopy={() => navigator.clipboard?.writeText(msg.toolOutput || '')} />
+              </div>
             </div>
           )}
         </div>
