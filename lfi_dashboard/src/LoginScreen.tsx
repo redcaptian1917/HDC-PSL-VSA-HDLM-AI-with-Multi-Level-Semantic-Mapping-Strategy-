@@ -53,6 +53,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       </p>
       <input
         type="password" autoFocus
+        autoComplete="current-password" spellCheck={false} aria-label="Sovereign key"
         style={{
           width: '100%', padding: '14px 16px',
           background: 'rgba(0,0,0,0.3)', border: `1px solid ${C.accentBorder}`,
