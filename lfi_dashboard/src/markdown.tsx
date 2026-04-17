@@ -1,9 +1,78 @@
 import React from 'react';
 import hljs from 'highlight.js/lib/core';
+import { canonicalLang, ensureLanguage } from './hljsLazy';
 
 // Lightweight markdown renderer — bold/italic/code/links/lists/fenced code.
 // Previously inlined in App.tsx; extracted so the rest of the tree doesn't
 // close over the theme key + copyToClipboard just to format a message body.
+
+// Minimal HTML-escape for when a code block is shown before its grammar
+// loads (or when no grammar exists for the tag). Keeps angle brackets +
+// ampersands from breaking out of <pre>.
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Code block component. Renders escaped plaintext synchronously, kicks off
+// the dynamic grammar import, then swaps in highlighted HTML when ready.
+// Extracted into its own component because the async highlight needs
+// React state to re-render; the previous inline dangerouslySetInnerHTML
+// version assumed all grammars were already registered at module load.
+interface CodeBlockProps {
+  lang: string;
+  code: string;
+  C: any;
+  themeKey: string;
+  onCopy?: (text: string) => void;
+  onCopyEvent?: (lang: string, length: number) => void;
+}
+const CodeBlock: React.FC<CodeBlockProps> = ({ lang, code, C, themeKey, onCopy, onCopyEvent }) => {
+  const canon = canonicalLang(lang);
+  const initial = React.useMemo(() => {
+    if (canon && hljs.getLanguage(canon)) {
+      try { return hljs.highlight(code, { language: canon }).value; }
+      catch { return escapeHtml(code); }
+    }
+    return escapeHtml(code);
+  }, [canon, code]);
+  const [html, setHtml] = React.useState<string>(initial);
+  React.useEffect(() => {
+    if (!canon) return;
+    if (hljs.getLanguage(canon)) return; // already applied synchronously
+    let cancelled = false;
+    ensureLanguage(lang).then(ok => {
+      if (cancelled || !ok) return;
+      try {
+        const next = hljs.highlight(code, { language: canon }).value;
+        setHtml(next);
+      } catch { /* keep plain */ }
+    });
+    return () => { cancelled = true; };
+  }, [lang, canon, code]);
+  return (
+    <div style={{
+      margin: '10px 0', border: `1px solid ${C.borderSubtle}`, borderRadius: '8px',
+      background: themeKey === 'light' ? '#f8fafd' : '#0a0b13', overflow: 'hidden',
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '6px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
+        fontSize: '10px', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.08em',
+      }}>
+        <span>{lang}</span>
+        <button onClick={() => { onCopy?.(code); onCopyEvent?.(lang, code.length); }}
+          style={{
+            background: 'transparent', border: 'none', color: C.textMuted,
+            cursor: 'pointer', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em',
+          }}>Copy</button>
+      </div>
+      <pre style={{
+        margin: 0, padding: '12px 14px',
+        fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12.5px', lineHeight: '1.55',
+        color: C.text, whiteSpace: 'pre', overflowX: 'auto',
+      }} dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+};
 
 export interface MarkdownCtx {
   C: any;
@@ -85,37 +154,9 @@ export const renderMessageBody = (text: string, ctx: MarkdownCtx): React.ReactNo
     const lang = match[1] || 'text';
     const code = match[2];
     parts.push(
-      <div key={`c${key++}`} style={{
-        margin: '10px 0', border: `1px solid ${C.borderSubtle}`, borderRadius: '8px',
-        background: themeKey === 'light' ? '#f8fafd' : '#0a0b13', overflow: 'hidden',
-      }}>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '6px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
-          fontSize: '10px', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.08em',
-        }}>
-          <span>{lang}</span>
-          <button onClick={() => { onCopy?.(code); onCopyEvent?.(lang, code.length); }}
-            style={{
-              background: 'transparent', border: 'none', color: C.textMuted,
-              cursor: 'pointer', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em',
-            }}>Copy</button>
-        </div>
-        <pre style={{
-          margin: 0, padding: '12px 14px',
-          fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12.5px', lineHeight: '1.55',
-          color: C.text, whiteSpace: 'pre', overflowX: 'auto',
-        }} dangerouslySetInnerHTML={{
-          __html: (() => {
-            try {
-              if (lang && hljs.getLanguage(lang)) {
-                return hljs.highlight(code, { language: lang }).value;
-              }
-              return hljs.highlightAuto(code).value;
-            } catch { return code.replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-          })()
-        }} />
-      </div>
+      <CodeBlock key={`c${key++}`} lang={lang} code={code}
+        C={C} themeKey={themeKey}
+        onCopy={onCopy} onCopyEvent={onCopyEvent} />
     );
     lastIndex = match.index + match[0].length;
   }

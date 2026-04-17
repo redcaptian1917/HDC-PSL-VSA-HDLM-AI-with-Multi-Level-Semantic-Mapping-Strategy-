@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { T } from './tokens';
+import { stripMarkdown } from './util';
 
 // Sub-components of the chat message list. Extracted from App.tsx in stages —
 // system + web first (zero-closure, trivial) so the pattern is proven before
@@ -311,7 +312,14 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
             opacity: isMobile ? 1 : 0,
             transition: 'opacity 0.15s',
           }}>
-          <button onClick={() => onCopy(msg.content)} title='Copy message' aria-label='Copy message'
+          <button
+            onClick={(e) => {
+              // Shift-click → copy as plain text (strips markdown syntax).
+              // Default click → copy raw markdown source.
+              const text = e.shiftKey ? stripMarkdown(msg.content) : msg.content;
+              onCopy(text);
+            }}
+            title='Copy markdown (Shift-click: plain text)' aria-label='Copy message; Shift-click for plain text'
             style={{
               width: '30px', height: '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',

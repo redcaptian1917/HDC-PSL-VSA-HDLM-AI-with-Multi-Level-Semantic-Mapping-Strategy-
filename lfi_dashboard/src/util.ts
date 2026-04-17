@@ -50,6 +50,41 @@ export const formatRelative = (ts: number, now = Date.now()): string => {
   return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
+// Strip common markdown syntax to plain text. Used by the message copy
+// button when the user Shift-clicks ("copy as plain"). Not a full markdown
+// parser — just the syntax the renderer supports (bold, italic, code,
+// links, fences, list markers, heading markers, blockquote, hr).
+export const stripMarkdown = (src: string): string => {
+  return src
+    // Fenced code → keep inner code
+    .replace(/```[a-zA-Z0-9_+-]*\n([\s\S]*?)```/g, (_m, body) => body)
+    // Inline code
+    .replace(/`([^`\n]+)`/g, '$1')
+    // Bold **x** / __x__
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/__([^_\n]+)__/g, '$1')
+    // Italic *x* / _x_
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/_([^_\n]+)_/g, '$1')
+    // Strikethrough ~~x~~
+    .replace(/~~([^~\n]+)~~/g, '$1')
+    // Links [text](url) → "text (url)"
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+    // Images ![alt](url) → "alt"
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // Heading markers at line start (# ## ###)
+    .replace(/^#{1,6}\s+/gm, '')
+    // Blockquote markers
+    .replace(/^>\s?/gm, '')
+    // Horizontal rules
+    .replace(/^[-*_]{3,}\s*$/gm, '')
+    // Bullet list markers
+    .replace(/^[\s]*[-*]\s+/gm, '• ')
+    // Numbered list markers (keep number + dot)
+    .replace(/^(\s*)(\d+\.)\s+/gm, '$1$2 ')
+    .trim();
+};
+
 // Clipboard write with an execCommand fallback for browsers that block the
 // async Clipboard API (e.g. insecure-context). Never throws.
 export const copyToClipboard = async (text: string): Promise<void> => {

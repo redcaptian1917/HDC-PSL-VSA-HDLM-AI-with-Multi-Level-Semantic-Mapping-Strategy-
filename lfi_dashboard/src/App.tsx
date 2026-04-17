@@ -24,17 +24,9 @@
 // ============================================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import hljs from 'highlight.js/lib/core';
-import rust from 'highlight.js/lib/languages/rust';
-import javascript from 'highlight.js/lib/languages/javascript';
-import typescript from 'highlight.js/lib/languages/typescript';
-import python from 'highlight.js/lib/languages/python';
-import bash from 'highlight.js/lib/languages/bash';
-import json_lang from 'highlight.js/lib/languages/json';
-import sql from 'highlight.js/lib/languages/sql';
-import css from 'highlight.js/lib/languages/css';
-import xml from 'highlight.js/lib/languages/xml';
-import go from 'highlight.js/lib/languages/go';
+// c2-228 / #79: language grammars are loaded on demand by markdown.tsx via
+// hljsLazy.ts so each lives in its own Vite chunk; only the theme CSS
+// (required before any highlighted HTML renders) ships in the initial bundle.
 import 'highlight.js/styles/github-dark.css';
 import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportAllAsJson, formatRelative, formatDayBucket } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
@@ -231,6 +223,10 @@ const SovereignCommandConsole: React.FC = () => {
   // list renders only matching messages.
   const [chatSearch, setChatSearch] = useState<string>('');
   const [showChatSearch, setShowChatSearch] = useState<boolean>(false);
+  // Search mode: 'filter' hides non-matching messages (default, focused
+  // view), 'highlight' keeps all messages visible and marks matches in
+  // place. User toggles via a button in the search bar.
+  const [chatSearchMode, setChatSearchMode] = useState<'filter' | 'highlight'>('filter');
   const chatSearchInputRef = useRef<HTMLInputElement>(null);
   const showToast = useCallback((msg: string, onUndo?: () => void) => {
     setToast({ id: Date.now(), msg, onUndo });
@@ -3242,6 +3238,21 @@ ${cmdList}
               <span style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
                 {chatSearch ? `${messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())).length} of ${messages.length}` : `${messages.length} msgs`}
               </span>
+              {/* Mode toggle: filter (hide non-matches) vs highlight (mark
+                  inline, keep everything visible). */}
+              <button onClick={() => setChatSearchMode(m => m === 'filter' ? 'highlight' : 'filter')}
+                aria-label={`Search mode: ${chatSearchMode}. Click to switch.`}
+                title={chatSearchMode === 'filter'
+                  ? 'Filter mode — only matching messages. Click to show all + highlight.'
+                  : 'Highlight mode — all messages visible. Click to filter to matches only.'}
+                style={{
+                  padding: '4px 10px', fontSize: '11px', fontWeight: T.typography.weightBold,
+                  background: chatSearchMode === 'filter' ? C.accentBg : 'transparent',
+                  border: `1px solid ${C.borderSubtle}`,
+                  color: chatSearchMode === 'filter' ? C.accent : C.textMuted,
+                  borderRadius: T.radii.sm, cursor: 'pointer',
+                  fontFamily: 'inherit', textTransform: 'uppercase',
+                }}>{chatSearchMode}</button>
               <button onClick={() => { setShowChatSearch(false); setChatSearch(''); }}
                 aria-label='Close search'
                 style={{
@@ -3278,7 +3289,7 @@ ${cmdList}
               when we have >0 messages and the topmost isn't the first (so
               it doesn't duplicate the inline "Today" separator). */}
           {(() => {
-            const visible = chatSearch ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
+            const visible = (chatSearch && chatSearchMode === 'filter') ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
             if (visible.length === 0) return null;
             const msg = visible[Math.min(chatTopIndex, visible.length - 1)];
             if (!msg) return null;
@@ -3305,7 +3316,7 @@ ${cmdList}
           })()}
           <ChatView
             ref={chatViewRef}
-            messages={chatSearch ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())) : messages}
+            messages={(chatSearch && chatSearchMode === 'filter') ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())) : messages}
             chatMaxWidth={chatMaxWidth}
             chatPadding={chatPadding}
             isDesktop={isDesktop}

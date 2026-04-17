@@ -803,14 +803,12 @@ async fn system_notify_handler(
         .output();
     match out {
         Ok(o) if o.status.success() => Json(json!({ "status": "ok" })),
-        Ok(o) => Json(json!({
-            "status": "error",
-            "reason": String::from_utf8_lossy(&o.stderr).to_string(),
-        })),
-        Err(e) => Json(json!({
-            "status": "error",
-            "reason": format!("notify-send unavailable: {}", e),
-        })),
+        // SECURITY: Scrub stderr
+        Ok(o) => {
+            tracing::warn!("notify failed: {}", String::from_utf8_lossy(&o.stderr));
+            Json(json!({ "status": "error", "reason": "Notification failed." }))
+        },
+        Err(_e) => Json(json!({ "status": "error", "reason": "Notification unavailable." })),
     }
 }
 
@@ -1205,8 +1203,12 @@ async fn system_click_handler(
         .output();
     match out {
         Ok(o) if o.status.success() => Json(json!({ "status": "ok", "x": req.x, "y": req.y })),
-        Ok(o) => Json(json!({ "status": "error", "reason": String::from_utf8_lossy(&o.stderr).to_string() })),
-        Err(e) => Json(json!({ "status": "error", "reason": format!("xdotool unavailable: {}", e) })),
+        // SECURITY: Scrub stderr — never expose system paths/versions to client
+        Ok(o) => {
+            tracing::warn!("click failed: {}", String::from_utf8_lossy(&o.stderr));
+            Json(json!({ "status": "error", "reason": "Desktop interaction failed." }))
+        },
+        Err(_e) => Json(json!({ "status": "error", "reason": "Desktop interaction unavailable." })),
     }
 }
 
@@ -1228,8 +1230,12 @@ async fn system_type_handler(
         .output();
     match out {
         Ok(o) if o.status.success() => Json(json!({ "status": "ok", "chars": req.text.len() })),
-        Ok(o) => Json(json!({ "status": "error", "reason": String::from_utf8_lossy(&o.stderr).to_string() })),
-        Err(e) => Json(json!({ "status": "error", "reason": format!("{}", e) })),
+        // SECURITY: Scrub stderr
+        Ok(o) => {
+            tracing::warn!("type failed: {}", String::from_utf8_lossy(&o.stderr));
+            Json(json!({ "status": "error", "reason": "Desktop interaction failed." }))
+        },
+        Err(_e) => Json(json!({ "status": "error", "reason": "Desktop interaction unavailable." })),
     }
 }
 
@@ -1250,8 +1256,12 @@ async fn system_key_handler(
         .output();
     match out {
         Ok(o) if o.status.success() => Json(json!({ "status": "ok", "keys": req.keys })),
-        Ok(o) => Json(json!({ "status": "error", "reason": String::from_utf8_lossy(&o.stderr).to_string() })),
-        Err(e) => Json(json!({ "status": "error", "reason": format!("{}", e) })),
+        // SECURITY: Scrub stderr
+        Ok(o) => {
+            tracing::warn!("key failed: {}", String::from_utf8_lossy(&o.stderr));
+            Json(json!({ "status": "error", "reason": "Desktop interaction failed." }))
+        },
+        Err(_e) => Json(json!({ "status": "error", "reason": "Desktop interaction unavailable." })),
     }
 }
 
@@ -1286,10 +1296,14 @@ async fn system_screenshot_handler(
                     info!("// AUDIT: screenshot captured, {} bytes", bytes.len());
                     Json(json!({ "status": "ok", "format": "png", "size": bytes.len(), "data_base64": b64 }))
                 }
-                Err(e) => Json(json!({ "status": "error", "reason": format!("read failed: {}", e) })),
+                Err(_e) => Json(json!({ "status": "error", "reason": "Screenshot capture failed." })),
             }
         }
-        Ok(o) => Json(json!({ "status": "error", "reason": String::from_utf8_lossy(&o.stderr).to_string() })),
+        // SECURITY: Scrub stderr
+        Ok(o) => {
+            tracing::warn!("screenshot failed: {}", String::from_utf8_lossy(&o.stderr));
+            Json(json!({ "status": "error", "reason": "Screenshot capture failed." }))
+        },
         Err(e) => Json(json!({ "status": "error", "reason": format!("scrot unavailable: {}", e) })),
     }
 }
@@ -1383,7 +1397,8 @@ async fn system_launch_handler(
             info!("// AUDIT: Launched app: {}", req.app);
             Json(json!({ "status": "ok", "launched": req.app }))
         }
-        Err(e) => Json(json!({ "status": "error", "reason": format!("{}", e) })),
+        // SECURITY: Scrub launch errors
+        Err(_e) => Json(json!({ "status": "error", "reason": "Application launch failed." })),
     }
 }
 
@@ -2178,7 +2193,16 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
 
     // Training admin: sessions overview
     // AVP-PASS-13: 2026-04-16 — training admin dashboard API
-    async fn admin_training_sessions_handler() -> impl IntoResponse {
+    async fn admin_training_sessions_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        // SECURITY: Admin endpoints require authentication
+        let agent = state.agent.lock();
+        if !agent.authenticated {
+            warn!("// AUDIT: Admin training sessions rejected — not authenticated.");
+            return axum::Json(json!({ "status": "rejected", "reason": "not authenticated" }));
+        }
+        drop(agent);
         info!("// ADMIN: Training sessions endpoint accessed");
         let state_path = "/var/log/lfi/training_state.json";
         let state: serde_json::Value = match std::fs::read_to_string(state_path) {
@@ -2201,6 +2225,14 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     async fn admin_training_domains_handler(
         State(state): State<Arc<AppState>>,
     ) -> impl IntoResponse {
+        // SECURITY: Admin endpoints require authentication
+        {
+            let agent = state.agent.lock();
+            if !agent.authenticated {
+                warn!("// AUDIT: Admin training domains rejected — not authenticated.");
+                return axum::Json(json!({ "status": "rejected", "reason": "not authenticated" }));
+            }
+        }
         info!("// ADMIN: Training domains endpoint accessed");
         let domains = {
             // SAFETY: return empty domains on any DB failure
@@ -2234,6 +2266,14 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     async fn admin_training_accuracy_handler(
         State(state): State<Arc<AppState>>,
     ) -> impl IntoResponse {
+        // SECURITY: Admin endpoints require authentication
+        {
+            let agent = state.agent.lock();
+            if !agent.authenticated {
+                warn!("// AUDIT: Admin training accuracy rejected — not authenticated.");
+                return axum::Json(json!({ "status": "rejected", "reason": "not authenticated" }));
+            }
+        }
         info!("// ADMIN: Training accuracy endpoint accessed");
         let stats = {
             // SAFETY: return empty stats on lock failure
@@ -2287,6 +2327,14 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     async fn admin_dashboard_handler(
         State(state): State<Arc<AppState>>,
     ) -> impl IntoResponse {
+        // SECURITY: Admin endpoints require authentication
+        {
+            let agent = state.agent.lock();
+            if !agent.authenticated {
+                warn!("// AUDIT: Admin dashboard rejected — not authenticated.");
+                return axum::Json(json!({ "status": "rejected", "reason": "not authenticated" }));
+            }
+        }
         let conn = match state.db.conn.lock() {
             Ok(c) => c,
             Err(_) => return axum::Json(json!({"error": "db lock"})),
@@ -2416,8 +2464,17 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
 
     // Training admin: start/stop training
     async fn admin_training_control_handler(
+        State(state): State<Arc<AppState>>,
         axum::extract::Path(action): axum::extract::Path<String>,
     ) -> impl IntoResponse {
+        // SECURITY: Admin endpoints require authentication — training control is especially sensitive
+        {
+            let agent = state.agent.lock();
+            if !agent.authenticated {
+                warn!("// AUDIT: Admin training control '{}' rejected — not authenticated.", action);
+                return axum::Json(json!({ "status": "rejected", "reason": "not authenticated" }));
+            }
+        }
         info!("// ADMIN: Training control action: {}", action);
         match action.as_str() {
             "start" => {
@@ -2426,7 +2483,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
                     .output();
                 match result {
                     Ok(_) => axum::Json(json!({"status": "started", "message": "Adaptive training launched"})),
-                    Err(e) => axum::Json(json!({"status": "error", "message": format!("{}", e)})),
+                    // SECURITY: Scrub training control errors
+                    Err(_e) => axum::Json(json!({"status": "error", "message": "Training launch failed."})),
                 }
             }
             "stop" => {
