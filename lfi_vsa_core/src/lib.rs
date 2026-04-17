@@ -59,8 +59,10 @@ pub mod diag;
 pub mod data_ingestion;
 pub mod data_quality;
 pub mod persistence;
+pub mod sealed;
 
 // Re-export core public types
+pub use sealed::{Sealed, Sensitive, SecretBroker};
 pub use hdc::vector::BipolarVector;
 pub use hdc::compute::{ComputeBackend, LocalBackend};
 pub use hdc::liquid::{LiquidSensorium, LiquidNeuron};
