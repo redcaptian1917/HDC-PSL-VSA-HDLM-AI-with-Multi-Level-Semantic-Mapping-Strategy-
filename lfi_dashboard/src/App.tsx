@@ -2427,6 +2427,29 @@ ${cmdList}
       })()}
 
       {/* ========== ACTIVITY / LOGS MODAL ========== */}
+      {showActivity && (
+        <ActivityModal
+          C={C}
+          tab={activityTab}
+          onTabChange={(t) => setActivityTab(t)}
+          onClose={() => setShowActivity(false)}
+          serverChatLog={serverChatLog}
+          chatLogError={chatLogError}
+          chatLogFetchedAt={chatLogFetchedAt}
+          localEvents={localEvents}
+          isConnected={isConnected}
+          currentTier={currentTier}
+          thermalThrottled={stats.is_throttled}
+          ramLabel={`${ramFmt.value} ${ramFmt.unit}`}
+          cpuTempC={stats.cpu_temp_c}
+          factsLabel={`${kg.facts}`}
+          conceptsLabel={`${kg.concepts}`}
+          logicDensity={stats.logic_density}
+          qosReport={qosReport}
+          onRefreshQos={fetchQos}
+          onRefreshFacts={fetchFacts}
+        />
+      )}
 
       {/* ========== SETTINGS MODAL ========== */}
       {showSettings && (
