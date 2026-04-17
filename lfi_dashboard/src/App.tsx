@@ -1707,6 +1707,8 @@ ${cmdList}
           })),
           { id: 'open-settings', label: 'Open settings', hint: 'All preferences', group: 'Navigate',
             onRun: () => { setShowSettings(true); } },
+          { id: 'open-shortcuts', label: 'Keyboard shortcuts', hint: 'Press ? anytime to reopen', group: 'Navigate',
+            onRun: () => { setShowShortcuts(true); } },
           { id: 'open-knowledge', label: 'Knowledge browser', hint: 'Facts, concepts, reviews', group: 'Navigate',
             onRun: () => { setShowKnowledge(true); fetchKnowledge(); } },
           { id: 'open-logs', label: 'Open activity logs', hint: 'Chat log + UI events', group: 'Navigate',
