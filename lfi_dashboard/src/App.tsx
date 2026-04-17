@@ -53,6 +53,8 @@ const ClassroomView = React.lazy(() => import('./ClassroomView').then(m => ({ de
 // c0-037 #2 / c2-328: dedicated Fleet page. Lazy so the orchestrator SDK
 // payload doesn't bloat the initial chat bundle.
 const FleetView = React.lazy(() => import('./FleetView').then(m => ({ default: m.FleetView })));
+// c0-037 #3 / c2-329: dedicated Library page for the 365-source inventory.
+const LibraryView = React.lazy(() => import('./LibraryView').then(m => ({ default: m.LibraryView })));
 import { TelemetryCard } from './TelemetryCards';
 import { SidebarStatus } from './SidebarStatus';
 import { SubstrateTelemetry } from './SubstrateTelemetry';
@@ -430,6 +432,8 @@ const SovereignCommandConsole: React.FC = () => {
       run: () => { setShowAdmin(false); setActiveView('classroom'); } },
     { cmd: '/fleet', label: 'Fleet', desc: 'Orchestrator: instances, tasks, timeline',
       run: () => { setShowAdmin(false); setActiveView('fleet'); } },
+    { cmd: '/library', label: 'Library', desc: 'Source inventory with quality + vetted status',
+      run: () => { setShowAdmin(false); setActiveView('library'); } },
     { cmd: '/help', label: 'Help & docs', desc: 'Commands, shortcuts, tips, and feedback guide',
       run: () => {
         const cmdList = slashCommands.filter(c => c.cmd !== '/help').map(c => `  ${c.cmd.padEnd(14)} ${c.desc}`).join('\n');
@@ -717,6 +721,7 @@ ${cmdList}
     if (want === 'admin') setSrAnnouncement('Admin console opened');
     else if (want === 'classroom') setSrAnnouncement('Classroom view active');
     else if (want === 'fleet') setSrAnnouncement('Fleet view active');
+    else if (want === 'library') setSrAnnouncement('Library view active');
     else setSrAnnouncement('Chat view active');
   }, [activeView, showAdmin]);
   useEffect(() => {
@@ -730,6 +735,9 @@ ${cmdList}
       } else if (h === 'fleet') {
         setShowAdmin(false);
         setActiveView('fleet');
+      } else if (h === 'library') {
+        setShowAdmin(false);
+        setActiveView('library');
       } else {
         setShowAdmin(false);
         setActiveView('chat');
@@ -1300,14 +1308,16 @@ ${cmdList}
       else if (mod && k === ',') { e.preventDefault(); setShowSettings(true); }
       else if (mod && k === 'e') { e.preventDefault(); inputRef.current?.focus(); }
       else if (mod && k === '/') { e.preventDefault(); inputRef.current?.focus(); }
-      // c0-020: top-level view shortcuts. c2-328 added ⌘4 for the new
-      // Fleet view so the keyboard map now covers all 4 destinations.
-      else if (mod && !e.shiftKey && (k === '1' || k === '2' || k === '3' || k === '4')) {
+      // c0-020: top-level view shortcuts. c2-328 added ⌘4 (Fleet);
+      // c2-329 added ⌘5 (Library). Full map:
+      //   ⌘1 Chat, ⌘2 Classroom, ⌘3 Admin, ⌘4 Fleet, ⌘5 Library
+      else if (mod && !e.shiftKey && (k === '1' || k === '2' || k === '3' || k === '4' || k === '5')) {
         e.preventDefault();
         if (k === '1') { setActiveView('chat'); setShowAdmin(false); }
         else if (k === '2') { setActiveView('classroom'); setShowAdmin(false); }
         else if (k === '3') { setShowAdmin(true); }
-        else { setActiveView('fleet'); setShowAdmin(false); }
+        else if (k === '4') { setActiveView('fleet'); setShowAdmin(false); }
+        else { setActiveView('library'); setShowAdmin(false); }
       }
       else if (mod && e.shiftKey && k === 'k') { e.preventDefault(); setShowKnowledge(true); fetchKnowledge(); }
       else if (mod && e.shiftKey && k === 'd') {
@@ -1916,10 +1926,11 @@ ${cmdList}
   // but Chat and Classroom are true top-level views that replace each other.
   // Hash-route-aware: #chat / #classroom / #admin hydrate the view on mount
   // and forward/back history traversal updates the active view.
-  const [activeView, setActiveView] = useState<'chat' | 'classroom' | 'fleet'>(() => {
+  const [activeView, setActiveView] = useState<'chat' | 'classroom' | 'fleet' | 'library'>(() => {
     const h = (typeof window !== 'undefined' && window.location.hash.replace('#', '')) || 'chat';
     if (h === 'classroom') return 'classroom';
     if (h === 'fleet') return 'fleet';
+    if (h === 'library') return 'library';
     return 'chat';
   });
   const [convoSearch, setConvoSearch] = useState('');
@@ -3942,6 +3953,20 @@ ${cmdList}
           }>
             <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
               <FleetView C={C} host={host} isDesktop={isDesktop} />
+            </AppErrorBoundary>
+          </React.Suspense>
+        )}
+        {/* c0-037 #3 / c2-329: Library full-page view. Same pattern — lazy +
+            scoped boundary since /api/library/sources can vary across
+            rollouts (name vs url, optional vetted/trust fields). */}
+        {activeView === 'library' && (
+          <React.Suspense fallback={
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMuted }}>
+              Loading library…
+            </div>
+          }>
+            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
+              <LibraryView C={C} host={host} isDesktop={isDesktop} />
             </AppErrorBoundary>
           </React.Suspense>
         )}
