@@ -85,6 +85,50 @@ export const exportConversationMd = (convo: ExportableConversation): void => {
   URL.revokeObjectURL(url);
 };
 
+// Open a print-friendly window for a single conversation and trigger the
+// browser's print dialog. Users pick "Save as PDF" from the dialog. No PDF
+// library bundled — the browser handles layout + fonts + paging.
+export const exportConversationPdf = (convo: ExportableConversation): void => {
+  const title = convo.title.replace(/[<>]/g, '');
+  const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const rows = convo.messages.map(m => {
+    const ts = new Date(m.timestamp).toLocaleString();
+    const who = m.role === 'user' ? 'You' : m.role === 'assistant' ? 'PlausiDen AI' : m.role === 'system' ? 'System' : m.role;
+    return `<div class="msg ${m.role}"><div class="meta"><strong>${who}</strong> <span class="ts">${ts}</span></div><div class="body">${escape(m.content)}</div></div>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${escape(title)}</title>
+<style>
+  @page { size: Letter; margin: 0.6in; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #111827; font-size: 12pt; line-height: 1.55; margin: 0; background: #ffffff; }
+  h1 { font-size: 18pt; margin: 0 0 4pt; }
+  .exported { color: #6b7280; font-size: 9pt; margin-bottom: 18pt; }
+  .msg { margin-bottom: 14pt; page-break-inside: avoid; }
+  .msg .meta { font-size: 9pt; color: #6b7280; margin-bottom: 4pt; }
+  .msg .meta strong { color: #111827; }
+  .msg .body { white-space: pre-wrap; word-break: break-word; }
+  .msg.user .body { padding: 8pt 10pt; background: #eff6ff; border-left: 3pt solid #2563eb; }
+  .msg.assistant .body { padding: 8pt 10pt; background: #f5f6f8; border-left: 3pt solid #16a34a; }
+  .msg.system .body { font-style: italic; color: #6b7280; }
+  .msg.web .body { padding: 8pt 10pt; background: #fef9c3; border-left: 3pt solid #ca8a04; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style></head><body>
+<h1>${escape(title)}</h1>
+<div class="exported">Exported ${new Date().toLocaleString()} · ${convo.messages.length} messages</div>
+${rows}
+</body></html>`;
+  const w = window.open('', '_blank', 'noopener');
+  if (!w) {
+    // Popup blocked — user needs to allow popups for this domain.
+    alert('PDF export requires popups to be enabled for this site.');
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  // Wait for layout before firing print.
+  setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 300);
+};
+
 // Full-backup export. Bundles all conversations, settings, and a schema
 // version into a single JSON blob the user can re-import (or version-control
 // outside the browser). Schema version lets the importer reject incompatible

@@ -36,7 +36,7 @@ import css from 'highlight.js/lib/languages/css';
 import xml from 'highlight.js/lib/languages/xml';
 import go from 'highlight.js/lib/languages/go';
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportAllAsJson, formatRelative, formatDayBucket } from './util';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportAllAsJson, formatRelative, formatDayBucket } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -1176,7 +1176,18 @@ ${cmdList}
           showToast('Regenerating…');
         }
       }
-      else if (mod && e.shiftKey && k === 'f') {
+      else if (mod && k === 'f') {
+        // Cmd/Ctrl+F — chat-view search hijack. When the user is typing in
+        // an input or a modal is open, fall through to the browser's native
+        // find-in-page. Otherwise (Chat view, nothing focused), open our
+        // in-conversation search so results are filterable.
+        const target = e.target as HTMLElement | null;
+        const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin || !!negFeedbackFor;
+        const inChatView = activeView === 'chat' && !anyModalOpen;
+        // Shift-variant always opens our search (power-user shortcut, not
+        // overloaded by the browser). Plain Cmd+F only hijacks in chat view.
+        if (!e.shiftKey && (!inChatView || isEditable)) return; // browser native
         e.preventDefault();
         setShowChatSearch(v => {
           const next = !v;
@@ -3010,9 +3021,17 @@ ${cmdList}
                           }}>{'\u270E'}</button>
                         <button onClick={(e) => {
                           e.stopPropagation();
-                          exportConversationMd(c);
-                          logEvent('conversation_exported_md', { id: c.id });
-                        }} title='Export as Markdown' aria-label={`Export ${c.title} as Markdown`}
+                          // Shift-click exports PDF; plain click exports md.
+                          // Keeps the action bar compact without adding a
+                          // third button, discoverable via the tooltip.
+                          if (e.shiftKey) {
+                            exportConversationPdf(c);
+                            logEvent('conversation_exported_pdf', { id: c.id });
+                          } else {
+                            exportConversationMd(c);
+                            logEvent('conversation_exported_md', { id: c.id });
+                          }
+                        }} title='Export as Markdown (Shift-click: PDF)' aria-label={`Export ${c.title} as Markdown, Shift-click for PDF`}
                           style={{
                             background: 'transparent', border: 'none', color: C.textDim,
                             cursor: 'pointer', fontSize: '10px', padding: '2px 3px',

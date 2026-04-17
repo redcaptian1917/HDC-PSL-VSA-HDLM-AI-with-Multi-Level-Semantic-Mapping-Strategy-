@@ -18,7 +18,8 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', '2'], label: 'Switch to Classroom' },
       { keys: ['⌘', '3'], label: 'Open Admin console' },
       { keys: ['⌘', 'Shift', 'K'], label: 'Open knowledge browser' },
-      { keys: ['⌘', 'Shift', 'F'], label: 'Search this conversation' },
+      { keys: ['⌘', 'F'], label: 'Search this conversation (in Chat view)' },
+      { keys: ['⌘', 'Shift', 'F'], label: 'Search anywhere (overrides browser find)' },
     ],
   },
   {
