@@ -145,12 +145,38 @@ export const renderInlineMd = (raw: string, baseKey: string, ctx: MarkdownCtx): 
       );
       return;
     }
+    // c2-357 / task 76: $$display$$ and $inline$ math. Matched before
+    // emphasis so the dollars don't get eaten by a stray bold/italic. We
+    // don't render actual math (MathJax/KaTeX is ~200 kB) -- instead we
+    // give the content a monospace font + subtle background chip so LaTeX
+    // stands out from prose. Downstream MathJax adoption can drop into
+    // the same spans without changing the detection pass.
+    //
     // c2-354 / task 70: ~~strikethrough~~ handled before bold/italic so the
     // tilde pair doesn't get eaten by a stray emphasis run. Matches
     // GitHub/CommonMark extended syntax exactly: 2+ tildes on both sides.
-    const tokens = seg.split(/(~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
+    const tokens = seg.split(/(\$\$[^$\n]+\$\$|\$[^$\n]+\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
     tokens.forEach((tok, j) => {
-      if (tok.startsWith('~~') && tok.endsWith('~~') && tok.length >= 4) {
+      if (tok.startsWith('$$') && tok.endsWith('$$') && tok.length >= 4) {
+        out.push(
+          <div key={`${baseKey}-mdisp${i}-${j}`} style={{
+            fontFamily: C.font, fontSize: '0.95em',
+            padding: '6px 10px', margin: '6px 0',
+            background: themeKey === 'light' ? 'rgba(20,30,60,0.04)' : 'rgba(255,255,255,0.05)',
+            borderRadius: '4px', color: C.textSecondary,
+            overflowX: 'auto', whiteSpace: 'pre',
+          }}>{tok.slice(2, -2)}</div>
+        );
+      } else if (tok.startsWith('$') && tok.endsWith('$') && tok.length >= 2) {
+        out.push(
+          <span key={`${baseKey}-minl${i}-${j}`} style={{
+            fontFamily: C.font, fontSize: '0.92em',
+            padding: '0 4px', borderRadius: '3px',
+            background: themeKey === 'light' ? 'rgba(20,30,60,0.04)' : 'rgba(255,255,255,0.05)',
+            color: C.textSecondary,
+          }}>{tok.slice(1, -1)}</span>
+        );
+      } else if (tok.startsWith('~~') && tok.endsWith('~~') && tok.length >= 4) {
         out.push(
           <span key={`${baseKey}-s${i}-${j}`}
             style={{ textDecoration: 'line-through', color: C.textMuted }}>
