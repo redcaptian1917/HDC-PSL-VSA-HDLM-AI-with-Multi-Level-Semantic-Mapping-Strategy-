@@ -14,5 +14,7 @@ pub mod bloom;
 pub mod temporal;
 pub mod classifier;
 pub mod pipeline;
+pub mod domain;
+pub mod source;
 #[cfg(test)]
 mod proptest_checks;

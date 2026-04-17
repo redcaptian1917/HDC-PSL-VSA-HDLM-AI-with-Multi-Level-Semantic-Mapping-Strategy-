@@ -197,11 +197,13 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         </div>
       </div>
     ) : (
-      <div style={{
+      <div dir='auto' style={{
         maxWidth, padding: `${T.spacing.md} ${T.spacing.lg}`,
         // c0-019/020: user bubble uses muted accent-bg (not saturated accent),
         // with body-color text for readability. Professional feel over
         // "branded message balloon."
+        // c2-270: dir=auto so RTL content (Arabic/Hebrew) flips text direction
+        // per-bubble without affecting siblings.
         background: C.accentBg, color: C.text,
         borderRadius: `${T.radii.lg} ${T.radii.lg} ${T.radii.xs} ${T.radii.lg}`,
         fontSize: T.typography.sizeBody, lineHeight: T.typography.lineLoose,
@@ -277,7 +279,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{ maxWidth: isDesktop ? '80%' : '96%', width: '100%' }}>
         {/* Response body */}
-        <div style={{
+        <div dir='auto' style={{
           padding: '14px 18px',
           background: C.bgCard,
           border: `1px solid ${C.border}`,

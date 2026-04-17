@@ -3289,6 +3289,10 @@ ${cmdList}
                       data-convo-row='true'
                       aria-label={`Open conversation: ${c.title}${c.pinned ? ' (pinned — drag to reorder)' : ''}`}
                       aria-current={isActive ? 'true' : undefined}
+                      // c2-269: hover tooltip with metadata — created / last
+                      // updated / message count / flags. Helps users pick
+                      // between similarly-titled conversations.
+                      title={`${c.title}\n${c.messages.length} message${c.messages.length === 1 ? '' : 's'}\nCreated: ${new Date(c.createdAt).toLocaleString()}\nUpdated: ${new Date(c.updatedAt).toLocaleString()}${c.pinned ? '\nPinned' : ''}${c.starred ? '\nStarred' : ''}${c.draft?.trim() ? '\nHas unsent draft' : ''}`}
                       onKeyDown={(e) => navigateConvoRow(e, c.id)}
                       draggable={!!c.pinned}
                       onDragStart={(e) => {
@@ -3381,7 +3385,8 @@ ${cmdList}
                                 fontSize: '13px', fontFamily: 'inherit', outline: 'none',
                               }} />
                           ) : (
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            <span dir='auto'
+                              style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
                               onDoubleClick={(e) => {
                                 // c0-020 polish: double-click the title to inline-rename.
                                 e.stopPropagation();
