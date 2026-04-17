@@ -3413,7 +3413,7 @@ ${cmdList}
                   </span>
                 )}
               </span>
-              <span>PlausiDen AI can make mistakes. Verify important info.</span>
+              {!isMobile && <span>PlausiDen AI can make mistakes. Verify important info.</span>}
               <span style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <span
                   title='Open the command palette'
