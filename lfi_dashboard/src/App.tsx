@@ -3781,9 +3781,23 @@ ${cmdList}
         }
         /* Smooth progress-bar fill animation */
         .lfi-progress-fill { transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1); }
-        /* Respect prefers-reduced-motion: switch pulse to a static tint */
+        /* Respect prefers-reduced-motion (c0-020 E4 a11y): disable all our
+           decorative animations when the OS setting is on. Scroll-relevant
+           animations (smooth-scroll) stay because they're functional. */
         @media (prefers-reduced-motion: reduce) {
-          .lfi-trainer-pulse { animation: none; }
+          .lfi-trainer-pulse, .lfi-send-pulse, .lfi-typing-dot,
+          [style*="animation: scc-bounce"],
+          [style*="animation: scc-pulse"],
+          [style*="animation: scc-toast-in"],
+          [style*="animation: scc-toast-out"],
+          [style*="animation: scc-skel-admin"],
+          [style*="animation: scc-skel-cls"],
+          [style*="animation: scc-skel"],
+          [style*="animation: lfi-fadein"] {
+            animation: none !important;
+          }
+          /* Keep opacity/color transitions as-is — those are the cheap
+             instant ones everyone expects even with reduced-motion. */
         }
         * { box-sizing: border-box; }
         body { margin: 0; padding: 0; overflow: hidden; background: ${C.bg}; color: ${C.text}; }
