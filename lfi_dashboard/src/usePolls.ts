@@ -12,9 +12,14 @@ export const useStatusPoll = (host: string, active: boolean) => {
   // Surfaces the most recent fetch error so the UI can distinguish "loading"
   // from "server returned 0" — previously both rendered as 0 with no signal.
   const [lastError, setLastError] = useState<string | null>(null);
+  // Rolling 5-sample latency. Smoothed so a single slow request doesn't make
+  // the badge flap; users see a stable "this is the typical RTT" number.
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
   useEffect(() => {
     if (!active) return;
+    const samples: number[] = [];
     const fetchStatus = async () => {
+      const t0 = performance.now();
       try {
         // 8s timeout: backend DB can block on write-lock windows; don't freeze the UI.
         const ctrl = new AbortController();
@@ -23,6 +28,10 @@ export const useStatusPoll = (host: string, active: boolean) => {
         clearTimeout(to);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        const dur = performance.now() - t0;
+        samples.push(dur);
+        if (samples.length > 5) samples.shift();
+        setLatencyMs(samples.reduce((a, b) => a + b, 0) / samples.length);
         setKg(k => ({
           facts: typeof data.facts_count === 'number' ? data.facts_count : k.facts,
           concepts: typeof data.concepts_count === 'number' ? data.concepts_count : k.concepts,
@@ -33,13 +42,14 @@ export const useStatusPoll = (host: string, active: boolean) => {
         setLastError(null);
       } catch (e: any) {
         setLastError(String(e?.message || e || 'fetch failed'));
+        setLatencyMs(null);
       }
     };
     fetchStatus();
     const id = setInterval(fetchStatus, 5000);
     return () => clearInterval(id);
   }, [host, active]);
-  return { kg, lastOk, lastError };
+  return { kg, lastOk, lastError, latencyMs };
 };
 
 // -------- /api/quality/report (30s) --------

@@ -1029,7 +1029,7 @@ ${cmdList}
   // Three polling hooks — see ./usePolls.ts for the fetch logic. Each manages
   // its own interval + abort handling; parent just reads the state they return.
   const host = getHost();
-  const { kg, lastOk: kgLastOk, lastError: kgLastError } = useStatusPoll(host, isAuthenticated);
+  const { kg, lastOk: kgLastOk, lastError: kgLastError, latencyMs } = useStatusPoll(host, isAuthenticated);
   const quality = useQualityPoll(host, isAuthenticated);
   const sysInfo = useSysInfoPoll(host, isAuthenticated);
 
@@ -3094,8 +3094,19 @@ ${cmdList}
               margin: '8px auto 0', display: 'flex', justifyContent: 'space-between',
               fontSize: '10.5px', color: C.textDim, padding: '0 8px',
             }}>
-              <span style={{ color: isConnected ? C.green : C.red, fontWeight: 700 }}>
+              <span style={{ color: isConnected ? C.green : C.red, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 {isConnected ? 'Link active' : 'Reconnecting...'}
+                {isConnected && latencyMs != null && (
+                  <span style={{
+                    fontSize: '9.5px', fontWeight: 600,
+                    color: latencyMs < 100 ? C.green : latencyMs < 500 ? C.yellow : C.red,
+                    background: latencyMs < 100 ? C.greenBg : latencyMs < 500 ? C.accentBg : C.redBg,
+                    padding: '1px 6px', borderRadius: '4px',
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  }} title='Avg round-trip of last 5 /api/status polls'>
+                    {Math.round(latencyMs)}ms
+                  </span>
+                )}
               </span>
               <span>PlausiDen AI can make mistakes. Verify important info.</span>
               <span style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
