@@ -169,6 +169,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       }}>
         <textarea value={editText}
           onChange={(e) => setEditText(e.target.value)}
+          aria-label='Edit message'
+          autoComplete='off'
+          spellCheck={true}
           style={{
             width: '100%', background: 'transparent', border: 'none', outline: 'none',
             color: C.text, fontFamily: 'inherit', fontSize: '14px', lineHeight: '1.6',

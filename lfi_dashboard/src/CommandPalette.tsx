@@ -74,6 +74,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           aria-controls='lfi-cmd-listbox'
           aria-activedescendant={filtered[index] ? `lfi-cmd-opt-${filtered[index].id}` : undefined}
           aria-label='Type a command'
+          autoComplete='off'
+          autoCorrect='off'
+          autoCapitalize='off'
+          spellCheck={false}
           value={query}
           onChange={(e) => { setQuery(e.target.value); setIndex(0); }}
           onKeyDown={(e) => {

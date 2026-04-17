@@ -1959,6 +1959,9 @@ ${cmdList}
                     <input type='text'
                       value={settings.displayName}
                       onChange={(e) => setSettings(s => ({ ...s, displayName: e.target.value.slice(0, 40) }))}
+                      aria-label='Display name'
+                      autoComplete='name'
+                      maxLength={40}
                       style={{
                         width: '100%', background: 'transparent', border: 'none', outline: 'none',
                         fontSize: '14px', fontWeight: 700, color: C.text, fontFamily: 'inherit',
@@ -2203,6 +2206,9 @@ ${cmdList}
               <input
                 type='search'
                 aria-label='Search conversations'
+                autoComplete='off'
+                autoCorrect='off'
+                spellCheck={false}
                 value={convoSearch}
                 onChange={(e) => setConvoSearch(e.target.value)}
                 placeholder='Search conversations...'
@@ -2568,6 +2574,8 @@ ${cmdList}
               <textarea
                 ref={inputRef}
                 aria-label='Chat message input'
+                autoComplete='off'
+                spellCheck={true}
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={(e) => {
