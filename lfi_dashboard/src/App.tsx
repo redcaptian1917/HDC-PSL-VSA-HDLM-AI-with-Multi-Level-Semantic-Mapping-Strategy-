@@ -4506,6 +4506,31 @@ ${cmdList}
                 boxShadow: input ? `0 0 0 3px ${C.accentBg}` : '0 1px 2px rgba(15,17,23,0.24)',
                 display: 'flex', flexDirection: 'column', position: 'relative',
               }}>
+                {/* c2-361 / task 91: context-window usage indicator. Thin 3px
+                    bar at the very top of the input wrapper. Uses the same
+                    100k-char budget as the >70% meter below, computed as a
+                    rough GPT-style token estimate (4 chars/token). Stays
+                    invisible on empty input. Green (<50%), yellow (50-80%),
+                    red (>80%) so the colors agree with the later char-count
+                    meter without duplicating its logic. */}
+                {input.length > 0 && (() => {
+                  const pct = Math.min(1, input.length / 100000);
+                  const color = pct < 0.5 ? C.green : pct < 0.8 ? C.yellow : C.red;
+                  return (
+                    <div aria-hidden='true' style={{
+                      position: 'absolute', top: 0, left: 0, right: 0,
+                      height: '3px', background: C.bgInput,
+                      borderTopLeftRadius: T.radii.lg,
+                      borderTopRightRadius: T.radii.lg,
+                      overflow: 'hidden', pointerEvents: 'none',
+                    }}>
+                      <div style={{
+                        width: `${pct * 100}%`, height: '100%',
+                        background: color, transition: 'width 0.3s, background 0.3s',
+                      }} />
+                    </div>
+                  );
+                })()}
                 {/* c2-358 / task 81: subtle always-on character count in the
                     bottom-right of the input wrapper. Hidden on empty input so
                     the chrome stays clean. Positioned 60px from the right so
