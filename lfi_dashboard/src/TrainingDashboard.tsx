@@ -1,5 +1,5 @@
 import React from 'react';
-import { compactNum } from './util';
+import { compactNum, formatRelative } from './util';
 
 // Animated shimmer placeholder used while a fetch is in flight. Relies on the
 // `@keyframes lfi-shimmer` defined in App.tsx's global <style> block.
@@ -191,13 +191,6 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
     );
   }
 
-  // Human-friendly "N min ago" / "N hr ago" from a seconds age.
-  const ageLabel = (sec: number): string => {
-    if (sec < 60) return `${sec}s ago`;
-    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-    return `${Math.floor(sec / 86400)}d ago`;
-  };
 
   return (
     <div>
@@ -221,7 +214,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
           <span style={{ color: C.text }}>#{lastCycle.cycle}</span>
           <span style={{ color: C.accent, fontWeight: 600 }}>{lastCycle.domain}</span>
           <span style={{ color: C.textMuted }}>{lastCycle.state}</span>
-          <span style={{ marginLeft: 'auto', color: C.textDim, fontSize: '11px' }}>{ageLabel(lastCycle.ageSec)}</span>
+          <span style={{ marginLeft: 'auto', color: C.textDim, fontSize: '11px' }}>{formatRelative(lastCycle.ts)}</span>
         </div>
       )}
 
