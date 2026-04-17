@@ -83,7 +83,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             outline: 'none', color: C.text, fontFamily: 'inherit',
             fontSize: '15px', boxSizing: 'border-box',
           }} />
-        <div style={{ maxHeight: '60vh', overflowY: 'auto', padding: '6px' }}>
+        <div role='listbox' aria-label='Command palette results' style={{ maxHeight: '60vh', overflowY: 'auto', padding: '6px' }}>
           {filtered.length === 0 && (
             <div style={{ padding: '20px', color: C.textMuted, fontSize: '13px', textAlign: 'center' }}>
               No matches for "{query}"
@@ -95,12 +95,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             return (
               <div key={it.id}>
                 {it.group !== prev && (
-                  <div style={{
+                  <div role='presentation' style={{
                     padding: '10px 12px 4px', fontSize: '10px', fontWeight: 700,
                     color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em',
                   }}>{it.group}</div>
                 )}
                 <button
+                  role='option' aria-selected={picked}
                   onClick={() => { setIndex(i); runSelected(); }}
                   onMouseEnter={() => setIndex(i)}
                   style={{
