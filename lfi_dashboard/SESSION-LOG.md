@@ -55,11 +55,11 @@ Instance: claude-2 (frontend/UI). Session start: 2026-04-16 ~23:05 EDT. Date rol
 4. Add an error boundary around the lazy modal `<Suspense>` so chunk-load failures are recoverable.
 5. Move remaining inline DOM helpers (`scrollToBottom`, `logEvent`) into util — low priority.
 
-## FILES (22 total in `lfi_dashboard/src/`, 6700+ LOC)
+## FILES (25 total in `lfi_dashboard/src/`, 7000+ LOC)
 
 | File | Lines | Purpose |
 |---|---|---|
-| App.tsx | 3280 | Main container, state, WS, routing |
+| App.tsx | 2988 | Main container, state, WS, routing |
 | MessageBubble.tsx | 436 | System/Web/Tool/User/Assistant message variants |
 | TrainingDashboard.tsx | 429 | Admin/training panel with live banner + heatmap |
 | SettingsModal.tsx | 422 | 4-tab settings (profile/appearance/behavior/data) |
@@ -82,7 +82,7 @@ Instance: claude-2 (frontend/UI). Session start: 2026-04-16 ~23:05 EDT. Date rol
 | TelemetryCards.tsx | 32 | Single colored stat card |
 | main.tsx | 9 | Entry |
 
-App.tsx session delta: 4675 → 3280 (-1395, 30% reduction) despite adding >20 features.
+App.tsx session delta: **4675 → 2988 (-1687, 36.1% reduction)** despite adding >20 visible features. Further files added since the 22-file snapshot: markdown.tsx (renderInlineMd + renderMessageBody), useTicTacToe hook, usePolls hook (status/quality/sysinfo).
 
 ## CHECKPOINTS (`working-*` tags)
 
