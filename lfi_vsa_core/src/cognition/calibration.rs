@@ -83,7 +83,7 @@ impl CalibrationEngine {
 
     /// Calibrate the raw confidence score using Platt scaling.
     /// Returns the calibrated confidence + a reliability flag.
-    pub fn calibrate(&self, raw_confidence: f64, domain: Option<&str>) -> (f64, bool) {
+    pub fn calibrate(&self, raw_confidence: f64, _domain: Option<&str>) -> (f64, bool) {
         if !self.fitted || self.samples.len() < 20 {
             // Not enough data — return raw with unreliable flag
             return (raw_confidence, false);

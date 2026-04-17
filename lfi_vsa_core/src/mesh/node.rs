@@ -111,7 +111,7 @@ impl MeshNode {
     pub fn handle_message(&mut self, from: &str, msg: MeshMessage) -> Option<MeshMessage> {
         self.messages_received += 1;
         match msg {
-            MeshMessage::Heartbeat { facts_total, domains, .. } => {
+            MeshMessage::Heartbeat { facts_total: _, domains: _, .. } => {
                 // Update peer info
                 if let Some(peer) = self.peers.iter_mut().find(|p| p.peer_id == from) {
                     peer.last_seen = std::time::SystemTime::now()
@@ -120,7 +120,7 @@ impl MeshNode {
                 }
                 None // No response needed
             }
-            MeshMessage::RequestFacts { domain, max_count } => {
+            MeshMessage::RequestFacts { domain, max_count: _ } => {
                 // Would query brain.db and return facts — stub for now
                 Some(MeshMessage::DeliverFacts {
                     domain,

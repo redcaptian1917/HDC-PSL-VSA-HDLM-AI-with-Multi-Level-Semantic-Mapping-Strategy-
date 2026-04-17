@@ -65,6 +65,7 @@ pub struct ExperienceLearner {
     /// Pending signals that haven't been persisted yet.
     pending: VecDeque<LearningSignal>,
     /// Maximum pending signals before force-flush.
+    #[allow(dead_code)]
     max_pending: usize,
     /// Statistics for monitoring.
     pub stats: ExperienceStats,

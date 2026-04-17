@@ -135,7 +135,7 @@ impl TensorTrain {
 
             for (k, &i_k) in indices.iter().enumerate() {
                 let core = &self.cores[k];
-                let rows = core.r_left;
+                let _rows = core.r_left;
                 let new_cols = core.r_right;
                 // Multiply current (cols-wide row vector) by G_k(:, i_k, :) which is r_left × r_right
                 // current shape: 1 × cols, G_k slice: rows × new_cols, cols == rows
@@ -376,7 +376,7 @@ fn tt_svd_ranks(v: &[f64], dims: &[usize; NUM_MODES], _total: usize) -> Vec<usiz
     // We compute exact ranks via the decomposition.
 
     let mut ranks = vec![1usize; NUM_MODES + 1]; // r_0 = r_K = 1
-    let mut remaining = v.to_vec();
+    let remaining = v.to_vec();
     let mut r_prev = 1usize;
 
     for k in 0..(NUM_MODES - 1) {

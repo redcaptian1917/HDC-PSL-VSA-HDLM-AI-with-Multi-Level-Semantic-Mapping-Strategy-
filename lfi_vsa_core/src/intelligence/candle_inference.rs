@@ -76,7 +76,7 @@ impl CandleInference {
     }
 
     /// Generate text from a prompt. Returns Err until candle is fully integrated.
-    pub fn generate(&self, prompt: &str) -> Result<String, HdcError> {
+    pub fn generate(&self, _prompt: &str) -> Result<String, HdcError> {
         if !self.is_available() {
             return Err(HdcError::LogicFault {
                 reason: format!(

@@ -90,6 +90,7 @@ pub struct NotificationEngine {
     /// Maximum queue size.
     max_queue: usize,
     /// Response timeout before escalating to next channel.
+    #[allow(dead_code)]
     escalation_timeout: Duration,
     /// Statistics.
     pub stats: NotificationStats,

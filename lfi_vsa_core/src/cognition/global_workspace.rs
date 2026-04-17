@@ -23,7 +23,6 @@
 //! - If one module dominates salience, other modules are starved
 
 use crate::hdc::vector::BipolarVector;
-use crate::hdc::error::HdcError;
 
 /// A workspace entry submitted by a cognitive module.
 #[derive(Debug, Clone)]

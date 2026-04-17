@@ -224,6 +224,9 @@ const SovereignCommandConsole: React.FC = () => {
   // is reading history; we surface a "scroll to bottom" affordance.
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const chatViewRef = useRef<ChatViewHandle>(null);
+  // Index of the topmost-visible message in Virtuoso. Drives the floating
+  // day-header pinned at the top of the chat pane.
+  const [chatTopIndex, setChatTopIndex] = useState(0);
   // In-conversation message search (Cmd+Shift+F). When non-empty, the chat
   // list renders only matching messages.
   const [chatSearch, setChatSearch] = useState<string>('');
@@ -1495,6 +1498,11 @@ ${cmdList}
     setInput('');
     // Trigger send-pulse feedback animation.
     setSendPulseId(id => id + 1);
+    // User's own send means they want to see their message regardless of
+    // where they were scrolled. Virtuoso's followOutput auto-follows only
+    // when already at bottom, so this forces a snap-to-end for the sender's
+    // own turn. (Assistant streaming chunks still respect at-bottom.)
+    setTimeout(() => chatViewRef.current?.scrollToBottom(), 0);
     // Clear the persisted draft on the active conversation so a switch + come-back
     // doesn't re-hydrate the text we just sent.
     if (currentConversationId) {
@@ -3217,6 +3225,36 @@ ${cmdList}
               </svg>
             </button>
           )}
+          {/* Floating day-header — pinned to the top of the chat pane;
+              shows the day of the topmost visible message. Only rendered
+              when we have >0 messages and the topmost isn't the first (so
+              it doesn't duplicate the inline "Today" separator). */}
+          {(() => {
+            const visible = chatSearch ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())) : messages;
+            if (visible.length === 0) return null;
+            const msg = visible[Math.min(chatTopIndex, visible.length - 1)];
+            if (!msg) return null;
+            // Hide when at the very top — the inline separator already
+            // shows the day for the first batch.
+            if (chatTopIndex <= 1) return null;
+            return (
+              <div aria-hidden='true'
+                style={{
+                  position: 'absolute', top: '8px', left: '50%',
+                  transform: 'translateX(-50%)',
+                  zIndex: T.z.sticky, pointerEvents: 'none',
+                  padding: '4px 12px', borderRadius: '999px',
+                  background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+                  boxShadow: T.shadows.cardLight,
+                  fontSize: '11px', fontWeight: T.typography.weightBold,
+                  color: C.textSecondary, textTransform: 'uppercase',
+                  letterSpacing: T.typography.trackingLoose,
+                  fontFamily: 'inherit',
+                }}>
+                {formatDayBucket(msg.timestamp)}
+              </div>
+            );
+          })()}
           <ChatView
             ref={chatViewRef}
             messages={chatSearch ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())) : messages}
@@ -3224,6 +3262,7 @@ ${cmdList}
             chatPadding={chatPadding}
             isDesktop={isDesktop}
             onAtBottomChange={setChatAtBottom}
+            onVisibleRangeChange={(start) => setChatTopIndex(start)}
             renderEmpty={() => (
               <WelcomeScreen
                 C={C} isDesktop={isDesktop}

@@ -23,11 +23,14 @@ export interface ChatViewProps<T extends { id: number | string }> {
   // Notified whenever the at-bottom state changes. Parent uses this to render
   // a floating "scroll to bottom" affordance when the user has scrolled up.
   onAtBottomChange?: (atBottom: boolean) => void;
+  // Reports the current topmost-visible item index so a parent can render
+  // a sticky "day header" outside Virtuoso's absolutely-positioned list.
+  onVisibleRangeChange?: (startIdx: number, endIdx: number) => void;
   WebkitOverflowScrolling?: 'touch' | 'auto';
 }
 
 function ChatViewInner<T extends { id: number | string }>(
-  { messages, renderMessage, renderEmpty, renderFooter, chatMaxWidth, chatPadding, isDesktop, onAtBottomChange }: ChatViewProps<T>,
+  { messages, renderMessage, renderEmpty, renderFooter, chatMaxWidth, chatPadding, isDesktop, onAtBottomChange, onVisibleRangeChange }: ChatViewProps<T>,
   ref: React.ForwardedRef<ChatViewHandle>,
 ) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -66,6 +69,7 @@ function ChatViewInner<T extends { id: number | string }>(
       // On initial mount + conversation switch, render the last message.
       initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : 0}
       atBottomStateChange={onAtBottomChange}
+      rangeChanged={onVisibleRangeChange ? (r) => onVisibleRangeChange(r.startIndex, r.endIndex) : undefined}
       computeItemKey={(_i, m) => String(m.id)}
       // Increase overscan so heights are pre-computed off-screen — reduces
       // mid-scroll height-correction jumps when the user scrolls fast.

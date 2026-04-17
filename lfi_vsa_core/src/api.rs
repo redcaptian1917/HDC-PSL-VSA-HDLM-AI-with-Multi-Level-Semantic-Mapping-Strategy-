@@ -396,7 +396,7 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
 
                             payload
                         }
-                        Err(e) => {
+                        Err(_e) => {
                             json!({
                                 "type": "chat_error",
                                 // SECURITY: scrub internal error details
@@ -607,7 +607,7 @@ async fn search_handler(
                 "best_summary": response.best_summary,
             }))
         }
-        Err(e) => {
+        Err(_e) => {
             Json(json!({ "error": "An internal error occurred.".to_string() }))
         }
     }
@@ -1096,7 +1096,7 @@ async fn research_handler(
                     "citation_index": i + 1,
                 }));
             }
-            Err(e) => {
+            Err(_e) => {
                 all_sources.push(json!({
                     "query": query,
                     "error": "An internal error occurred.".to_string(),
@@ -1270,7 +1270,6 @@ async fn system_screenshot_handler(
         Ok(o) if o.status.success() => {
             match std::fs::read(path) {
                 Ok(bytes) => {
-                    use std::io::Write;
                     let b64 = {
                         // Manual base64 encode — minimal, no extra dep
                         const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -2324,8 +2323,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             let quality_component = avg_quality * 30.0; // 0-30 pts (0.74 → 22.2)
             let pass_rate_component = (pass_rate / 100.0 * 25.0).min(25.0); // 0-25 pts
             let coverage_component = (total_sources as f64 / 200.0 * 20.0).min(20.0); // 0-20 pts
-            let training_component = ((training_sessions as f64 / 20.0 * 10.0).min(10.0)
-                + (learning_signals as f64 / 50.0 * 5.0).min(5.0)); // 0-15 pts
+            let training_component = (training_sessions as f64 / 20.0 * 10.0).min(10.0)
+                + (learning_signals as f64 / 50.0 * 5.0).min(5.0); // 0-15 pts
             let adversarial_component = (adversarial as f64 / 100_000.0 * 10.0).min(10.0); // 0-10 pts
             quality_component + pass_rate_component + coverage_component + training_component + adversarial_component
         } else { 0.0 };
@@ -2574,7 +2573,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             let q = avg_quality * 30.0;
             let p = (pass_rate / 100.0 * 25.0).min(25.0);
             let c = (sources as f64 / 200.0 * 20.0).min(20.0);
-            let t = ((training_sessions as f64 / 20.0 * 10.0).min(10.0) + (learning_signals as f64 / 50.0 * 5.0).min(5.0));
+            let t = (training_sessions as f64 / 20.0 * 10.0).min(10.0) + (learning_signals as f64 / 50.0 * 5.0).min(5.0);
             let a = (conn.query_row("SELECT count(*) FROM facts WHERE source IN ('adversarial','anli_r1','anli_r2','anli_r3','fever_gold','truthfulqa')", [], |r| r.get::<_,i64>(0)).unwrap_or(0) as f64 / 100_000.0 * 10.0).min(10.0);
             q + p + c + t + a
         };
