@@ -11,3 +11,4 @@
 
 pub mod minhash;
 pub mod bloom;
+pub mod temporal;

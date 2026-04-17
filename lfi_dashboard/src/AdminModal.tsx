@@ -169,6 +169,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // ---- Tables: shared sort + filter state ----
   const [domainSort, setDomainSort] = useState<{ key: keyof DomainRow; dir: 'asc' | 'desc' }>({ key: 'facts', dir: 'desc' });
   const [domainFilter, setDomainFilter] = useState('');
+  const [logFilter, setLogFilter] = useState('');
   const filteredDomains = useMemo(() => {
     if (!domains) return [];
     const q = domainFilter.trim().toLowerCase();
@@ -702,37 +703,60 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               )}
               {/* Client-side event log (fallback / supplement) */}
-              {localEvents && localEvents.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '6px' }}>
-                    Client events ({localEvents.length}, this session)
-                  </div>
-                  <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden', maxHeight: '45vh', overflowY: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                      <thead>
-                        <tr>
-                          <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Time</th>
-                          <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Kind</th>
-                          <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Data</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...localEvents].reverse().slice(0, 200).map((e, i) => (
-                          <tr key={i}>
-                            <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
-                              {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                            </td>
-                            <td style={{ padding: '6px 12px', color: C.accent, fontFamily: 'ui-monospace, monospace' }}>{e.kind}</td>
-                            <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {e.data ? JSON.stringify(e.data) : ''}
-                            </td>
+              {localEvents && localEvents.length > 0 && (() => {
+                const q = logFilter.trim().toLowerCase();
+                const filtered = [...localEvents].reverse().filter(e =>
+                  !q || e.kind.toLowerCase().includes(q) || (e.data && JSON.stringify(e.data).toLowerCase().includes(q))
+                );
+                return (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.md, marginBottom: '6px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+                        Client events ({filtered.length} of {localEvents.length}, this session)
+                      </div>
+                      <input
+                        type='search' value={logFilter} onChange={e => setLogFilter(e.target.value)}
+                        placeholder='Filter kind or data…'
+                        autoComplete='off' spellCheck={false}
+                        aria-label='Filter client events'
+                        style={{
+                          minWidth: '220px', padding: '6px 10px',
+                          background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                          borderRadius: T.radii.sm, color: C.text, fontFamily: 'inherit',
+                          fontSize: '12px', outline: 'none',
+                        }}
+                      />
+                    </div>
+                    <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden', maxHeight: '45vh', overflowY: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Time</th>
+                            <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Kind</th>
+                            <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Data</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {filtered.slice(0, 200).map((e, i) => (
+                            <tr key={i}>
+                              <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                                {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </td>
+                              <td style={{ padding: '6px 12px', color: C.accent, fontFamily: 'ui-monospace, monospace' }}>{e.kind}</td>
+                              <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {e.data ? JSON.stringify(e.data) : ''}
+                              </td>
+                            </tr>
+                          ))}
+                          {filtered.length === 0 && (
+                            <tr><td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: C.textMuted, fontStyle: 'italic' }}>No events match.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
         </div>
