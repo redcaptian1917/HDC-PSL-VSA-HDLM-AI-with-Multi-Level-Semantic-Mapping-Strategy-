@@ -73,11 +73,32 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ lang, code, C, themeKey, onCopy, 
             textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
           }}>Copy</button>
       </div>
-      <pre style={{
-        margin: 0, padding: `${T.spacing.md} ${T.spacing.lg}`,
-        fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12.5px', lineHeight: T.typography.lineNormal,
-        color: C.text, whiteSpace: 'pre', overflowX: 'auto',
-      }} dangerouslySetInnerHTML={{ __html: html }} />
+      {/* c2-355 / task 74: line-number gutter. Two-column table layout so the
+          gutter scrolls with the content horizontally (no visual drift on
+          wide lines) but stays fixed-width (36px + 12px padding) on the
+          left. userSelect: none so Copy doesn't include the numbers. We
+          don't re-highlight here; the hljs HTML remains untouched. Line
+          count is derived from the raw code so non-printable trailing
+          content is counted correctly. */}
+      <div style={{
+        display: 'flex',
+        fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12.5px',
+        lineHeight: T.typography.lineNormal,
+      }}>
+        <div aria-hidden='true' style={{
+          width: '36px', padding: `${T.spacing.md} 12px ${T.spacing.md} 0`,
+          color: C.textDim, textAlign: 'right', userSelect: 'none',
+          whiteSpace: 'pre', flexShrink: 0,
+          borderRight: `1px solid ${C.borderSubtle}`,
+        }}>
+          {Array.from({ length: Math.max(1, code.split('\n').length - (code.endsWith('\n') ? 1 : 0)) },
+            (_, n) => String(n + 1)).join('\n')}
+        </div>
+        <pre style={{
+          margin: 0, padding: `${T.spacing.md} ${T.spacing.lg}`,
+          color: C.text, whiteSpace: 'pre', overflowX: 'auto', flex: 1,
+        }} dangerouslySetInnerHTML={{ __html: html }} />
+      </div>
     </div>
   );
 };

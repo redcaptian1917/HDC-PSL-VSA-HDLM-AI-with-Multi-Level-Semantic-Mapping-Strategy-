@@ -24,6 +24,10 @@ const LANG_LOADERS: Record<string, { names: string[]; load: () => Promise<{ defa
   css:        { names: ['css'],                 load: () => import('highlight.js/lib/languages/css') },
   xml:        { names: ['xml', 'html'],         load: () => import('highlight.js/lib/languages/xml') },
   go:         { names: ['go', 'golang'],        load: () => import('highlight.js/lib/languages/go') },
+  // c2-355 / task 75: TOML + YAML grammars. Both show up in infra + CI
+  // configs so users paste them often; each lazy-loads on first use.
+  toml:       { names: ['toml'],                load: () => import('highlight.js/lib/languages/ini') },
+  yaml:       { names: ['yaml', 'yml'],         load: () => import('highlight.js/lib/languages/yaml') },
 };
 
 // alias → canonical key. Built once so the tag-to-loader lookup is O(1).
