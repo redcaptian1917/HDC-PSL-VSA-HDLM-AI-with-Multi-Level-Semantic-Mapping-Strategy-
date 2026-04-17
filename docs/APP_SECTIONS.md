@@ -1,70 +1,65 @@
 # PlausiDen AI — Application Sections
 
-## Core (v1)
-1. **Chat** — AI conversation interface
-2. **Classroom** — Training, data, evaluation, feedback (LMS)
-3. **Admin** — System config, server stats, user management
+## Naming: The Campus
 
-## Knowledge (v2)
-4. **Knowledge Graph** — Visual explorer of the 57M fact database
-   - Interactive graph visualization (d3.js or cytoscape)
-   - Search across all facts by keyword, domain, source
-   - Fact detail view: key, value, quality, source, provenance
-   - Domain heatmap: which domains are strong vs weak
-   - Fact editor: correct/update/delete facts manually
+| Section | Name | What it is |
+|---------|------|------------|
+| Chat | **Agora** | Idea exchange, conversation with AI |
+| Training | **Classroom** | Training data, evaluation, feedback (LMS) |
+| Audits | **Auditorium** | All audit types, compliance, reviews |
+| AI Fleet | **Fleet** | Agent orchestration, task queue, idle detection |
+| Secrets | **Vault** | PlausiDen-Vault integrated — credential capabilities, policies, audit |
+| Facts | **Library** | Knowledge graph, fact browser, search |
+| Admin | **Admin** | System config, server stats, user management |
+| Research | **Research Lab** | Causal reasoning, provenance, hypothesis testing |
+| Security | **Security Center** | Pineapple captures, adversary detection, MITRE |
+| Automation | **Workflows** | Task scheduling, recurring operations |
+| Network | **Mesh** | P2P nodes, EigenTrust, knowledge exchange |
+| User | **Profile** | Identity, preferences, connected devices |
 
-5. **Research Lab** — Deep investigation tools
-   - Causal reasoning queries (from causal.rs)
-   - "Why does X cause Y?" with derivation traces
-   - Provenance explorer: trace any conclusion back to source facts
-   - Hypothesis testing: "What would happen if..."
-   - Web research: AI searches the web and reports findings
+## Vault Disambiguation
 
-## Security (v3)
-6. **Security Center** — Defensive AI dashboard
-   - WiFi Pineapple capture sessions (tier 1/2/3)
-   - Adversary detection alerts
-   - Network monitoring (if Pineapple connected)
-   - Vulnerability scan results
-   - MITRE ATT&CK mapping of detected threats
+**The Vault section in this app IS PlausiDen-Vault** (repo: thepictishbeast/PlausiDen-Vault).
+Same project, integrated as a UI page. Enhanced with the confidentiality kernel's
+Sealed<T> capability system from LFI-CONFIDENTIALITY-KERNEL-DESIGN.md.
 
-7. **Vault** — Secret management (from confidentiality kernel)
-   - Stored capabilities (SSH, API keys, etc.)
-   - Policy management (consent levels, use counts)
-   - Audit log viewer
-   - Secret rotation status
+This is DIFFERENT from:
+- **Vault PD** in PlausiDen-OS-for-Mobile — deniable encrypted storage on seL4 phone
+- Generic "vault" references — always means PlausiDen-Vault unless PD specified
 
-## Automation (v4)
-8. **Workflows** — Task automation
-   - Define recurring tasks (data ingestion, backups, scans)
-   - Cron-like scheduler with visual editor
-   - Workflow execution history
-   - Notifications and alerts
+## Build Phases
 
-9. **Mesh** — Peer network
-   - Connected PlausiDen nodes
-   - EigenTrust scores
-   - Knowledge exchange status
-   - Peer capabilities and facts shared
+### v1 (current sprint)
+- Agora (Chat) ✓ working
+- Classroom — in progress (ClassroomView.tsx created)
+- Admin — in progress (AdminModal.tsx, dashboard endpoint)
+- Fleet — orchestrator running on :3001
 
-## Personal (v5)
-10. **Profile** — User identity and preferences
-    - Name, role, preferences
-    - Theme settings
-    - API key management
-    - Connected devices
-    - Data export/import
+### v2 (next sprint)
+- Library (Knowledge Graph)
+- Research Lab
+- Auditorium
+- Vault (PlausiDen-Vault integration)
 
-## Audit & Compliance (v2)
-11. **Auditorium** — Central hub for ALL audits
-    - Security audits (AVP-2 tier 1-6 results)
-    - Code audits (unwrap count, test coverage, mutation testing)
-    - Data quality audits (dedup rates, contamination, quality distribution)
-    - Compliance audits (GDPR, HIPAA, SOX, PCI-DSS status)
-    - Network audits (Pineapple captures, adversary tier detection)
-    - Performance audits (response times, throughput, resource usage)
-    - Training audits (data quality, model accuracy, regression detection)
-    - Dependency audits (cargo audit, supply chain, CVE status)
-    - Each audit type has: history, trends, pass/fail, findings, remediation tracking
-    - Part of the orchestration platform — audits can be scheduled, auto-run, assigned to agents
-    - Dashboard view: audit calendar, compliance scorecard, open findings count
+### v3 (future)
+- Security Center
+- Workflows
+- Mesh
+- Profile
+
+### Overlays (all phases)
+- AI Visual Presence (second cursor, activity indicators)
+- In-app terminal (xterm.js)
+- Notifications + toasts
+
+## Audit & Compliance (Auditorium detail)
+- Security audits (AVP-2 tier 1-6 results)
+- Code audits (unwrap count, test coverage, mutation testing)
+- Data quality audits (dedup rates, contamination, quality distribution)
+- Compliance audits (GDPR, HIPAA, SOX, PCI-DSS status)
+- Network audits (Pineapple captures, adversary tier detection)
+- Performance audits (response times, throughput, resource usage)
+- Training audits (data quality, model accuracy, regression detection)
+- Dependency audits (cargo audit, supply chain, CVE status)
+- Each audit: history, trends, pass/fail, findings, remediation tracking
+- Part of orchestration platform — audits auto-scheduled, assigned to agents
