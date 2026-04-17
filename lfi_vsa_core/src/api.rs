@@ -432,8 +432,8 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     // SECURITY: Build JSON body via serde, pipe via stdin — never interpolate user input into args
                     // AVP-PASS-13: 2026-04-16 command injection fix — user input was previously format!()-interpolated into curl -d arg
                     let ollama_body = serde_json::json!({
-                        "model": "qwen2.5-coder:7b",
-                        "prompt": format!("You are a helpful AI. Answer thoroughly but concisely. Question: {}", input),
+                        "model": std::env::var("PLAUSIDEN_MODEL").unwrap_or_else(|_| "qwen2.5-coder:7b".into()),
+                        "prompt": format!("You are PlausiDen AI. Answer thoroughly but concisely. Question: {}", input),
                         "stream": true,
                         "options": { "temperature": 0.4, "num_predict": 500 }
                     });

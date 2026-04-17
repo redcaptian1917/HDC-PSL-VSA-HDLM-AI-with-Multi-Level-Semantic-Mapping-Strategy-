@@ -1142,7 +1142,7 @@ impl CognitiveCore {
 
         // Build request body with proper JSON serialization — no manual escaping
         let request_body = serde_json::json!({
-            "model": "qwen2.5-coder:7b",
+            "model": std::env::var("PLAUSIDEN_MODEL").unwrap_or_else(|_| "qwen2.5-coder:7b".into()),
             "prompt": full_prompt,
             "stream": false,
             "options": {
