@@ -209,7 +209,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         border: `1px solid ${C.accentBorder}`,
       }}>
         {msg.content}
-        <div style={{ fontSize: '10px', color: C.textMuted, marginTop: '6px', textAlign: 'right' }}>
+        <div title={new Date(msg.timestamp).toLocaleString()}
+          style={{ fontSize: '10px', color: C.textMuted, marginTop: '6px', textAlign: 'right' }}>
           {formatTime(msg.timestamp)}
         </div>
       </div>
@@ -399,10 +400,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               </span>
             );
           })()}
-          <span style={{
-            fontSize: '10px', color: C.textDim, alignSelf: 'center',
-            padding: '0 8px',
-          }}>{formatTime(msg.timestamp)}</span>
+          <span title={new Date(msg.timestamp).toLocaleString()}
+            style={{
+              fontSize: '10px', color: C.textDim, alignSelf: 'center',
+              padding: '0 8px',
+            }}>{formatTime(msg.timestamp)}</span>
         </div>
         {/* Last-message helpfulness nudge — only on the latest assistant reply,
             fades to invisibility once user votes (tracked via onFeedbackPositive/

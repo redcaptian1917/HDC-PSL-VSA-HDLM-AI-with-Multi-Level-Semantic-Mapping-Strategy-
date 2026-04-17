@@ -1,5 +1,12 @@
 import React from 'react';
 import { compactNum, formatRelative } from './util';
+import { T } from './tokens';
+
+// c2-240 / #20: typography weights, tracking, and the most repeated radii
+// migrated to tokens.ts. Card padding stays in px — the 14/10/8 cascade is
+// used as an information-density tell, not a generic spacing scale, so
+// snapping to the 4/8 grid would flatten the hierarchy. Keeping literals here
+// is deliberate (AVP-2 §30 allows off-grid values when they encode meaning).
 
 // Animated shimmer placeholder used while a fetch is in flight. Relies on the
 // `@keyframes lfi-shimmer` defined in App.tsx's global <style> block.
@@ -152,7 +159,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
       <div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
           {[0, 1, 2].map(i => (
-            <div key={i} style={{ padding: '14px', background: C.bgInput, border: `1px solid ${C.borderSubtle}`, borderRadius: '10px' }}>
+            <div key={i} style={{ padding: '14px', background: C.bgInput, border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.xl }}>
               <Skeleton w={80} h={24} style={{ margin: '0 auto 8px' }} />
               <Skeleton w={96} h={10} style={{ margin: '0 auto' }} />
             </div>
@@ -160,7 +167,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '20px' }}>
           {[0, 1, 2, 3].map(i => (
-            <div key={i} style={{ padding: '14px', background: C.bgInput, border: `1px solid ${C.borderSubtle}`, borderRadius: '10px' }}>
+            <div key={i} style={{ padding: '14px', background: C.bgInput, border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.xl }}>
               <Skeleton w={64} h={20} style={{ margin: '0 auto 6px' }} />
               <Skeleton w={88} h={8} style={{ margin: '0 auto 4px' }} />
               <Skeleton w={72} h={6} style={{ margin: '0 auto' }} />
@@ -169,7 +176,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           {[0, 1, 2, 3, 4, 5].map(i => (
-            <div key={i} style={{ padding: '8px 14px', background: C.bgInput, borderRadius: '8px', border: `1px solid ${C.borderSubtle}` }}>
+            <div key={i} style={{ padding: '8px 14px', background: C.bgInput, borderRadius: T.radii.lg, border: `1px solid ${C.borderSubtle}` }}>
               <Skeleton h={14} />
             </div>
           ))}
@@ -184,7 +191,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
         <div style={{ fontSize: '12px', color: C.textDim }}>Backend may be restarting or the DB is in a write-lock window.</div>
         <button onClick={refetch} style={{
           marginTop: '12px', padding: '6px 14px', background: C.bgInput,
-          border: `1px solid ${C.borderSubtle}`, borderRadius: '6px', color: C.text,
+          border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, color: C.text,
           fontSize: '12px', cursor: 'pointer',
         }}>Retry now</button>
       </div>
@@ -198,7 +205,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
           signal so the dashboard feels alive even when the other counters haven't moved. */}
       {lastCycle && (
         <div style={{
-          padding: '10px 14px', marginBottom: '14px', borderRadius: '8px',
+          padding: '10px 14px', marginBottom: '14px', borderRadius: T.radii.lg,
           background: lastCycle.ageSec < 300 ? C.greenBg : C.bgInput,
           border: `1px solid ${lastCycle.ageSec < 300 ? C.greenBorder : C.borderSubtle}`,
           display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px',
@@ -210,9 +217,9 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
               background: lastCycle.ageSec < 300 ? C.green : C.textDim,
             }}
           />
-          <span style={{ color: C.textMuted, fontWeight: 600 }}>Most recent cycle</span>
+          <span style={{ color: C.textMuted, fontWeight: T.typography.weightSemibold }}>Most recent cycle</span>
           <span style={{ color: C.text }}>#{lastCycle.cycle}</span>
-          <span style={{ color: C.accent, fontWeight: 600 }}>{lastCycle.domain}</span>
+          <span style={{ color: C.accent, fontWeight: T.typography.weightSemibold }}>{lastCycle.domain}</span>
           <span style={{ color: C.textMuted }}>{lastCycle.state}</span>
           <span style={{ marginLeft: 'auto', color: C.textDim, fontSize: '11px' }}>{formatRelative(lastCycle.ts)}</span>
         </div>
@@ -220,16 +227,16 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
 
       {/* Summary cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
-        <div style={{ padding: '14px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: '10px', textAlign: 'center' }}>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: C.accent }}>{compactNum(totalFacts)}</div>
-          <div style={{ fontSize: '11px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '4px' }}>Facts in DB</div>
+        <div style={{ padding: '14px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.xl, textAlign: 'center' }}>
+          <div style={{ fontSize: '24px', fontWeight: T.typography.weightBlack, color: C.accent }}>{compactNum(totalFacts)}</div>
+          <div style={{ fontSize: '11px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginTop: '4px' }}>Facts in DB</div>
         </div>
-        <div style={{ padding: '14px', background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: '10px', textAlign: 'center' }}>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: C.green }}>{domains?.length ?? domainStateEntries.length ?? '—'}</div>
-          <div style={{ fontSize: '11px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '4px' }}>Domains</div>
+        <div style={{ padding: '14px', background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: T.radii.xl, textAlign: 'center' }}>
+          <div style={{ fontSize: '24px', fontWeight: T.typography.weightBlack, color: C.green }}>{domains?.length ?? domainStateEntries.length ?? '—'}</div>
+          <div style={{ fontSize: '11px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginTop: '4px' }}>Domains</div>
         </div>
-        <div style={{ padding: '14px', background: trainerActive ? C.greenBg : C.redBg, border: `1px solid ${trainerActive ? C.greenBorder : C.redBorder}`, borderRadius: '10px', textAlign: 'center' }}>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: trainerActive ? C.green : C.red, lineHeight: 1 }}>
+        <div style={{ padding: '14px', background: trainerActive ? C.greenBg : C.redBg, border: `1px solid ${trainerActive ? C.greenBorder : C.redBorder}`, borderRadius: T.radii.xl, textAlign: 'center' }}>
+          <div style={{ fontSize: '24px', fontWeight: T.typography.weightBlack, color: trainerActive ? C.green : C.red, lineHeight: 1 }}>
             <span
               className={trainerActive ? 'lfi-trainer-pulse' : undefined}
               style={{
@@ -240,7 +247,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
               }}
             />
           </div>
-          <div style={{ fontSize: '11px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '6px' }}>
+          <div style={{ fontSize: '11px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginTop: '6px' }}>
             {trainerActive ? 'Trainer Active' : 'Trainer Idle'}
           </div>
           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', marginTop: '8px' }}>
@@ -249,12 +256,12 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
               disabled={control.busy !== null || trainerActive}
               aria-label='Start training'
               style={{
-                flex: 1, padding: '5px 8px', fontSize: '10px', fontWeight: 700,
+                flex: 1, padding: '5px 8px', fontSize: '10px', fontWeight: T.typography.weightBold,
                 textTransform: 'uppercase', letterSpacing: '0.06em',
                 color: trainerActive ? C.textDim : C.green,
                 background: trainerActive ? 'transparent' : C.greenBg,
                 border: `1px solid ${trainerActive ? C.borderSubtle : C.greenBorder}`,
-                borderRadius: '6px',
+                borderRadius: T.radii.md,
                 cursor: (control.busy !== null || trainerActive) ? 'not-allowed' : 'pointer',
                 opacity: control.busy === 'start' ? 0.55 : 1,
               }}
@@ -264,12 +271,12 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
               disabled={control.busy !== null || !trainerActive}
               aria-label='Stop training'
               style={{
-                flex: 1, padding: '5px 8px', fontSize: '10px', fontWeight: 700,
+                flex: 1, padding: '5px 8px', fontSize: '10px', fontWeight: T.typography.weightBold,
                 textTransform: 'uppercase', letterSpacing: '0.06em',
                 color: !trainerActive ? C.textDim : C.red,
                 background: !trainerActive ? 'transparent' : C.redBg,
                 border: `1px solid ${!trainerActive ? C.borderSubtle : C.redBorder}`,
-                borderRadius: '6px',
+                borderRadius: T.radii.md,
                 cursor: (control.busy !== null || !trainerActive) ? 'not-allowed' : 'pointer',
                 opacity: control.busy === 'stop' ? 0.55 : 1,
               }}
@@ -287,11 +294,11 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
 
       {/* Quality & Security metrics row — all values live from /api/admin/training/accuracy */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '20px' }}>
-        <div style={{ padding: '14px', background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: '10px', textAlign: 'center' }}>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: C.green }}>
+        <div style={{ padding: '14px', background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: T.radii.xl, textAlign: 'center' }}>
+          <div style={{ fontSize: '20px', fontWeight: T.typography.weightBlack, color: C.green }}>
             {passRatePct != null ? `${passRatePct.toFixed(1)}%` : '—'}
           </div>
-          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '4px' }}>PSL Pass Rate</div>
+          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginTop: '4px' }}>PSL Pass Rate</div>
           <div style={{ fontSize: '9px', color: C.textDim, marginTop: '2px' }}>
             {psl?.target ? `Target: ${psl.target}` : 'Target: 95-98%'}
           </div>
@@ -306,21 +313,21 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
             />
           </div>
         </div>
-        <div style={{ padding: '14px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: '10px', textAlign: 'center' }}>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: C.accent }}>{compactNum(adversarialFacts)}</div>
-          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '4px' }}>Adversarial Facts</div>
+        <div style={{ padding: '14px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.xl, textAlign: 'center' }}>
+          <div style={{ fontSize: '20px', fontWeight: T.typography.weightBlack, color: C.accent }}>{compactNum(adversarialFacts)}</div>
+          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginTop: '4px' }}>Adversarial Facts</div>
           <div style={{ fontSize: '9px', color: C.textDim, marginTop: '2px' }}>ANLI + FEVER + TruthfulQA</div>
         </div>
-        <div style={{ padding: '14px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: '10px', textAlign: 'center' }}>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: C.accent }}>{compactNum(reasoningChains)}</div>
-          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '4px' }}>Reasoning Chains</div>
+        <div style={{ padding: '14px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.xl, textAlign: 'center' }}>
+          <div style={{ fontSize: '20px', fontWeight: T.typography.weightBlack, color: C.accent }}>{compactNum(reasoningChains)}</div>
+          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginTop: '4px' }}>Reasoning Chains</div>
           <div style={{ fontSize: '9px', color: C.textDim, marginTop: '2px' }}>Self-play + teacher</div>
         </div>
-        <div style={{ padding: '14px', background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: '10px', textAlign: 'center' }}>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: C.green }}>
+        <div style={{ padding: '14px', background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: T.radii.xl, textAlign: 'center' }}>
+          <div style={{ fontSize: '20px', fontWeight: T.typography.weightBlack, color: C.green }}>
             {accuracy?.learning_signals != null ? compactNum(accuracy.learning_signals) : '—'}
           </div>
-          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: '4px' }}>Learning Signals</div>
+          <div style={{ fontSize: '10px', color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginTop: '4px' }}>Learning Signals</div>
           <div style={{ fontSize: '9px', color: C.textDim, marginTop: '2px' }}>Corrections + gaps + PSL</div>
         </div>
       </div>
@@ -338,7 +345,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
         return (
           <div style={{ marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em' }}>
+              <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em' }}>
                 Per-Domain Coverage ({domains.length})
               </div>
               <div style={{ fontSize: '9px', color: C.textDim }}>bar width = fact share · tint = quality</div>
@@ -351,7 +358,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
                 return (
                   <div key={d.domain} style={{
                     position: 'relative',
-                    padding: '8px 14px', background: C.bgInput, borderRadius: '8px',
+                    padding: '8px 14px', background: C.bgInput, borderRadius: T.radii.lg,
                     border: `1px solid ${recent ? C.greenBorder : C.borderSubtle}`,
                     overflow: 'hidden',
                   }}>
@@ -364,7 +371,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
                       }}
                     />
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px' }}>
-                      <span style={{ fontWeight: 600, color: C.text, minWidth: '110px' }}>{d.domain}</span>
+                      <span style={{ fontWeight: T.typography.weightSemibold, color: C.text, minWidth: '110px' }}>{d.domain}</span>
                       <span style={{ color: C.textMuted }}>{compactNum(d.fact_count)} facts</span>
                       {d.avg_quality != null && (
                         <span style={{ color: C.textMuted }}>q={d.avg_quality.toFixed(2)}</span>
@@ -374,7 +381,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
                       )}
                       <div style={{ flex: 1 }} />
                       {recent && (
-                        <span style={{ fontSize: '9px', color: C.green, fontWeight: 700, letterSpacing: '0.08em' }}>LIVE</span>
+                        <span style={{ fontSize: '9px', color: C.green, fontWeight: T.typography.weightBold, letterSpacing: T.typography.trackingLoose }}>LIVE</span>
                       )}
                       <span style={{ fontSize: '10px', color: C.textDim }}>
                         {st.last_trained ? new Date(st.last_trained * 1000).toLocaleTimeString() : 'never'}
@@ -391,11 +398,11 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
       {/* Recent training log (from /api/admin/training/accuracy) */}
       {Array.isArray(accuracy?.recent_training_log) && accuracy.recent_training_log.length > 0 && (
         <div>
-          <div style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em', marginBottom: '10px' }}>
+          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em', marginBottom: '10px' }}>
             Recent Training Log
           </div>
           <pre style={{
-            padding: '12px', background: C.bgInput, borderRadius: '8px',
+            padding: '12px', background: C.bgInput, borderRadius: T.radii.lg,
             fontSize: '11px', color: C.textSecondary,
             fontFamily: "'JetBrains Mono', monospace",
             whiteSpace: 'pre-wrap', maxHeight: '200px', overflowY: 'auto',
@@ -414,7 +421,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
         </span>
         <button onClick={refetch} disabled={refreshing} style={{
           padding: '4px 10px', background: 'transparent',
-          border: `1px solid ${C.borderSubtle}`, borderRadius: '6px', color: C.textMuted,
+          border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, color: C.textMuted,
           fontSize: '10px', cursor: refreshing ? 'wait' : 'pointer',
           opacity: refreshing ? 0.5 : 1,
         }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>

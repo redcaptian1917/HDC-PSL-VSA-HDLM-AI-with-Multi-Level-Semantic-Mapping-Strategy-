@@ -1250,7 +1250,7 @@ async fn system_key_handler(
     let agent = state.agent.lock();
     if !agent.authenticated { return Json(json!({ "status": "rejected", "reason": "not authenticated" })); }
     drop(agent);
-    info!("// AUDIT: desktop key '{}'", req.keys);
+    info!("// AUDIT: desktop key '{}'", crate::sanitize_for_log(&req.keys, 100));
     let out = std::process::Command::new("xdotool")
         .args(["key", "--clearmodifiers", &req.keys])
         .output();
@@ -1394,7 +1394,7 @@ async fn system_launch_handler(
         .spawn();
     match result {
         Ok(_) => {
-            info!("// AUDIT: Launched app: {}", req.app);
+            info!("// AUDIT: Launched app: {}", crate::sanitize_for_log(&req.app, 200));
             Json(json!({ "status": "ok", "launched": req.app }))
         }
         // SECURITY: Scrub launch errors
@@ -1703,10 +1703,12 @@ async fn knowledge_learn_handler(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LearnRequest>,
 ) -> impl IntoResponse {
-    if req.concept.is_empty() || req.concept.len() > 256 {
+    // SECURITY: Sanitize learn endpoint input — strip null bytes, control chars, validate UTF-8
+    let concept = req.concept.replace('\0', "").trim().to_string();
+    if concept.is_empty() || concept.len() > 256 {
         return Json(json!({
             "status": "rejected",
-            "reason": "concept must be 1..=256 bytes"
+            "reason": "concept must be 1..=256 bytes (after sanitization)"
         }));
     }
     if req.related.len() > 64 {
@@ -1714,6 +1716,15 @@ async fn knowledge_learn_handler(
             "status": "rejected",
             "reason": "related list capped at 64"
         }));
+    }
+    // Validate individual related items
+    for item in &req.related {
+        if item.len() > 256 || item.contains('\0') {
+            return Json(json!({
+                "status": "rejected",
+                "reason": "each related item must be <= 256 bytes with no null bytes"
+            }));
+        }
     }
 
     let mut agent = state.agent.lock();
@@ -1726,12 +1737,12 @@ async fn knowledge_learn_handler(
     }
 
     let related_refs: Vec<&str> = req.related.iter().map(|s| s.as_str()).collect();
-    match agent.reasoner.knowledge.learn(&req.concept, &related_refs, true) {
+    match agent.reasoner.knowledge.learn(&concept, &related_refs, true) {
         Ok(()) => {
-            let mastery = agent.reasoner.knowledge.mastery_of(&req.concept);
+            let mastery = agent.reasoner.knowledge.mastery_of(&concept);
             Json(json!({
                 "status": "ok",
-                "concept": req.concept,
+                "concept": concept,
                 "mastery": mastery,
             }))
         }
@@ -2816,5 +2827,36 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/admin/training/:action", post(admin_training_control_handler))
         .route("/api/admin/logs", get(admin_logs_handler))
         .layer(cors)
+        // SECURITY: Add security headers to all responses
+        .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(state))
+}
+
+/// SECURITY: Middleware that adds security headers to every response.
+/// - Content-Security-Policy: Prevent XSS, restrict resource loading
+/// - X-Content-Type-Options: Prevent MIME sniffing
+/// - X-Frame-Options: Prevent clickjacking
+/// - Referrer-Policy: Limit information in Referer header
+/// - Permissions-Policy: Restrict browser feature access
+async fn security_headers_middleware(
+    request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::HeaderValue;
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+
+    if let Ok(v) = HeaderValue::from_str("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self'; frame-ancestors 'none'") {
+        headers.insert("content-security-policy", v);
+    }
+    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    if let Ok(v) = HeaderValue::from_str("strict-origin-when-cross-origin") {
+        headers.insert("referrer-policy", v);
+    }
+    if let Ok(v) = HeaderValue::from_str("camera=(), microphone=(), geolocation=(), payment=()") {
+        headers.insert("permissions-policy", v);
+    }
+
+    response
 }

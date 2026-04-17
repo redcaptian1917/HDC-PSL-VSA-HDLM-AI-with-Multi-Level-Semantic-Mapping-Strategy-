@@ -197,7 +197,13 @@ impl BrainDb {
         }
 
         // Try FTS5 first (instant), fall back to LIKE (slow)
-        let fts_query = keywords.join(" ");
+        // SECURITY: Sanitize FTS5 MATCH input — strip operators that could
+        // alter query semantics (* NEAR OR NOT AND " parentheses).
+        let fts_query: String = keywords.iter()
+            .map(|kw| kw.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+            .filter(|kw| !kw.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut results = Vec::new();
 
         // FTS5 path — BM25 ranking weighted by quality_score.

@@ -11,7 +11,19 @@ export interface CmdPaletteItem {
   hint: string;
   group: string;
   onRun: () => void;
+  // c2-243 / #104: optional keyboard hint. Use '$mod' as a placeholder for
+  // the platform modifier ('⌘' on mac, 'Ctrl' elsewhere) and '+' as the
+  // separator, e.g. '$mod+N', '$mod+Shift+D'. Single-key hints like '?' pass
+  // through verbatim.
+  shortcut?: string;
 }
+
+// mac vs rest — checked once at module load. navigator.platform is
+// deprecated but still reliable enough for this cosmetic choice, and
+// userAgentData isn't universally available yet.
+const IS_MAC = typeof navigator !== 'undefined'
+  && /Mac|iPhone|iPad|iPod/.test(navigator.platform || '');
+const formatShortcut = (s: string): string => s.replace(/\$mod/g, IS_MAC ? '\u2318' : 'Ctrl');
 
 export interface CommandPaletteProps {
   C: any;
@@ -139,11 +151,23 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       {it.hint}
                     </div>
                   </div>
-                  {picked && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: '10px' }}>
-                      <polyline points="9 18 15 12 9 6"/>
-                    </svg>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '10px', flexShrink: 0 }}>
+                    {it.shortcut && (
+                      <kbd style={{
+                        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                        fontSize: '10.5px', color: picked ? C.accent : C.textMuted,
+                        background: picked ? 'transparent' : C.bgInput,
+                        border: `1px solid ${picked ? C.accentBorder : C.borderSubtle}`,
+                        borderRadius: T.radii.sm, padding: '1px 6px',
+                        letterSpacing: '0.02em', whiteSpace: 'nowrap',
+                      }}>{formatShortcut(it.shortcut)}</kbd>
+                    )}
+                    {picked && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="9 18 15 12 9 6"/>
+                      </svg>
+                    )}
+                  </div>
                 </button>
               </div>
             );

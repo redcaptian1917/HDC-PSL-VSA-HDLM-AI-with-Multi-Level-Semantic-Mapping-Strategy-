@@ -1,6 +1,12 @@
 import React from 'react';
 import hljs from 'highlight.js/lib/core';
 import { canonicalLang, ensureLanguage } from './hljsLazy';
+import { T } from './tokens';
+
+// c2-240 / #20: padding/radii/font weights on tokens where they straightforwardly
+// map. Font-size literals inside renderMessageBody (0.92em on inline code,
+// 12.5px on code block) stay literal — they're tuned relative to the caller's
+// font size, not part of the generic scale.
 
 // Lightweight markdown renderer — bold/italic/code/links/lists/fenced code.
 // Previously inlined in App.tsx; extracted so the rest of the tree doesn't
@@ -50,24 +56,26 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ lang, code, C, themeKey, onCopy, 
   }, [lang, canon, code]);
   return (
     <div style={{
-      margin: '10px 0', border: `1px solid ${C.borderSubtle}`, borderRadius: '8px',
+      margin: `${T.spacing.sm} 0`, border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.lg,
       background: themeKey === 'light' ? '#f8fafd' : '#0a0b13', overflow: 'hidden',
     }}>
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '6px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
-        fontSize: '10px', color: C.textDim, textTransform: 'uppercase', letterSpacing: '0.08em',
+        padding: `${T.spacing.xs} ${T.spacing.sm}`, borderBottom: `1px solid ${C.borderSubtle}`,
+        fontSize: '10px', color: C.textDim,
+        textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
       }}>
         <span>{lang}</span>
         <button onClick={() => { onCopy?.(code); onCopyEvent?.(lang, code.length); }}
           style={{
             background: 'transparent', border: 'none', color: C.textMuted,
-            cursor: 'pointer', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em',
+            cursor: 'pointer', fontSize: '10px',
+            textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
           }}>Copy</button>
       </div>
       <pre style={{
-        margin: 0, padding: '12px 14px',
-        fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12.5px', lineHeight: '1.55',
+        margin: 0, padding: `${T.spacing.md} ${T.spacing.lg}`,
+        fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12.5px', lineHeight: T.typography.lineNormal,
         color: C.text, whiteSpace: 'pre', overflowX: 'auto',
       }} dangerouslySetInnerHTML={{ __html: html }} />
     </div>

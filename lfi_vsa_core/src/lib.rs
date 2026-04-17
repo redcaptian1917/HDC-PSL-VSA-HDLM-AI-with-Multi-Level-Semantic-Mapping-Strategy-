@@ -24,6 +24,16 @@ pub fn truncate_str(s: &str, max_chars: usize) -> &str {
     }
 }
 
+/// SECURITY: Sanitize a string for safe inclusion in log output.
+/// Strips control characters (newlines, ANSI escapes, null bytes) that could
+/// corrupt log formatting or enable log injection attacks, then truncates.
+pub fn sanitize_for_log(s: &str, max_chars: usize) -> String {
+    s.chars()
+        .filter(|c| !c.is_control() || *c == ' ')
+        .take(max_chars)
+        .collect()
+}
+
 pub mod api;
 pub mod coder;
 pub mod cognition;

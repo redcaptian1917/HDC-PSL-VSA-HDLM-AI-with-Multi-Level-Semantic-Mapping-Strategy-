@@ -1,5 +1,11 @@
 import React, { useRef, useImperativeHandle, forwardRef } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
+import { T } from './tokens';
+
+// c2-240 / #20: header/footer spacer + fallback horizontal padding now via
+// tokens. The 28/18 inter-message margin stays literal — those values were
+// design-reviewed for "bubble breathing room" and don't map cleanly to the
+// 4/8 grid.
 
 // Thin virtualized message list. Parent keeps its handler/state soup —
 // ChatView just wires Virtuoso and asks the parent to render each message
@@ -75,11 +81,11 @@ function ChatViewInner<T extends { id: number | string }>(
       // mid-scroll height-correction jumps when the user scrolls fast.
       increaseViewportBy={{ top: 400, bottom: 400 }}
       components={{
-        Header: () => <div style={{ height: isDesktop ? '24px' : '12px' }} />,
+        Header: () => <div style={{ height: isDesktop ? T.spacing.xl : T.spacing.md }} />,
         Footer: () => (
           <div style={{ maxWidth: chatMaxWidth, margin: '0 auto', padding: `0 ${chatPadding.split(' ')[1] || '16px'}` }}>
             {renderFooter?.()}
-            <div style={{ height: isDesktop ? '24px' : '12px' }} />
+            <div style={{ height: isDesktop ? T.spacing.xl : T.spacing.md }} />
           </div>
         ),
       }}

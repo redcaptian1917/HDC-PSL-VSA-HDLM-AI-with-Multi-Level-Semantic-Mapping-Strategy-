@@ -382,8 +382,15 @@ impl CodeEvaluator {
             return Err(String::from_utf8_lossy(&compile.stderr).to_string());
         }
 
-        // Execute with timeout
-        let run = std::process::Command::new(binary_path.to_str().unwrap_or(""))
+        // SECURITY: Execute with timeout via the `timeout` command to prevent
+        // infinite loops and resource exhaustion. The compiled binary runs as a
+        // subprocess with a 5-second wall-clock limit.
+        // BUG ASSUMPTION: `timeout` command must be available (coreutils).
+        // A full sandbox (seccomp/landlock/bubblewrap) is the proper solution
+        // for production — this is a defence-in-depth stopgap.
+        let bin_str = binary_path.to_str().unwrap_or("");
+        let run = std::process::Command::new("timeout")
+            .args(&["5", bin_str])
             .output()
             .map_err(|e| format!("execution failed: {}", e))?;
 

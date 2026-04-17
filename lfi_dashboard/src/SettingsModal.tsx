@@ -38,6 +38,9 @@ export interface SettingsModalProps {
   onExportEvents: () => void;
   onExportConversations: () => void;
   onExportAllJson: () => void;
+  // c2-241 / #102: round-trip for the Full backup export. Receives the raw
+  // File; parent validates schema + merges into state.
+  onImportBackup: (file: File) => void;
   // Live-preview a theme while hovering its card. null clears the preview.
   onPreviewTheme?: (themeKey: string | null) => void;
   onClearHistory: () => void;
@@ -50,7 +53,7 @@ export interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   C, isMobile, settings, setSettings, tab, onTabChange, onClose,
   currentTier, onTierSelect,
-  onExportEvents, onExportConversations, onExportAllJson, onPreviewTheme, onClearHistory, onResetSettings, onDeleteAccount,
+  onExportEvents, onExportConversations, onExportAllJson, onImportBackup, onPreviewTheme, onClearHistory, onResetSettings, onDeleteAccount,
   conversationCount, messageCount,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -452,6 +455,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }}>Full backup (JSON)</button>
           <div style={{ marginTop: '6px', fontSize: '10px', color: C.textDim }}>
             Includes all conversations + settings. Schema v1.
+          </div>
+          {/* c2-241 / #102: import inverse of Full backup. Hidden file input
+              behind a styled label so the UI matches the export button without
+              a visible <input type=file>. Parent handles schema + merge. */}
+          <label htmlFor='lfi-import-backup'
+            style={{
+              display: 'block', width: '100%', marginTop: '8px', padding: '10px',
+              background: C.accentBg, border: `1px solid ${C.accentBorder}`,
+              color: C.accent, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+              textAlign: 'center', boxSizing: 'border-box',
+            }}>Import backup…</label>
+          <input id='lfi-import-backup' type='file' accept='application/json,.json'
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onImportBackup(file);
+              e.target.value = ''; // allow re-selecting the same file
+            }} />
+          <div style={{ marginTop: '6px', fontSize: '10px', color: C.textDim }}>
+            Merges conversations (by id); settings replaced after confirmation.
           </div>
 
           <div style={{ marginTop: '22px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
