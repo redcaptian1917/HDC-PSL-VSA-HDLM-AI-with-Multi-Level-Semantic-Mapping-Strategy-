@@ -127,6 +127,14 @@ impl ExperienceLearner {
                             truncate(&signal.user_input, 100)
                         ),
                     });
+                    // Downgrade quality of the original wrong response in brain.db
+                    // AUDIT FIX #19: Quality scores now update from user feedback
+                    if !signal.system_response.is_empty() {
+                        actions.push(TrainingAction::DowngradeQuality {
+                            content_fragment: truncate(&signal.system_response, 200).to_string(),
+                            new_quality: 0.3, // Corrected facts get low quality
+                        });
+                    }
                     // Create corrected fact if correction provided
                     if let Some(ref correction) = signal.correction {
                         actions.push(TrainingAction::CreateFact {
@@ -222,6 +230,12 @@ pub enum TrainingAction {
     Reinforce {
         query: String,
         response: String,
+    },
+    /// Downgrade quality of facts matching a content fragment.
+    /// AUDIT FIX #19: Corrections now feed back into quality scoring.
+    DowngradeQuality {
+        content_fragment: String,
+        new_quality: f64,
     },
 }
 
