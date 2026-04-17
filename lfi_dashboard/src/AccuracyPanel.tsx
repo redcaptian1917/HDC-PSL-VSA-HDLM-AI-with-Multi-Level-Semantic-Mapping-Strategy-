@@ -108,14 +108,14 @@ export const AccuracyPanel: React.FC<AccuracyPanelProps> = ({ C, host }) => {
             </div>
           </div>
           {data.last_run != null && (
-            <div style={{ marginTop: T.spacing.xs, fontSize: '10px', color: C.textDim, textAlign: 'center' }}>
+            <div style={{ marginTop: T.spacing.xs, fontSize: T.typography.sizeXs, color: C.textDim, textAlign: 'center' }}>
               Last run: {typeof data.last_run === 'number' ? new Date(data.last_run * 1000).toLocaleString() : data.last_run}
             </div>
           )}
           {data.per_domain && Object.keys(data.per_domain).length > 0 && (
             <div style={{ marginTop: T.spacing.sm }}>
               <div style={{
-                fontSize: '10px', color: C.textMuted,
+                fontSize: T.typography.sizeXs, color: C.textMuted,
                 fontWeight: T.typography.weightBold, marginBottom: T.spacing.xs,
                 textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
               }}>By domain</div>

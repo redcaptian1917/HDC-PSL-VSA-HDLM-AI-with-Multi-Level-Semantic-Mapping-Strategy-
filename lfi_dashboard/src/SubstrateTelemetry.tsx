@@ -85,7 +85,7 @@ export const SubstrateTelemetry: React.FC<SubstrateTelemetryProps> = ({
           }}>
             Disk Pressure · {Math.round(dp.usedPct)}%
           </div>
-          <div style={{ fontSize: '10px', opacity: 0.85 }}>
+          <div style={{ fontSize: T.typography.sizeXs, opacity: 0.85 }}>
             {dp.freeGb.toFixed(1)}G free on server root. Writes may start failing.
           </div>
         </div>
