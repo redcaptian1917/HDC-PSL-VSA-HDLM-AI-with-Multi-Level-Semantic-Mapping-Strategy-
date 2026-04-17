@@ -1395,14 +1395,42 @@ ${cmdList}
     try { localStorage.setItem(LS_CURRENT_KEY, currentConversationId); } catch {}
   }, [currentConversationId]);
 
+  // c2-275: unread assistant-reply counter that prepends (N) to the tab
+  // title while the page is hidden. Cleared on visibilitychange back to
+  // visible. Combines naturally with the title-from-conversation logic
+  // below — both write document.title from the same effect dependency.
+  const [unreadReplies, setUnreadReplies] = useState(0);
+  const lastMsgIdForUnreadRef = useRef<number | string | null>(null);
+  useEffect(() => {
+    // Bump counter when the list ends with a new assistant message that we
+    // haven't seen yet AND the tab is hidden. Same guard as the notification
+    // path so hidden tabs get both signals in sync.
+    const last = messages[messages.length - 1];
+    if (!last) return;
+    if (lastMsgIdForUnreadRef.current === last.id) return;
+    lastMsgIdForUnreadRef.current = last.id;
+    if (last.role === 'assistant' && typeof document !== 'undefined' && document.hidden) {
+      setUnreadReplies(n => n + 1);
+    }
+  }, [messages]);
+  useEffect(() => {
+    const onVis = () => {
+      if (typeof document !== 'undefined' && !document.hidden) setUnreadReplies(0);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
   // Keep the browser tab title in sync with the active conversation — makes
   // tab-switching to the dashboard scannable among many browser tabs.
+  // c2-275: prepends (N) when there are unread replies and the tab was hidden.
   useEffect(() => {
     const c = conversations.find(x => x.id === currentConversationId);
     const title = c?.title && c.title !== 'New chat' ? c.title.slice(0, 60) : null;
-    document.title = title ? `${title} · PlausiDen AI` : 'PlausiDen AI';
+    const base = title ? `${title} · PlausiDen AI` : 'PlausiDen AI';
+    document.title = unreadReplies > 0 ? `(${unreadReplies}) ${base}` : base;
     return () => { document.title = 'PlausiDen AI'; };
-  }, [currentConversationId, conversations]);
+  }, [currentConversationId, conversations, unreadReplies]);
 
   // Save draft to conversation when switching away, restore when switching in.
   // c2-266: flush the active-convo draft to localStorage on pagehide /
