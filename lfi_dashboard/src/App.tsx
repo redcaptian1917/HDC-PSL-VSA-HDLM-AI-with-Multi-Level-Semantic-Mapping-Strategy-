@@ -36,7 +36,7 @@ import css from 'highlight.js/lib/languages/css';
 import xml from 'highlight.js/lib/languages/xml';
 import go from 'highlight.js/lib/languages/go';
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd } from './util';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, formatRelative } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -2252,7 +2252,7 @@ ${cmdList}
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title}</span>
                         </div>
                         <div style={{ fontSize: '10px', color: C.textDim, marginTop: '2px' }}>
-                          {c.messages.length} msg &middot; {new Date(c.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                          {c.messages.length} msg &middot; {formatRelative(c.updatedAt)}
                         </div>
                       </div>
                       {/* Action icons — hover-only per design review. Uses

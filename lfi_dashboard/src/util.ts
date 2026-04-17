@@ -22,6 +22,21 @@ export const formatRam = (mb: number): { value: string; unit: string } => {
 export const formatTime = (ts: number): string =>
   new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+// Epoch-ms → relative-time string ("3m ago", "2h ago", "Apr 17"). Thresholds
+// tuned so a 'right now' feels responsive but older items fall back to dates.
+export const formatRelative = (ts: number, now = Date.now()): string => {
+  const diffSec = Math.max(0, Math.floor((now - ts) / 1000));
+  if (diffSec < 10) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
 // Clipboard write with an execCommand fallback for browsers that block the
 // async Clipboard API (e.g. insecure-context). Never throws.
 export const copyToClipboard = async (text: string): Promise<void> => {
