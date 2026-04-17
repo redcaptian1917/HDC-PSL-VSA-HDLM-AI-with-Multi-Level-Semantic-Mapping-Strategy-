@@ -611,7 +611,12 @@ ${cmdList}
       arr.push({ t: Date.now(), kind, data });
       const trimmed = arr.slice(-500);
       localStorage.setItem(LS_EVENTS_KEY, JSON.stringify(trimmed));
-      console.debug('// SCC: event', kind, data);
+      // c2-326: gate the debug print on developer mode. Regular users hit
+      // the console-devtools "Verbose" filter anyway, but Eruda on mobile
+      // and anyone with debug logs enabled were seeing one line per
+      // mouse/keystroke — noisy. Storage write is unconditional (the Admin
+      // Logs tab needs the record).
+      if (settings.developerMode) console.debug('// SCC: event', kind, data);
     } catch { /* quota — drop */ }
   };
   const exportEvents = () => {
