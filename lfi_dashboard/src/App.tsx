@@ -1421,6 +1421,31 @@ ${cmdList}
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
+  // c2-276: badge the favicon with a red dot when there are unread replies.
+  // Swaps the <link id="favicon"> href between the plain glyph (declared in
+  // index.html) and a variant with an overlay circle. Inline SVG data URL
+  // so no extra network request.
+  useEffect(() => {
+    const link = document.getElementById('favicon') as HTMLLinkElement | null;
+    if (!link) return;
+    const plain =
+      'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+        '<rect width="64" height="64" rx="12" fill="#8b7bf7"/>' +
+        '<text x="32" y="45" text-anchor="middle" font-family="system-ui" font-size="40" font-weight="700" fill="#fff">P</text>' +
+        '</svg>'
+      );
+    const badged =
+      'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+        '<rect width="64" height="64" rx="12" fill="#8b7bf7"/>' +
+        '<text x="32" y="45" text-anchor="middle" font-family="system-ui" font-size="40" font-weight="700" fill="#fff">P</text>' +
+        '<circle cx="48" cy="16" r="12" fill="#ef4444" stroke="#fff" stroke-width="2"/>' +
+        '</svg>'
+      );
+    link.href = unreadReplies > 0 ? badged : plain;
+  }, [unreadReplies]);
+
   // Keep the browser tab title in sync with the active conversation — makes
   // tab-switching to the dashboard scannable among many browser tabs.
   // c2-275: prepends (N) when there are unread replies and the tab was hidden.
