@@ -298,7 +298,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               {/* Accuracy grade + score breakdown from /api/admin/dashboard */}
               {dashboard?.score && (
                 <div style={{
-                  display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) 3fr',
+                  display: 'grid',
+                  // Stack on narrow viewports so neither column gets squeezed.
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
                   gap: T.spacing.lg, marginBottom: T.spacing.xl,
                   padding: T.spacing.lg, borderRadius: T.radii.lg,
                   background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
