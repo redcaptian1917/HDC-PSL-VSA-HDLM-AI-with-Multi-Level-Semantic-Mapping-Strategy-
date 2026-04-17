@@ -55,6 +55,8 @@ import { AccuracyPanel } from './AccuracyPanel';
 // Full-screen admin console (c0-017). Lazy because it bundles 6 tabs of
 // panels that are only seen when the user clicks the Admin entry.
 const AdminModal = React.lazy(() => import('./AdminModal').then(m => ({ default: m.AdminModal })));
+// Classroom full page (c0-027). Lazy — not visited until user switches view.
+const ClassroomView = React.lazy(() => import('./ClassroomView').then(m => ({ default: m.ClassroomView })));
 import { TelemetryCard } from './TelemetryCards';
 import { SidebarStatus } from './SidebarStatus';
 import { SubstrateTelemetry } from './SubstrateTelemetry';
@@ -1328,6 +1330,9 @@ ${cmdList}
   const [showConvoSidebar, setShowConvoSidebar] = useState<boolean>(true);
   const [showPlanSidebar, setShowPlanSidebar] = useState<boolean>(true);
   const [showArchived, setShowArchived] = useState<boolean>(false);
+  // c0-027: 3-view app (Chat / Classroom / Admin). Admin is still a modal,
+  // but Chat and Classroom are true top-level views that replace each other.
+  const [activeView, setActiveView] = useState<'chat' | 'classroom'>('chat');
   const [convoSearch, setConvoSearch] = useState('');
 
   // ---- Send ----
@@ -2307,6 +2312,31 @@ ${cmdList}
           )}
         </div>
 
+        {/* Center: view switcher — Chat / Classroom / Admin (c0-027). */}
+        <div role='tablist' aria-label='App sections'
+          style={{ display: 'flex', gap: '2px', order: 2, flexShrink: 0 }}>
+          {([
+            { id: 'chat' as const,      label: 'Chat',      onClick: () => { setActiveView('chat'); setShowAdmin(false); } },
+            { id: 'classroom' as const, label: 'Classroom', onClick: () => { setActiveView('classroom'); setShowAdmin(false); } },
+            { id: 'admin' as const,     label: 'Admin',     onClick: () => { setShowAdmin(true); } },
+          ]).map(v => {
+            const isActive = v.id === 'admin' ? showAdmin : (activeView === v.id && !showAdmin);
+            return (
+              <button key={v.id} onClick={v.onClick}
+                role='tab' aria-selected={isActive}
+                style={{
+                  padding: isMobile ? '6px 10px' : '7px 14px',
+                  fontSize: '12px', fontWeight: 600,
+                  background: isActive ? C.accentBg : 'transparent',
+                  border: `1px solid ${isActive ? C.accentBorder : 'transparent'}`,
+                  color: isActive ? C.accent : C.textMuted,
+                  borderRadius: '6px', cursor: 'pointer', fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}>{v.label}</button>
+            );
+          })}
+        </div>
+
         {/* Right: account on the far right. `order: 3` in the flex header
             pushes it past the tier/theme cluster regardless of DOM order. */}
         <div style={{ position: 'relative', order: 3 }} ref={accountMenuRef}>
@@ -2877,9 +2907,21 @@ ${cmdList}
 
         {/* CHAT AREA — now a flex column so the input bar lives inside main
             and centers within the *available* width (shifts with the sidebar)
-            instead of the viewport. */}
+            instead of the viewport.
+            c0-027: hidden when the Classroom view is active. Kept mounted
+            with display:none so chat state (scroll pos, streaming messages)
+            survives the view switch without re-render. */}
+        {activeView === 'classroom' && (
+          <React.Suspense fallback={
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMuted }}>
+              Loading classroom…
+            </div>
+          }>
+            <ClassroomView C={C} host={host} isDesktop={isDesktop} />
+          </React.Suspense>
+        )}
         <main id='main-content' role='main' aria-label='Chat' style={{
-          flex: 1, display: 'flex', flexDirection: 'column',
+          flex: 1, display: activeView === 'classroom' ? 'none' : 'flex', flexDirection: 'column',
           overflow: 'hidden', minWidth: 0, position: 'relative',
         }}>
           {/* Inline message search (Cmd+Shift+F). Slides down from the top of
