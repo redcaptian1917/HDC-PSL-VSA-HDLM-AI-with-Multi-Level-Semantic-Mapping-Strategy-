@@ -1787,6 +1787,9 @@ ${cmdList}
       setPastedImages([]);
     }
     setInput('');
+    // c2-277: collapse the auto-grown textarea back to its minHeight so the
+    // post-send input isn't still occupying 4 lines of empty height.
+    if (inputRef.current) inputRef.current.style.height = '';
     // Trigger send-pulse feedback animation.
     setSendPulseId(id => id + 1);
     // User's own send means they want to see their message regardless of
@@ -4100,7 +4103,7 @@ ${cmdList}
                     </div>
                     {filtered.map((c, i) => (
                       <button key={c.cmd}
-                        onClick={() => { c.run(); setInput(''); setShowSlashMenu(false); logEvent('slash_cmd', { cmd: c.cmd }); }}
+                        onClick={() => { c.run(); setInput(''); if (inputRef.current) inputRef.current.style.height = ''; setShowSlashMenu(false); logEvent('slash_cmd', { cmd: c.cmd }); }}
                         onMouseEnter={() => setSlashIndex(i)}
                         style={{
                           width: '100%', textAlign: 'left', cursor: 'pointer',
@@ -4236,7 +4239,7 @@ ${cmdList}
                     if (e.key === 'Enter' || e.key === 'Tab') {
                       e.preventDefault();
                       const picked = filtered[Math.min(slashIndex, filtered.length - 1)];
-                      if (picked) { picked.run(); setInput(''); setShowSlashMenu(false); logEvent('slash_cmd', { cmd: picked.cmd }); }
+                      if (picked) { picked.run(); setInput(''); if (inputRef.current) inputRef.current.style.height = ''; setShowSlashMenu(false); logEvent('slash_cmd', { cmd: picked.cmd }); }
                       return;
                     }
                     if (e.key === 'Escape') { setShowSlashMenu(false); return; }
