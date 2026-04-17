@@ -47,6 +47,7 @@ import { SystemMessage, WebMessage, ToolMessage, UserMessage, AssistantMessage }
 import { type CmdPaletteItem } from './CommandPalette';
 import { DARK, THEMES } from './themes';
 import { WelcomeScreen } from './WelcomeScreen';
+import { FactsPanel } from './FactsPanel';
 const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
 const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
 const ActivityModal = React.lazy(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })));
@@ -1842,37 +1843,7 @@ ${cmdList}
         </div>
         {/* Facts display: render empty/error states explicitly so a "successful but empty"
             response is distinguishable from "user hasn't clicked yet". */}
-        {factsFetchedAt !== null && (
-          <div style={{ marginTop: '14px' }}>
-            <div style={{ fontSize: '10px', fontWeight: 700, color: C.textMuted, marginBottom: '8px', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between' }}>
-              <span>Knowledge Facts ({facts.length})</span>
-              <span style={{ color: C.textDim, fontWeight: 500 }}>{new Date(factsFetchedAt).toLocaleTimeString()}</span>
-            </div>
-            {factsError ? (
-              <div style={{
-                padding: '10px 12px', fontSize: '11px', lineHeight: 1.4,
-                background: C.redBg, border: `1px solid ${C.redBorder}`,
-                borderRadius: '6px', color: C.red,
-              }}>Fetch failed: {factsError}</div>
-            ) : facts.length === 0 ? (
-              <div style={{
-                padding: '10px 12px', fontSize: '11px', lineHeight: 1.4,
-                background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
-                borderRadius: '6px', color: C.textMuted,
-              }}>Server returned 0 facts. Knowledge base may still be hydrating — the live count is shown in Substrate Telemetry.</div>
-            ) : (
-              <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                {facts.map((f, i) => (
-                  <div key={i} style={{ fontSize: '11px', padding: '6px 8px', borderBottom: `1px solid ${C.borderSubtle}` }}>
-                    <span style={{ color: C.accent, fontWeight: 700 }}>{f.key}</span>
-                    <span style={{ color: C.textDim }}> = </span>
-                    <span style={{ color: C.textSecondary }}>{f.value}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <FactsPanel C={C} facts={facts} fetchedAt={factsFetchedAt} error={factsError} />
         {/* QoS display — explicit error/empty/loaded states (was invisible before
             on fetch failure, reading as 'nothing happened' to the user). */}
         {qosFetchedAt !== null && (
