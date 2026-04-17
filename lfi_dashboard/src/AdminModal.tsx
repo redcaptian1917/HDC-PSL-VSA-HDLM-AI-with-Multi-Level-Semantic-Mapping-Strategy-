@@ -12,6 +12,8 @@ import { Label } from './components/Label';
 import { ErrorAlert } from './components/ErrorAlert';
 // c2-349 / task 29: shared shimmer skeleton.
 import { SkeletonLoader } from './components/SkeletonLoader';
+// c2-350 / task 27: shared horizontal progress bar.
+import { BarChart } from './components/BarChart';
 
 // Full-screen admin modal per c0-017. Six tabs: Dashboard / Domains /
 // Training / Quality / System / Logs. Replaces the prior sidebar-slide admin
@@ -435,9 +437,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           return (
                             <div key={k} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
                               <span style={{ width: '110px', fontSize: T.typography.sizeSm, color: C.textSecondary, textTransform: 'capitalize' }}>{k}</span>
-                              <div style={{ flex: 1, background: C.bg, height: '10px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
-                                <div style={{ width: `${pc}%`, height: '100%', background: col, transition: 'width 0.4s' }} />
-                              </div>
+                              <BarChart C={C} value={pc} color={col} height='10px' trackBg={C.bg} style={{ flex: 1 }} />
                               <span style={{ width: '56px', textAlign: 'right', fontSize: T.typography.sizeSm, color: col, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
                             </div>
                           );
@@ -507,13 +507,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       {top.map(d => (
                         <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
                           <span style={{ width: '160px', fontSize: T.typography.sizeSm, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.label}</span>
-                          <div style={{ flex: 1, background: C.bgInput, height: '18px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
-                            <div style={{
-                              width: `${(d.value / max) * 100}%`, height: '100%',
-                              background: countColor(d.value),
-                              transition: 'width 0.4s',
-                            }} />
-                          </div>
+                          <BarChart C={C} value={(d.value / max) * 100} color={countColor(d.value)} height='18px' trackBg={C.bgInput} style={{ flex: 1 }} />
                           <span style={{ width: '84px', textAlign: 'right', fontSize: T.typography.sizeSm, fontFamily: T.typography.fontMono, color: C.textMuted }}>
                             {d.value.toLocaleString()}
                           </span>
@@ -899,9 +893,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             return (
                               <div key={bucket} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
                                 <span style={{ width: '120px', fontSize: T.typography.sizeSm, color: C.text, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap' }}>{bucket}</span>
-                                <div style={{ flex: 1, background: C.bgInput, height: '18px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
-                                  <div style={{ width: `${(n / max) * 100}%`, height: '100%', background: color, transition: 'width 0.4s' }} />
-                                </div>
+                                <BarChart C={C} value={(n / max) * 100} color={color} height='18px' trackBg={C.bgInput} style={{ flex: 1 }} />
                                 <span style={{ width: '96px', textAlign: 'right', fontSize: T.typography.sizeSm, fontFamily: T.typography.fontMono, color: C.textMuted }}>
                                   {n.toLocaleString()} ({pct.toFixed(1)}%)
                                 </span>
@@ -965,12 +957,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                 <span style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{r.label}</span>
                                 <span style={{ fontSize: T.typography.sizeSm, color: r.color, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{r.right}</span>
                               </div>
-                              <div style={{ background: C.bgInput, height: '14px', borderRadius: T.radii.xs, overflow: 'hidden', border: `1px solid ${C.borderSubtle}` }}>
-                                <div style={{
-                                  width: r.pct != null ? `${r.pct}%` : '0%', height: '100%',
-                                  background: r.color, transition: 'width 0.4s',
-                                }} />
-                              </div>
+                              <BarChart C={C} value={r.pct ?? 0} color={r.color} height='14px'
+                                trackBg={C.bgInput}
+                                style={{ border: `1px solid ${C.borderSubtle}` }} />
                             </div>
                           ))}
                         </div>

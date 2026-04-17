@@ -9,6 +9,8 @@ import { Label } from './components/Label';
 import { ErrorAlert } from './components/ErrorAlert';
 // c2-349 / task 29: shared shimmer skeleton.
 import { SkeletonLoader } from './components/SkeletonLoader';
+// c2-350 / task 27: shared horizontal progress bar.
+import { BarChart } from './components/BarChart';
 import { compactNum, formatRelative } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
@@ -336,9 +338,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                   return (
                     <div key={k} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm, marginBottom: T.spacing.sm }}>
                       <span style={{ width: '110px', fontSize: T.typography.sizeMd, color: C.text, textTransform: 'capitalize' }}>{k}</span>
-                      <div style={{ flex: 1, background: C.bgInput, height: '12px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
-                        <div style={{ width: `${pc}%`, height: '100%', background: col, transition: 'width 0.4s' }} />
-                      </div>
+                      <BarChart C={C} value={pc} color={col} height='12px' trackBg={C.bgInput} style={{ flex: 1 }} />
                       <span style={{ width: '56px', textAlign: 'right', fontSize: T.typography.sizeMd, color: col, fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
                     </div>
                   );
@@ -503,9 +503,7 @@ const DomainBars: React.FC<{
         return (
           <div key={r.domain} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
             <span style={{ width: '160px', fontSize: T.typography.sizeSm, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.domain}</span>
-            <div style={{ flex: 1, background: C.bgCard, height: '16px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
-              <div style={{ width: `${(r.count / max) * 100}%`, height: '100%', background: colorFor(r.count), transition: 'width 0.4s' }} />
-            </div>
+            <BarChart C={C} value={(r.count / max) * 100} color={colorFor(r.count)} style={{ flex: 1 }} />
             <div style={{ width: '64px', flexShrink: 0 }}>
               <Sparkline values={series} color={colorFor(r.count)} />
             </div>
