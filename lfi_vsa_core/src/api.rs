@@ -3243,12 +3243,28 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/admin/logs", get(admin_logs_handler))
         .route("/api/presence", get(presence_handler))
         .route("/api/metrics/prometheus", get(prometheus_metrics_handler))
+        .route("/api/csp-report", post(csp_report_handler))
         .layer(cors)
         // OBSERVABILITY: Request logging — method, path, status, latency
         .layer(axum::middleware::from_fn(request_logging_middleware))
         // SECURITY: Add security headers to all responses
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(state))
+}
+
+/// POST /api/csp-report — Receives Content-Security-Policy violation reports.
+/// Browsers send these automatically when CSP is violated.
+async fn csp_report_handler(
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    // Log the violation for security monitoring
+    if let Ok(report) = std::str::from_utf8(&body) {
+        tracing::warn!(
+            csp_violation = %crate::truncate_str(report, 500),
+            "CSP violation reported"
+        );
+    }
+    axum::http::StatusCode::NO_CONTENT
 }
 
 /// GET /api/metrics/prometheus — Prometheus-compatible metrics endpoint.
@@ -3361,7 +3377,7 @@ async fn security_headers_middleware(
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
 
-    if let Ok(v) = HeaderValue::from_str("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self'; frame-ancestors 'none'") {
+    if let Ok(v) = HeaderValue::from_str("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; font-src 'self'; frame-ancestors 'none'; report-uri /api/csp-report") {
         headers.insert("content-security-policy", v);
     }
     headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));

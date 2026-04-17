@@ -185,6 +185,9 @@ const SovereignCommandConsole: React.FC = () => {
   // into message content (data URLs would blow out localStorage). Backend
   // upload is tracked separately; for now we log the paste and summarize.
   const [pastedImages, setPastedImages] = useState<{ id: string; dataUrl: string; size: number; type: string }[]>([]);
+  // c2-370 / task 84: drag-and-drop file upload overlay state. True while a
+  // drag is in progress over the chat pane; drives the dashed-border hint.
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   // Debounced disconnect banner — avoid flashing the banner on the initial
   // pre-connect moment or on momentary reconnects under 2s.
@@ -4113,10 +4116,72 @@ ${cmdList}
         )}
         <main id='main-content' role='main' aria-label='Chat'
           aria-busy={isThinking || undefined}
+          onDragOver={(e) => {
+            // c2-370 / task 84: accept drops only when a file is being dragged;
+            // the pinned-convo reorder path sets text/plain, we ignore that
+            // here by checking for 'Files' in the types list.
+            if (!e.dataTransfer?.types.includes('Files')) return;
+            e.preventDefault();
+            try { e.dataTransfer.dropEffect = 'copy'; } catch { /* jsdom */ }
+            if (!isDraggingFile) setIsDraggingFile(true);
+          }}
+          onDragLeave={(e) => {
+            // Only clear when the drag leaves the chat pane entirely -- the
+            // relatedTarget null check avoids flicker as the cursor crosses
+            // child elements.
+            if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+            setIsDraggingFile(false);
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer?.files.length) return;
+            e.preventDefault();
+            setIsDraggingFile(false);
+            const files = Array.from(e.dataTransfer.files);
+            // Text-ish files get their contents slurped into the input. Hard
+            // cap at 100 KB so a 50 MB log file doesn't freeze the browser.
+            const TEXT_MAX = 100 * 1024;
+            const isTexty = (f: File) => {
+              if (f.size > TEXT_MAX) return false;
+              if (f.type.startsWith('text/')) return true;
+              if (/\.(md|txt|json|yaml|yml|toml|csv|log|py|rs|ts|tsx|js|jsx|sh|go|rb|java|c|cpp|h|hpp)$/i.test(f.name)) return true;
+              return false;
+            };
+            const textFiles = files.filter(isTexty);
+            const reads = textFiles.map(f => f.text().then(t => `\n\`\`\`${/\.(ts|tsx|js|jsx|py|rs|go|rb|sh|md|json|yaml|toml)$/i.exec(f.name)?.[1] || ''}\n// ${f.name}\n${t}\n\`\`\`\n`));
+            Promise.all(reads).then(chunks => {
+              if (chunks.length === 0) return;
+              const joined = chunks.join('');
+              setInput(prev => prev + joined);
+              logEvent('file_drop', { count: textFiles.length, totalBytes: textFiles.reduce((s, f) => s + f.size, 0) });
+              setTimeout(() => inputRef.current?.focus(), 0);
+            });
+            const skipped = files.length - textFiles.length;
+            if (skipped > 0) {
+              showToast(`${skipped} file${skipped === 1 ? '' : 's'} skipped (non-text or >100KB)`);
+            }
+          }}
           style={{
           flex: 1, display: activeView === 'chat' ? 'flex' : 'none', flexDirection: 'column',
           overflow: 'hidden', minWidth: 0, position: 'relative',
         }}>
+          {/* c2-370 / task 84: drag-and-drop overlay. Absolute-positioned
+              so it fills the chat pane without reflowing the message list.
+              pointer-events: none so the drop target stays the <main> below
+              (otherwise the overlay would intercept the drop). */}
+          {isDraggingFile && (
+            <div aria-hidden='true' style={{
+              position: 'absolute', inset: 0, zIndex: T.z.overlay,
+              border: `2px dashed ${C.accent}`, background: C.accentBg,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              pointerEvents: 'none', borderRadius: T.radii.lg, margin: T.spacing.md,
+            }}>
+              <div style={{
+                fontSize: T.typography.size2xl, color: C.accent,
+                fontWeight: T.typography.weightBlack,
+                textTransform: 'uppercase', letterSpacing: T.typography.trackingCap,
+              }}>Drop to attach</div>
+            </div>
+          )}
           {/* Inline message search (Cmd+Shift+F). Slides down from the top of
               main while open; clearing the input or closing restores the full
               list. Filters the messages array passed to ChatView. */}
