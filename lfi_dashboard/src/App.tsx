@@ -50,6 +50,7 @@ import { WelcomeScreen } from './WelcomeScreen';
 import { FactsPanel } from './FactsPanel';
 import { QosPanel } from './QosPanel';
 import { TelemetryCard } from './TelemetryCards';
+import { SidebarStatus } from './SidebarStatus';
 const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
 const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
 const ActivityModal = React.lazy(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })));
@@ -1756,58 +1757,18 @@ ${cmdList}
         })()}
       </div>
       {/* Status */}
-      <div style={{ padding: '20px', borderBottom: `1px solid ${C.borderSubtle}` }}>
-        <div style={{ fontSize: '11px', fontWeight: 800, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '14px' }}>
-          Status
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {[
-            { label: 'Connection', value: isConnected ? 'LIVE' : 'DOWN', color: isConnected ? C.green : C.red },
-            { label: 'Tier', value: currentTier, color: tierColor(currentTier) },
-            { label: 'Throttled', value: stats.is_throttled ? 'YES' : 'NO', color: stats.is_throttled ? C.red : C.green },
-            { label: 'Logic Density', value: stats.logic_density.toFixed(3), color: C.purple },
-            (() => {
-              // Backend returns pass_rate as fraction (/api/quality/report) OR percent (/api/admin/training/accuracy).
-              // Normalise to percent for display and threshold comparison.
-              const raw = quality?.psl_pass_rate;
-              const pct = raw == null ? null : (raw <= 1.5 ? raw * 100 : raw);
-              return {
-                label: 'PSL Pass',
-                value: pct != null
-                  ? `${pct.toFixed(1)}%${quality?.stale ? ' (stale)' : ''}`
-                  : '—',
-                color: pct == null
-                  ? C.textMuted
-                  : (pct >= 95 ? C.green : pct >= 85 ? C.yellow : C.red),
-              };
-            })(),
-            {
-              label: 'Adversarial',
-              value: quality?.adversarial != null ? compactNum(quality.adversarial) : '—',
-              color: C.accent,
-            },
-            {
-              label: 'Sources',
-              value: kg.sources ? String(kg.sources) : (quality?.distinct_sources ? String(quality.distinct_sources) : '—'),
-              color: C.purple,
-            },
-            (() => {
-              const dp = diskPressure(sysInfo.disk_free, sysInfo.disk_total);
-              if (!dp) return { label: 'Disk', value: '—', color: C.textMuted };
-              return {
-                label: 'Disk',
-                value: `${dp.usedPct.toFixed(0)}% · ${dp.freeGb.toFixed(1)}G free`,
-                color: dp.usedPct >= 90 ? C.red : dp.usedPct >= 75 ? C.yellow : C.green,
-              };
-            })(),
-          ].map(row => (
-            <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
-              <span style={{ color: C.textMuted }}>{row.label}</span>
-              <span style={{ color: row.color, fontWeight: 700 }}>{row.value}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <SidebarStatus
+        C={C}
+        isConnected={isConnected}
+        currentTier={currentTier}
+        tierColor={tierColor}
+        thermalThrottled={stats.is_throttled}
+        logicDensity={stats.logic_density}
+        quality={quality}
+        kgSources={kg.sources}
+        diskFree={sysInfo.disk_free}
+        diskTotal={sysInfo.disk_total}
+      />
       {/* Admin actions */}
       <div style={{ padding: '20px' }}>
         <div style={{ fontSize: '11px', fontWeight: 800, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '14px' }}>
