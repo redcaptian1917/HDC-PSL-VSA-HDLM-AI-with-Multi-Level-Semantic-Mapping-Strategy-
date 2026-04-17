@@ -1,0 +1,140 @@
+# PlausiDen Layers — Full Stack Architecture
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║                    USER INTERFACES                           ║
+║                                                              ║
+║  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       ║
+║  │ Web UI   │ │ Desktop  │ │ Android  │ │   CLI    │       ║
+║  │ (React)  │ │ (Tauri)  │ │ (WebView)│ │ (xterm)  │       ║
+║  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘       ║
+║       │             │             │             │             ║
+║       └─────────────┴──────┬──────┴─────────────┘             ║
+║                            │                                  ║
+║              Same React codebase (design-system.ts)           ║
+╠══════════════════════════════════════════════════════════════╣
+║                    APPLICATION PAGES                         ║
+║                                                              ║
+║  ┌────────┐ ┌───────────┐ ┌───────┐ ┌───────┐ ┌─────────┐ ║
+║  │  Chat  │ │ Classroom │ │ Admin │ │ Fleet │ │Security │ ║
+║  └────────┘ └───────────┘ └───────┘ └───────┘ └─────────┘ ║
+║  ┌──────────────┐ ┌────────┐ ┌──────────┐ ┌─────────────┐ ║
+║  │Knowledge Graph│ │Research│ │Workflows │ │   Vault     │ ║
+║  └──────────────┘ └────────┘ └──────────┘ └─────────────┘ ║
+╠══════════════════════════════════════════════════════════════╣
+║                    API LAYER (REST + WebSocket)               ║
+║                                                              ║
+║  PlausiDen Server (:3000)    Orchestrator (:3001)            ║
+║  • /api/status               • /api/orchestrator/dashboard   ║
+║  • /ws/chat                  • /api/orchestrator/tasks       ║
+║  • /api/admin/dashboard      • /api/orchestrator/instances   ║
+║  • /api/classroom/*          • /api/orchestrator/heartbeat   ║
+║  • /api/feedback                                             ║
+║  • /api/conversations/*                                      ║
+║  • /api/causal/*                                             ║
+║  • /api/provenance/*                                         ║
+╠══════════════════════════════════════════════════════════════╣
+║                    INTELLIGENCE LAYER                        ║
+║                                                              ║
+║  ┌─────────────────┐  ┌─────────────┐  ┌────────────────┐  ║
+║  │ Cognitive Core   │  │ RAG Engine  │  │ Experience     │  ║
+║  │ (System 1 + 2)   │  │ (FTS5+Ollama│  │ Learning       │  ║
+║  │ • Intent detect  │  │ • 57M facts │  │ • Corrections  │  ║
+║  │ • Fast/Deep mode │  │ • BM25 rank │  │ • Feedback     │  ║
+║  │ • Plan+Execute   │  │ • Quality wt│  │ • Signals      │  ║
+║  └─────────────────┘  └─────────────┘  └────────────────┘  ║
+║                                                              ║
+║  ┌─────────────────┐  ┌─────────────┐  ┌────────────────┐  ║
+║  │ Causal Reasoning│  │ Calibration │  │ Global         │  ║
+║  │ (Pearl 3-level) │  │ (Platt PSL) │  │ Workspace(GWT) │  ║
+║  └─────────────────┘  └─────────────┘  └────────────────┘  ║
+╠══════════════════════════════════════════════════════════════╣
+║                    HDC / VSA LAYER                            ║
+║                                                              ║
+║  ┌──────────────┐ ┌──────────┐ ┌────────────┐ ┌──────────┐║
+║  │BipolarVector │ │Holographic│ │TensorTrain │ │  CRDT    │║
+║  │ 10,000-dim   │ │ Memory   │ │(zero-error) │ │(PN-count)│║
+║  └──────────────┘ └──────────┘ └────────────┘ └──────────┘║
+║  ┌──────────────┐ ┌──────────┐ ┌────────────┐ ┌──────────┐║
+║  │ Bind/Bundle  │ │ Codebook │ │ConstantTime│ │Encoder   │║
+║  │  /Permute    │ │Generator │ │  Ops       │ │Protection│║
+║  └──────────────┘ └──────────┘ └────────────┘ └──────────┘║
+╠══════════════════════════════════════════════════════════════╣
+║                    SECURITY LAYER                            ║
+║                                                              ║
+║  ┌─────────────────┐  ┌──────────────┐  ┌────────────────┐ ║
+║  │Confidentiality  │  │ CaMeL Barrier│  │ Commitment     │ ║
+║  │  Kernel         │  │ (prompt inj  │  │ Registry       │ ║
+║  │ • Sealed<T>     │  │  defense)    │  │ (SHA-256)      │ ║
+║  │ • Broker        │  └──────────────┘  └────────────────┘ ║
+║  │ • Audit chain   │                                        ║
+║  └─────────────────┘  ┌──────────────┐  ┌────────────────┐ ║
+║                       │ PSL Supervisor│  │ EigenTrust     │ ║
+║  ┌─────────────────┐  │ (axiom gate) │  │ (mesh trust)   │ ║
+║  │ Pineapple Tools │  └──────────────┘  └────────────────┘ ║
+║  │ • Harden        │                                        ║
+║  │ • Capture       │                                        ║
+║  │ • Ingest        │                                        ║
+║  └─────────────────┘                                        ║
+╠══════════════════════════════════════════════════════════════╣
+║                    DATA LAYER                                ║
+║                                                              ║
+║  ┌──────────────────────────────────────────────────────┐   ║
+║  │ brain.db (SQLite, 57M+ facts, WAL mode)              │   ║
+║  │ • facts (key, value, confidence, source, domain,     │   ║
+║  │         quality_score, temporal, provenance)          │   ║
+║  │ • facts_fts (FTS5 full-text search index)            │   ║
+║  │ • conversations, messages                            │   ║
+║  │ • training_results, training_log                     │   ║
+║  │ • learning_signals                                   │   ║
+║  │ • user_profile                                       │   ║
+║  │ • adversarial, facts_staging                         │   ║
+║  └──────────────────────────────────────────────────────┘   ║
+║  ┌──────────────────┐  ┌──────────────────────────────┐    ║
+║  │ orchestrator.db  │  │ Training Data (544K+ pairs)  │    ║
+║  │ (task queue,     │  │ • OASST2, Dolly, Magpie      │    ║
+║  │  instances,      │  │ • Security, Hardware, Wireless│    ║
+║  │  task_log)       │  │ • Domain gap, Conversational  │    ║
+║  └──────────────────┘  └──────────────────────────────┘    ║
+╠══════════════════════════════════════════════════════════════╣
+║                    INFRASTRUCTURE                            ║
+║                                                              ║
+║  ┌───────────┐ ┌────────┐ ┌──────────┐ ┌────────────────┐ ║
+║  │ Ollama    │ │ systemd│ │ nftables │ │   Pineapple    │ ║
+║  │ qwen2.5   │ │services│ │ firewall │ │   Mark VII     │ ║
+║  │ -coder:7b │ │ (auto  │ │          │ │   (adversary   │ ║
+║  │           │ │ restart│ │          │ │    simulation) │ ║
+║  └───────────┘ └────────┘ └──────────┘ └────────────────┘ ║
+║  ┌───────────┐ ┌────────┐ ┌──────────┐ ┌────────────────┐ ║
+║  │ WireGuard │ │ Tor    │ │ Git/SSH  │ │ Vaultwarden    │ ║
+║  └───────────┘ └────────┘ └──────────┘ └────────────────┘ ║
+╠══════════════════════════════════════════════════════════════╣
+║                    MESH LAYER (planned)                      ║
+║                                                              ║
+║  ┌──────────────┐ ┌──────────────┐ ┌────────────────────┐  ║
+║  │ libp2p QUIC  │ │ GossipSub    │ │ Kademlia DHT       │  ║
+║  │ + Noise      │ │ (knowledge   │ │ (peer discovery)   │  ║
+║  │ encryption   │ │  broadcast)  │ │                    │  ║
+║  └──────────────┘ └──────────────┘ └────────────────────┘  ║
+║  ┌──────────────┐ ┌──────────────┐ ┌────────────────────┐  ║
+║  │ CRDT         │ │ Macaroon     │ │ Knowledge          │  ║
+║  │ Consensus    │ │ Delegation   │ │ Exchange Protocol  │  ║
+║  └──────────────┘ └──────────────┘ └────────────────────┘  ║
+╚══════════════════════════════════════════════════════════════╝
+
+Test Coverage: 1,802 passing | Fact Count: 57M+ | Training: 544K pairs
+```
+
+## Layer Responsibilities
+
+| Layer | What it does | Key metric |
+|-------|-------------|------------|
+| UI | Same React app everywhere | 4 delivery targets |
+| Pages | Feature areas | 10 sections planned |
+| API | REST + WebSocket interface | 40+ endpoints |
+| Intelligence | Reasoning, RAG, learning | 97.2% PSL calibration |
+| HDC/VSA | Semantic space operations | 10,000-dim bipolar |
+| Security | Secrets, trust, defense | 24 audit fixes applied |
+| Data | Facts, training, profiles | 57M facts, 544K pairs |
+| Infrastructure | Runtime services | systemd auto-restart |
+| Mesh | P2P knowledge sharing | EigenTrust + CRDT |
