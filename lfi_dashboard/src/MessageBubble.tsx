@@ -277,7 +277,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           {renderBody(msg.content)}
           {developerMode && msg.conclusion_id != null && (
             <span title={`Provenance: conclusion #${msg.conclusion_id}`}
+              role='button' tabIndex={0}
+              aria-label={`Open provenance for conclusion ${msg.conclusion_id}`}
               onClick={() => onOpenProvenance(msg.conclusion_id!)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenProvenance(msg.conclusion_id!); } }}
               style={{
                 display: 'inline-block', marginLeft: '8px',
                 padding: '1px 6px', fontSize: '10px',
