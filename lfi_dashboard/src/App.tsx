@@ -55,6 +55,7 @@ import { SubstrateTelemetry } from './SubstrateTelemetry';
 import { AdminActions } from './AdminActions';
 import { renderMessageBody as renderMdBody, type MarkdownCtx } from './markdown';
 import { useTicTacToe } from './useTicTacToe';
+import { useStatusPoll, useQualityPoll, useSysInfoPoll } from './usePolls';
 const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
 const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
 const ActivityModal = React.lazy(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })));
@@ -922,100 +923,15 @@ ${cmdList}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCmdPalette, showSettings, showKnowledge, showActivity, showGame]);
 
-  // Fetch /api/system/info on mount + every 60s so disk-pressure warnings
-  // stay current. Host + OS are static; disk fills up under ingestion.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const fetchSys = () => {
-      fetch(`http://${getHost()}:3000/api/system/info`)
-        .then(r => r.json())
-        .then(d => setSysInfo({
-          hostname: d.hostname,
-          os: d.os,
-          cpu_count: d.cpu_count,
-          cpu_model: d.cpu_model,
-          disk_free: typeof d.disk_root_free_bytes === 'number' ? d.disk_root_free_bytes : undefined,
-          disk_total: typeof d.disk_root_total_bytes === 'number' ? d.disk_root_total_bytes : undefined,
-        }))
-        .catch(() => {});
-    };
-    fetchSys();
-    const id = setInterval(fetchSys, 60000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated]);
-
-  // Tracks when /api/status last succeeded so the UI can surface staleness
-  // (the prior silent catch hid DB lock windows from users).
-  const [kgLastOk, setKgLastOk] = useState<number | null>(null);
-
-  // Poll /api/status every 5 s so the knowledge-graph counters on the telemetry
-  // cards reflect new facts and concepts as the agent learns.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const fetchStatus = async () => {
-      try {
-        // 8 s timeout: backend DB can block on write-lock windows; don't freeze the UI.
-        const ctrl = new AbortController();
-        const to = setTimeout(() => ctrl.abort(), 8000);
-        const res = await fetch(`http://${getHost()}:3000/api/status`, { signal: ctrl.signal });
-        clearTimeout(to);
-        const data = await res.json();
-        // Do NOT sync tier from status polling — the user's local selection is
-        // authoritative. Polling was causing "reverts to Pulse" when backend
-        // hadn't received the switch yet. Tier is only set by:
-        // (1) handleTierSwitch, (2) mount auto-push, (3) Cmd+K palette.
-        setKg(k => ({
-          facts: typeof data.facts_count === 'number' ? data.facts_count : k.facts,
-          concepts: typeof data.concepts_count === 'number' ? data.concepts_count : k.concepts,
-          sources: typeof data.sources_count === 'number' ? data.sources_count : k.sources,
-          entropy: typeof data.entropy === 'number' ? data.entropy : k.entropy,
-        }));
-        setKgLastOk(Date.now());
-      } catch (_) { /* server might not be up yet — kgLastOk stays frozen, UI can show stale */ }
-    };
-    fetchStatus();
-    const id = setInterval(fetchStatus, 5000);
-    return () => clearInterval(id);
-  }, [isAuthenticated]);
-
-  // Poll /api/quality/report every 30 s for heavier metrics (adversarial, PSL pass rate, FTS5).
-  // Backend query scans tables — don't hammer it. Marks `stale` if the last fetch failed
-  // or is older than 90s, so the dashboard can show the data as possibly out-of-date.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    let lastOk = 0;
-    const fetchQuality = async () => {
-      try {
-        const ctrl = new AbortController();
-        const to = setTimeout(() => ctrl.abort(), 12000);
-        const res = await fetch(`http://${getHost()}:3000/api/quality/report`, { signal: ctrl.signal });
-        clearTimeout(to);
-        const d = await res.json();
-        lastOk = Date.now();
-        setQuality({
-          adversarial: typeof d.adversarial_count === 'number' ? d.adversarial_count : 0,
-          psl_pass_rate: typeof d?.psl_calibration?.pass_rate === 'number' ? d.psl_calibration.pass_rate : null,
-          psl_status: d?.psl_calibration?.status ?? null,
-          psl_last_run: d?.psl_calibration?.last_run ?? null,
-          fts5_enabled: !!d.fts5_enabled,
-          distinct_sources: typeof d.distinct_sources === 'number' ? d.distinct_sources : 0,
-          stale: false,
-        });
-      } catch (_) {
-        // Mark existing data stale so the UI can show it faded rather than silently lying.
-        setQuality(q => q ? { ...q, stale: true } : q);
-      }
-    };
-    fetchQuality();
-    const id = setInterval(() => {
-      fetchQuality();
-      if (lastOk && Date.now() - lastOk > 90000) {
-        setQuality(q => q ? { ...q, stale: true } : q);
-      }
-    }, 30000);
-    return () => clearInterval(id);
-  }, [isAuthenticated]);
+  // Three polling hooks — see ./usePolls.ts for the fetch logic. Each manages
+  // its own interval + abort handling; parent just reads the state they return.
+  const host = getHost();
+  const { kg: kgFromPoll, lastOk: kgLastOk } = useStatusPoll(host, isAuthenticated);
+  const qualityFromPoll = useQualityPoll(host, isAuthenticated);
+  const sysInfoFromPoll = useSysInfoPoll(host, isAuthenticated);
+  useEffect(() => { setKg(kgFromPoll); }, [kgFromPoll]);
+  useEffect(() => { if (qualityFromPoll) setQuality(qualityFromPoll); }, [qualityFromPoll]);
+  useEffect(() => { setSysInfo(sysInfoFromPoll); }, [sysInfoFromPoll]);
 
   // ---- Conversations (Claude/ChatGPT/Gemini-style sidebar state) ----
   type Conversation = {
