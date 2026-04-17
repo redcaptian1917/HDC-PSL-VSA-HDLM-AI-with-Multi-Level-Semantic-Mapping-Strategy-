@@ -3167,6 +3167,39 @@ ${cmdList}
           })}
         </div>
 
+        {/* c2-367 / task 94: prominent New Chat button. Sits in the header
+            cluster just before the account menu so power users don't have
+            to dig into the dropdown. Accent-tinted to distinguish from the
+            muted header controls. Hidden on mobile where horizontal space
+            is precious and the ⌘N shortcut + account dropdown cover it. */}
+        {isDesktop && (
+          <button onClick={() => createNewConversation(false)}
+            title='New chat (⌘N)' aria-label='New chat'
+            style={{
+              order: 2, display: 'flex', alignItems: 'center', gap: '6px',
+              padding: `${T.spacing.sm} ${T.spacing.md}`,
+              background: C.accentBg, border: `1px solid ${C.accentBorder}`,
+              color: C.accent, fontWeight: T.typography.weightSemibold,
+              borderRadius: T.radii.sm, cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: T.typography.sizeSm, whiteSpace: 'nowrap',
+              transition: `background ${T.motion.fast}, border-color ${T.motion.fast}`,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = C.accent;
+              e.currentTarget.style.color = '#fff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = C.accentBg;
+              e.currentTarget.style.color = C.accent;
+            }}>
+            <svg width='14' height='14' viewBox='0 0 24 24' fill='none'
+              stroke='currentColor' strokeWidth='2.4' strokeLinecap='round' strokeLinejoin='round'>
+              <line x1='12' y1='5' x2='12' y2='19' />
+              <line x1='5' y1='12' x2='19' y2='12' />
+            </svg>
+            New chat
+          </button>
+        )}
         {/* Right: account on the far right. `order: 3` in the flex header
             pushes it past the tier/theme cluster regardless of DOM order. */}
         <div style={{ position: 'relative', order: 3 }} ref={accountMenuRef}>
