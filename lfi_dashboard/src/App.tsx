@@ -41,7 +41,7 @@ import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
 import { SKILLS, AVATAR_PRESETS, type Skill as CatalogSkill } from './catalogs';
-import { SystemMessage, WebMessage, ToolMessage, UserMessage } from './MessageBubble';
+import { SystemMessage, WebMessage, ToolMessage, UserMessage, AssistantMessage } from './MessageBubble';
 
 hljs.registerLanguage('rust', rust);
 hljs.registerLanguage('javascript', javascript);

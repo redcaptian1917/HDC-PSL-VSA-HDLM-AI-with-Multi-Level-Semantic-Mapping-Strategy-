@@ -206,6 +206,219 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   </div>
 );
 
+export interface AssistantMessageProps {
+  msg: {
+    id: number;
+    content: string;
+    timestamp: number;
+    conclusion_id?: number;
+    reasoning?: string[];
+  };
+  C: any;
+  isMobile: boolean;
+  isDesktop: boolean;
+  isLast: boolean;
+  isThinking: boolean;
+  showReasoning: boolean;
+  developerMode: boolean;
+  reasoningExpanded: boolean;
+  renderBody: (text: string) => React.ReactNode;
+  onToggleReasoning: () => void;
+  onRegenerate: () => void;
+  onCopy: (text: string) => void;
+  onOpenProvenance: (conclusion_id: number) => void;
+  onFollowUpChip: (prompt: string) => void;
+  onFeedbackPositive: () => void;
+  onFeedbackNegative: () => void;
+  formatTime: (ts: number) => string;
+}
+
+// Assistant message — the heaviest bubble. Hover-revealed action bar with copy,
+// regenerate (last turn only), thumbs up/down, timestamp. Follow-up suggestion
+// chips and the reasoning toggle are rendered below when applicable.
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({
+  msg, C, isMobile, isDesktop, isLast, isThinking,
+  showReasoning, developerMode, reasoningExpanded,
+  renderBody, onToggleReasoning, onRegenerate, onCopy,
+  onOpenProvenance, onFollowUpChip, onFeedbackPositive, onFeedbackNegative, formatTime,
+}) => {
+  // Follow-up chips — simple keyword extraction, only on last assistant message
+  // when the body is long enough to have meaningful topics.
+  const chips: string[] = (() => {
+    if (!isLast || msg.content.length <= 40) return [];
+    const words = msg.content.toLowerCase().split(/\s+/).filter(w => w.length > 5);
+    const unique = [...new Set(words)].slice(0, 20);
+    const topics = unique.filter(w => !['about','which','would','could','should','these','those','there','their','really','actually','because','through'].includes(w)).slice(0, 3);
+    if (topics.length === 0) return [];
+    return [
+      topics[0] ? `Tell me more about ${topics[0]}` : null,
+      topics[1] ? `How does ${topics[1]} work?` : null,
+      topics[2] ? `What's the connection to ${topics[2]}?` : null,
+    ].filter(Boolean) as string[];
+  })();
+
+  return (
+    <div
+      onMouseEnter={(e) => { (e.currentTarget.querySelector('.lfi-msg-actions') as HTMLElement)?.style.setProperty('opacity', '1'); }}
+      onMouseLeave={(e) => { (e.currentTarget.querySelector('.lfi-msg-actions') as HTMLElement)?.style.setProperty('opacity', '0'); }}
+      style={{ display: 'flex', justifyContent: 'flex-start' }}>
+      <div style={{ maxWidth: isDesktop ? '80%' : '96%', width: '100%' }}>
+        {/* Response body */}
+        <div style={{
+          padding: '14px 18px',
+          background: C.bgCard,
+          border: `1px solid ${C.border}`,
+          borderRadius: '4px 16px 16px 16px',
+          fontSize: '14px', lineHeight: '1.7',
+          color: C.text,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        }}>
+          {renderBody(msg.content)}
+          {developerMode && msg.conclusion_id != null && (
+            <span title={`Provenance: conclusion #${msg.conclusion_id}`}
+              onClick={() => onOpenProvenance(msg.conclusion_id!)}
+              style={{
+                display: 'inline-block', marginLeft: '8px',
+                padding: '1px 6px', fontSize: '10px',
+                background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                borderRadius: '4px', color: C.textDim,
+                cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace",
+              }}>
+              #{msg.conclusion_id}
+            </span>
+          )}
+        </div>
+
+        {/* Hover-revealed action bar */}
+        <div className='lfi-msg-actions'
+          style={{
+            display: 'flex', gap: '4px', marginTop: '4px',
+            justifyContent: 'flex-end',
+            opacity: isMobile ? 1 : 0,
+            transition: 'opacity 0.15s',
+          }}>
+          <button onClick={() => onCopy(msg.content)} title='Copy message'
+            style={{
+              width: '30px', height: '30px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'transparent', border: 'none',
+              color: C.textMuted, borderRadius: '6px', cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.text; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = C.textMuted; }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+          {isLast && (
+            <button onClick={onRegenerate} title='Regenerate'
+              disabled={isThinking}
+              style={{
+                width: '30px', height: '30px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'transparent', border: 'none',
+                color: C.textMuted, borderRadius: '6px',
+                cursor: isThinking ? 'wait' : 'pointer', fontFamily: 'inherit',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.text; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = C.textMuted; }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="1 4 1 10 7 10"/>
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+              </svg>
+            </button>
+          )}
+          <button onClick={onFeedbackPositive} title='Good response'
+            style={{
+              width: '30px', height: '30px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'transparent', border: 'none',
+              color: C.textMuted, borderRadius: '6px', cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = C.green; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+            </svg>
+          </button>
+          <button onClick={onFeedbackNegative}
+            title='Bad response — tell us what it should have said'
+            style={{
+              width: '30px', height: '30px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'transparent', border: 'none',
+              color: C.textMuted, borderRadius: '6px', cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = C.red; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>
+            </svg>
+          </button>
+          <span style={{
+            fontSize: '10px', color: C.textDim, alignSelf: 'center',
+            padding: '0 8px',
+          }}>{formatTime(msg.timestamp)}</span>
+        </div>
+
+        {/* Follow-up suggestion chips — only on last assistant message with enough content. */}
+        {chips.length > 0 && (
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+            {chips.map((chip, ci) => (
+              <button key={ci}
+                onClick={() => onFollowUpChip(chip)}
+                style={{
+                  padding: '6px 12px', fontSize: '12px',
+                  background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                  color: C.textSecondary, borderRadius: '999px',
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  transition: 'border-color 0.15s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.borderColor = C.accent}
+                onMouseLeave={(e) => e.currentTarget.style.borderColor = C.borderSubtle}>
+                {chip}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Reasoning toggle — gated on user preference + presence of reasoning. */}
+        {showReasoning && msg.reasoning && msg.reasoning.length > 0 && (
+          <div style={{ marginTop: '8px' }}>
+            <button
+              onClick={onToggleReasoning}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                padding: '5px 10px', fontSize: '11px', fontWeight: 600,
+                color: C.textMuted, background: 'transparent',
+                border: `1px solid ${C.borderSubtle}`, borderRadius: '6px',
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+              Show reasoning ({msg.reasoning.length}) {reasoningExpanded ? '\u25B2' : '\u25BC'}
+            </button>
+            {reasoningExpanded && (
+              <div style={{
+                marginTop: '8px', padding: '12px 14px',
+                background: C.bgInput,
+                borderLeft: `3px solid ${C.accent}`,
+                borderRadius: '0 8px 8px 0',
+              }}>
+                {msg.reasoning.map((step, j) => (
+                  <p key={j} style={{ fontSize: '12px', color: C.textSecondary, lineHeight: '1.6', margin: '4px 0' }}>
+                    <span style={{ color: C.accent, fontWeight: 700 }}>[{j}]</span> {step}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const WebMessage: React.FC<{ content: string; C: any; isDesktop: boolean }> = ({ content, C, isDesktop }) => (
   <div style={{
     padding: '14px 16px', borderRadius: '12px',
