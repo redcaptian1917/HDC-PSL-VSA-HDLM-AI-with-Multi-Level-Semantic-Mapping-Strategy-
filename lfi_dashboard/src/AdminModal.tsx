@@ -46,7 +46,12 @@ interface QualityShape {
   distinct_sources?: number;
   fts5_enabled?: boolean;
   psl_calibration?: { pass_rate?: number; status?: string; last_run?: string };
+  // Distribution keyed by bucket label (e.g., '0.0-0.2', '0.2-0.4') OR by
+  // score-name (high/medium/low). We render whichever shape appears.
   quality_distribution?: Record<string, number>;
+  high_quality_count?: number;
+  low_quality_count?: number;
+  average?: number;
 }
 interface SystemShape {
   hostname?: string; os?: string; cpu_count?: number; cpu_model?: string;
@@ -650,17 +655,65 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             <div>
               {err.quality && <AdminErr C={C} msg={err.quality} />}
               {quality ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: T.spacing.md }}>
-                  <DashCard C={C} label='Adversarial' value={quality.adversarial_count != null ? compactNum(quality.adversarial_count) : '—'} color={C.red} />
-                  <DashCard C={C} label='Distinct sources' value={quality.distinct_sources != null ? String(quality.distinct_sources) : '—'} color={C.purple} />
-                  <DashCard C={C} label='PSL pass rate' value={(() => {
-                    const p = pctNorm(quality.psl_calibration?.pass_rate);
-                    return p != null ? `${p.toFixed(1)}%` : '—';
-                  })()} color={C.green} />
-                  <DashCard C={C} label='FTS5 index' value={quality.fts5_enabled ? 'enabled' : 'disabled'} color={quality.fts5_enabled ? C.green : C.red} />
-                  <DashCard C={C} label='PSL status' value={quality.psl_calibration?.status || '—'} color={C.accent} />
-                  <DashCard C={C} label='PSL last run' value={quality.psl_calibration?.last_run || '—'} color={C.textSecondary} />
-                </div>
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
+                    <DashCard C={C} label='Adversarial' value={quality.adversarial_count != null ? compactNum(quality.adversarial_count) : '—'} color={C.red} />
+                    <DashCard C={C} label='Distinct sources' value={quality.distinct_sources != null ? String(quality.distinct_sources) : '—'} color={C.purple} />
+                    <DashCard C={C} label='PSL pass rate' value={(() => {
+                      const p = pctNorm(quality.psl_calibration?.pass_rate);
+                      return p != null ? `${p.toFixed(1)}%` : '—';
+                    })()} color={C.green} />
+                    <DashCard C={C} label='FTS5 index' value={quality.fts5_enabled ? 'enabled' : 'disabled'} color={quality.fts5_enabled ? C.green : C.red} />
+                    <DashCard C={C} label='PSL status' value={quality.psl_calibration?.status || '—'} color={C.accent} />
+                    <DashCard C={C} label='PSL last run' value={quality.psl_calibration?.last_run || '—'} color={C.textSecondary} />
+                  </div>
+                  {/* Quality distribution histogram — only renders when the
+                      backend actually includes the shape. Sorts buckets by
+                      key so numeric bucket labels (0.0-0.2 etc.) come first. */}
+                  {quality.quality_distribution && Object.keys(quality.quality_distribution).length > 0 && (() => {
+                    const entries = Object.entries(quality.quality_distribution).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+                    const max = Math.max(...entries.map(([, v]) => v), 1);
+                    const total = entries.reduce((s, [, v]) => s + v, 0);
+                    return (
+                      <div>
+                        <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+                          Quality distribution
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {entries.map(([bucket, n]) => {
+                            // Color-grade buckets by their label — numeric
+                            // (0.x) low→red→yellow→green; named (low/med/high)
+                            // just map directly.
+                            const numericMid = (() => {
+                              const m = bucket.match(/(\d+\.?\d*)/g);
+                              if (!m) return null;
+                              const nums = m.map(parseFloat);
+                              return (nums.reduce((a, b) => a + b, 0) / nums.length);
+                            })();
+                            const color = numericMid != null
+                              ? (numericMid >= 0.75 ? C.green : numericMid >= 0.5 ? C.yellow : C.red)
+                              : (bucket.includes('high') ? C.green : bucket.includes('low') ? C.red : bucket.includes('med') ? C.yellow : C.accent);
+                            const pct = (n / total) * 100;
+                            return (
+                              <div key={bucket} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
+                                <span style={{ width: '120px', fontSize: '12px', color: C.text, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>{bucket}</span>
+                                <div style={{ flex: 1, background: C.bgInput, height: '18px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
+                                  <div style={{ width: `${(n / max) * 100}%`, height: '100%', background: color, transition: 'width 0.4s' }} />
+                                </div>
+                                <span style={{ width: '96px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>
+                                  {n.toLocaleString()} ({pct.toFixed(1)}%)
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div style={{ marginTop: T.spacing.sm, fontSize: '11px', color: C.textDim, textAlign: 'right' }}>
+                          Total: {total.toLocaleString()}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
               ) : (
                 <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted }}>
                   {loading === 'quality' ? 'Loading…' : 'No quality data loaded.'}
