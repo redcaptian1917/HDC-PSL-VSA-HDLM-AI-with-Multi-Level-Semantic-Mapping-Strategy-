@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { T } from './tokens';
-import { stripMarkdown } from './util';
+import { stripMarkdown, formatRelative } from './util';
 
 // Sub-components of the chat message list. Extracted from App.tsx in stages —
 // system + web first (zero-closure, trivial) so the pattern is proven before
@@ -54,13 +54,26 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
           border: 'none', cursor: 'pointer', fontFamily: 'inherit',
           color: C.text, textAlign: 'left',
         }}>
-        {/* Status dot */}
-        <div style={{
-          width: '8px', height: '8px', borderRadius: '50%',
-          background: statusColor, flexShrink: 0,
-          boxShadow: msg.toolStatus === 'running' ? `0 0 6px ${statusColor}` : 'none',
-          animation: msg.toolStatus === 'running' ? 'scc-bounce 1.4s infinite ease-in-out' : 'none',
-        }} />
+        {/* Status dot. c2-358 / task 67: when running, render a spinner
+            ring (borderLeft accent + borderRight transparent + spin) so the
+            motion reads as "working" rather than the earlier bounce-dot
+            which was read as "alert". Solid dots stay for ok / error. */}
+        {msg.toolStatus === 'running' ? (
+          <div aria-label='tool running' style={{
+            width: '10px', height: '10px', borderRadius: '50%',
+            borderLeft: `2px solid ${C.accent}`,
+            borderRight: `2px solid transparent`,
+            borderTop: `2px solid ${C.accent}`,
+            borderBottom: `2px solid transparent`,
+            animation: 'scc-spin 0.8s linear infinite',
+            boxSizing: 'border-box', flexShrink: 0,
+          }} />
+        ) : (
+          <div style={{
+            width: '8px', height: '8px', borderRadius: '50%',
+            background: statusColor, flexShrink: 0,
+          }} />
+        )}
         {/* Tool name */}
         <span style={{
           fontSize: '13px', fontWeight: 600,
@@ -429,11 +442,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               </span>
             );
           })()}
+          {/* c2-358 / task 63: show relative age (2m ago) for at-a-glance recency;
+              keep the absolute timestamp in the title for precise inspection. */}
           <span title={new Date(msg.timestamp).toLocaleString()}
             style={{
               fontSize: '10px', color: C.textDim, alignSelf: 'center',
               padding: '0 8px',
-            }}>{formatTime(msg.timestamp)}</span>
+            }}>{formatRelative(msg.timestamp)}</span>
         </div>
         {/* Last-message helpfulness nudge — only on the latest assistant reply,
             fades to invisibility once user votes (tracked via onFeedbackPositive/

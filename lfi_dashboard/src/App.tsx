@@ -4506,6 +4506,20 @@ ${cmdList}
                 boxShadow: input ? `0 0 0 3px ${C.accentBg}` : '0 1px 2px rgba(15,17,23,0.24)',
                 display: 'flex', flexDirection: 'column', position: 'relative',
               }}>
+                {/* c2-358 / task 81: subtle always-on character count in the
+                    bottom-right of the input wrapper. Hidden on empty input so
+                    the chrome stays clean. Positioned 60px from the right so
+                    it clears the Send button without overlapping. The louder
+                    >70% meter below takes over once the count matters. */}
+                {input.length > 0 && input.length <= 70000 && (
+                  <div aria-hidden='true' style={{
+                    position: 'absolute', bottom: '8px', right: '60px',
+                    fontSize: T.typography.sizeXs, color: C.textDim,
+                    pointerEvents: 'none', fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {input.length.toLocaleString()}
+                  </div>
+                )}
                 {/* Character counter — silent until >70% of the 100k limit.
                     Amber from 70-95%, red above. Absolute-positioned so it
                     doesn't push the textarea or the actions row. */}
@@ -5058,6 +5072,11 @@ ${cmdList}
         @keyframes scc-bounce {
           0%,80%,100% { transform: scale(0.6); opacity: 0.45; }
           40% { transform: scale(1); opacity: 1; }
+        }
+        /* c2-358 / task 67: tool-running ring spinner. Used in
+           MessageBubble.ToolMessage when toolStatus === 'running'. */
+        @keyframes scc-spin {
+          to { transform: rotate(360deg); }
         }
         /* c0-020 send-feedback: the input container briefly flashes an
            accent-tinted ring right after a message is sent so the user
