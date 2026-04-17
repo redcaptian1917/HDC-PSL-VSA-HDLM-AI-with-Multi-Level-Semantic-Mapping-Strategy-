@@ -1451,6 +1451,22 @@ ${cmdList}
   // Inline rename state for sidebar conversations (replaces browser prompt()).
   const [renamingConvoId, setRenamingConvoId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<string>('');
+  // Cmd+K palette recency counter. Persists to localStorage so frequently
+  // used commands bubble up across sessions.
+  const CMD_RECENCY_KEY = 'lfi_cmd_recency_v1';
+  const [cmdRecency, setCmdRecency] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem(CMD_RECENCY_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  const bumpCmdRecency = (id: string) => {
+    setCmdRecency(prev => {
+      const next = { ...prev, [id]: (prev[id] || 0) + 1 };
+      try { localStorage.setItem(CMD_RECENCY_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
   // c0-027: 3-view app (Chat / Classroom / Admin). Admin is still a modal,
   // but Chat and Classroom are true top-level views that replace each other.
   // Hash-route-aware: #chat / #classroom / #admin hydrate the view on mount
@@ -2323,7 +2339,8 @@ ${cmdList}
             query={cmdQuery} setQuery={setCmdQuery}
             index={cmdIndex} setIndex={setCmdIndex}
             onClose={() => setShowCmdPalette(false)}
-            onItemRun={(id) => logEvent('cmd_palette_run', { id })}
+            onItemRun={(id) => { logEvent('cmd_palette_run', { id }); bumpCmdRecency(id); }}
+            recency={cmdRecency}
           />
         );
       })()}

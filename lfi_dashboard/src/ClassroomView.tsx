@@ -411,11 +411,24 @@ const ReportsTab: React.FC<{ C: any; data: DashboardShape | null; sortedDomains:
   );
 };
 
+interface AuditHistoryEntry { t: number; prompt: string; verdict?: string; passed?: boolean; raw?: any }
+const AUDIT_HISTORY_KEY = 'lfi_audit_history_v1';
+const AUDIT_HISTORY_CAP = 10;
+
 const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | null }> = ({ C, host, data }) => {
   const [auditInput, setAuditInput] = React.useState('');
   const [auditResult, setAuditResult] = React.useState<any>(null);
   const [auditError, setAuditError] = React.useState<string | null>(null);
   const [auditLoading, setAuditLoading] = React.useState(false);
+  // Rolling history of the last 10 audits, persisted to localStorage so
+  // the user can revisit past verdicts across page reloads.
+  const [history, setHistory] = React.useState<AuditHistoryEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem(AUDIT_HISTORY_KEY);
+      return raw ? JSON.parse(raw) as AuditHistoryEntry[] : [];
+    } catch { return []; }
+  });
+  const [expandedHistoryIdx, setExpandedHistoryIdx] = React.useState<number | null>(null);
   const runAudit = async () => {
     const text = auditInput.trim();
     if (!text) return;
@@ -431,12 +444,26 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
       });
       clearTimeout(to);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setAuditResult(await res.json());
+      const json = await res.json();
+      setAuditResult(json);
+      // Push into history (newest first, cap at 10), persist to localStorage.
+      const verdict: string | undefined = json?.verdict || json?.status;
+      const passed: boolean | undefined = typeof json?.pass === 'boolean' ? json.pass
+        : typeof json?.passed === 'boolean' ? json.passed
+        : (verdict && /pass|ok|true/i.test(String(verdict)));
+      const entry: AuditHistoryEntry = { t: Date.now(), prompt: text, verdict, passed, raw: json };
+      const next = [entry, ...history].slice(0, AUDIT_HISTORY_CAP);
+      setHistory(next);
+      try { localStorage.setItem(AUDIT_HISTORY_KEY, JSON.stringify(next)); } catch { /* quota */ }
     } catch (e: any) {
       setAuditError(String(e?.message || e || 'fetch failed'));
     } finally {
       setAuditLoading(false);
     }
+  };
+  const clearHistory = () => {
+    setHistory([]);
+    try { localStorage.removeItem(AUDIT_HISTORY_KEY); } catch {}
   };
   const psl = data?.quality?.psl_calibration;
   return (
@@ -510,6 +537,63 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
           </pre>
         )}
       </div>
+      {/* Rolling audit history — last 10, localStorage-backed */}
+      {history.length > 0 && (
+        <div style={{ marginTop: T.spacing.xl }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+              History ({history.length})
+            </div>
+            <button onClick={clearHistory}
+              style={{
+                padding: '4px 10px', fontSize: '10px', fontWeight: T.typography.weightBold,
+                background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                color: C.textMuted, borderRadius: T.radii.sm, cursor: 'pointer',
+                fontFamily: 'inherit', textTransform: 'uppercase',
+              }}>Clear</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {history.map((h, i) => {
+              const isOpen = expandedHistoryIdx === i;
+              const color = h.passed === true ? C.green : h.passed === false ? C.red : C.textMuted;
+              return (
+                <div key={h.t} style={{
+                  border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
+                  background: C.bgCard, overflow: 'hidden',
+                }}>
+                  <button onClick={() => setExpandedHistoryIdx(isOpen ? null : i)}
+                    aria-expanded={isOpen}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: T.spacing.sm,
+                      padding: '10px 12px', background: 'transparent', border: 'none',
+                      cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                    }}>
+                    <span style={{
+                      width: '8px', height: '8px', borderRadius: '50%', background: color, flexShrink: 0,
+                    }} aria-hidden='true' />
+                    <span style={{ fontSize: '11px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>
+                      {new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <span style={{ fontSize: '12px', color: C.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {h.prompt}
+                    </span>
+                    {h.verdict && <span style={{ fontSize: '11px', color, fontFamily: 'ui-monospace, monospace', fontWeight: T.typography.weightBold }}>{h.verdict}</span>}
+                    <span style={{ color: C.textDim, fontSize: '10px' }}>{isOpen ? '▴' : '▾'}</span>
+                  </button>
+                  {isOpen && (
+                    <pre style={{
+                      margin: 0, padding: '10px 12px', background: C.bgInput,
+                      borderTop: `1px solid ${C.borderSubtle}`,
+                      fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '11px',
+                      color: C.text, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '240px',
+                    }}>{JSON.stringify(h.raw, null, 2)}</pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

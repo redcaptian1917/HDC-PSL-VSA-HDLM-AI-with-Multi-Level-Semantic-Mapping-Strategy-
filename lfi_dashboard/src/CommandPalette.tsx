@@ -23,10 +23,13 @@ export interface CommandPaletteProps {
   setIndex: React.Dispatch<React.SetStateAction<number>>;
   onClose: () => void;
   onItemRun?: (id: string) => void;
+  // Map of item.id → run-count. When empty query, items with higher counts
+  // bubble to the top; otherwise recency boosts fuzzy match score.
+  recency?: Record<string, number>;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
-  C, isMobile, items, query, setQuery, index, setIndex, onClose, onItemRun,
+  C, isMobile, items, query, setQuery, index, setIndex, onClose, onItemRun, recency,
 }) => {
   const q = query.trim().toLowerCase();
   const score = (t: string) => {
@@ -40,8 +43,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     for (let i = 0; i < lt.length && j < q.length; i++) if (lt[i] === q[j]) j++;
     return j === q.length ? 50 : 0;
   };
+  // Recency boost: log-scaled, capped to avoid dominating pure matches.
+  const recencyBoost = (id: string): number => {
+    const n = recency?.[id] ?? 0;
+    if (n <= 0) return 0;
+    return Math.min(40, Math.log2(n + 1) * 10);
+  };
   const filtered = items
-    .map(it => ({ it, s: score(it.label) + score(it.hint) * 0.4 }))
+    .map(it => ({ it, s: score(it.label) + score(it.hint) * 0.4 + recencyBoost(it.id) }))
     .filter(x => x.s > 0)
     .sort((a, b) => b.s - a.s)
     .slice(0, 24)
