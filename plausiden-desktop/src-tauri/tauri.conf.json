@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.plausiden.ai",
   "build": {
-    "frontendDist": "../lfi_dashboard/dist",
+    "frontendDist": "../../lfi_dashboard/dist",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "cd ../lfi_dashboard && npm run build"
+    "beforeBuildCommand": "cd ../../lfi_dashboard && npm run build"
   },
   "app": {
     "windows": [
