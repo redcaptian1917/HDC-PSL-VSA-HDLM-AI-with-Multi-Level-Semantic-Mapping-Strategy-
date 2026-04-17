@@ -2487,6 +2487,56 @@ ${cmdList}
         </div>
       </header>
 
+      {/* ========== COMPACT RESOURCE MONITOR BAR (c0-011 #7) ==========
+          One-line always-visible strip beneath the header showing CPU temp,
+          RAM used/total, disk free, facts count. Gated on developerMode so
+          normal users see the slimmer chat-focused UI. */}
+      {settings.developerMode && (
+        <div role='status' aria-label='System resources'
+          style={{
+            display: 'flex', alignItems: 'center', gap: '14px',
+            padding: '6px 14px', background: C.bgCard,
+            borderBottom: `1px solid ${C.borderSubtle}`,
+            fontSize: '11px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            color: C.textMuted, flexShrink: 0, overflowX: 'auto', whiteSpace: 'nowrap',
+          }}>
+          <span title='CPU temperature'>
+            CPU <span style={{ color: stats.cpu_temp_c > 65 ? C.red : stats.cpu_temp_c > 50 ? C.yellow : C.green, fontWeight: 700 }}>
+              {stats.cpu_temp_c.toFixed(0)}°C
+            </span>
+          </span>
+          <span title={`Used ${ramUsedFmt.value} ${ramUsedFmt.unit} of ${ramTotalFmt.value} ${ramTotalFmt.unit} total`}>
+            RAM <span style={{ color: C.accent, fontWeight: 700 }}>{ramLabel} {ramUnit}</span>
+          </span>
+          {sysInfo.disk_free != null && sysInfo.disk_total != null && (() => {
+            const dp = diskPressure(sysInfo.disk_free, sysInfo.disk_total);
+            if (!dp) return null;
+            const color = dp.usedPct > 90 ? C.red : dp.usedPct > 75 ? C.yellow : C.green;
+            return (
+              <span title={`${dp.usedPct.toFixed(0)}% used · ${dp.freeGb.toFixed(1)} GB free`}>
+                DISK <span style={{ color, fontWeight: 700 }}>{dp.freeGb.toFixed(1)} GB free</span>
+              </span>
+            );
+          })()}
+          <span title='Knowledge facts'>
+            FACTS <span style={{ color: C.purple, fontWeight: 700 }}>{kg.facts ? compactNum(kg.facts) : (kgLastOk ? '0' : kgLastError ? 'offline' : '…')}</span>
+          </span>
+          <span title='Current tier'>
+            TIER <span style={{ color: tierColor(currentTier), fontWeight: 700 }}>{currentTier}</span>
+          </span>
+          {stats.is_throttled && (
+            <span style={{ color: C.red, fontWeight: 800, textTransform: 'uppercase' }}>⚠ Throttled</span>
+          )}
+          {latencyMs != null && (
+            <span title='Avg /api/status RTT'>
+              RTT <span style={{ color: latencyMs < 100 ? C.green : latencyMs < 500 ? C.yellow : C.red, fontWeight: 700 }}>
+                {Math.round(latencyMs)}ms
+              </span>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* ========== TELEMETRY PANEL (mobile/tablet, collapsible) ========== */}
       {!isDesktop && showTelemetry && (
         <div style={{
