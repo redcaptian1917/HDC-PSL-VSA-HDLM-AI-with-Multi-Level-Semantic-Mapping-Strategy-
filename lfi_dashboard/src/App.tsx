@@ -1046,6 +1046,16 @@ ${cmdList}
       else if (mod && e.shiftKey && k === 'k') { e.preventDefault(); setShowKnowledge(true); fetchKnowledge(); }
       else if (mod && e.shiftKey && k === 'd') { e.preventDefault(); const themes: Array<typeof settings.theme> = ['dark','light','midnight','forest','sunset','rose','contrast']; const idx = themes.indexOf(settings.theme); const next = themes[(idx+1) % themes.length]; setSettings(s => ({...s, theme: next})); showToast(`Theme: ${next}`); }
       else if (mod && k === 'b') { e.preventDefault(); setShowConvoSidebar(v => !v); }
+      else if (mod && e.shiftKey && k === 'r') {
+        // Cmd/Ctrl+Shift+R = regenerate last assistant response. Browser's
+        // native Cmd+R is a hard reload, so we claim Shift+R to avoid conflict.
+        const hasAssistant = messages.some(m => m.role === 'assistant');
+        if (hasAssistant && !isThinking) {
+          e.preventDefault();
+          regenerateLast();
+          showToast('Regenerating…');
+        }
+      }
       else if (mod && e.shiftKey && k === 'f') {
         e.preventDefault();
         setShowChatSearch(v => {
@@ -3180,8 +3190,28 @@ ${cmdList}
                 borderRadius: '16px',
                 transition: 'border-color 0.2s, box-shadow 0.2s',
                 boxShadow: input ? `0 0 0 4px ${C.accentGlow}` : `0 2px 18px rgba(0,0,0,0.12)`,
-                display: 'flex', flexDirection: 'column',
+                display: 'flex', flexDirection: 'column', position: 'relative',
               }}>
+                {/* Character counter — silent until >70% of the 100k limit.
+                    Amber from 70-95%, red above. Absolute-positioned so it
+                    doesn't push the textarea or the actions row. */}
+                {input.length > 70000 && (() => {
+                  const pct = input.length / 100000;
+                  const color = pct > 0.95 ? C.red : C.yellow;
+                  return (
+                    <div aria-live='polite'
+                      style={{
+                        position: 'absolute', top: '6px', right: '14px',
+                        fontSize: '10px', fontWeight: 700,
+                        color, fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                        background: pct > 0.95 ? C.redBg : C.accentBg,
+                        padding: '2px 6px', borderRadius: '4px',
+                        pointerEvents: 'none',
+                      }}>
+                      {input.length.toLocaleString()} / 100,000
+                    </div>
+                  );
+                })()}
               <textarea
                 ref={inputRef}
                 aria-label='Chat message input'
