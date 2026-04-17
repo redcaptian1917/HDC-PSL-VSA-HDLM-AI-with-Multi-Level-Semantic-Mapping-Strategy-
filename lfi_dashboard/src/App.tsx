@@ -209,33 +209,9 @@ const SovereignCommandConsole: React.FC = () => {
     axiom_pass_rate: 1.0, is_throttled: false, logic_density: 0
   });
 
-  // Knowledge graph counters pulled periodically from /api/status so the
-  // telemetry cards reflect state that actually changes as LFI learns.
-  const [kg, setKg] = useState<{ facts: number; concepts: number; sources: number; entropy: number }>(
-    { facts: 0, concepts: 0, sources: 0, entropy: 0 }
-  );
-  // Heavier quality metrics (adversarial count, PSL pass rate, FTS5, source count, last-calibration)
-  // pulled from /api/quality/report on a slower cadence. Null = not yet fetched.
-  const [quality, setQuality] = useState<{
-    adversarial: number;
-    psl_pass_rate: number | null;
-    psl_status: string | null;
-    psl_last_run: string | null;
-    fts5_enabled: boolean;
-    distinct_sources: number;
-    stale: boolean;
-  } | null>(null);
-
-  // Host info pulled once from /api/system/info so the sidebar can show
-  // what device the user is on (OS + hostname).
-  const [sysInfo, setSysInfo] = useState<{
-    hostname?: string;
-    os?: string;
-    cpu_count?: number;
-    cpu_model?: string;
-    disk_free?: number;
-    disk_total?: number;
-  }>({});
+  // Knowledge-graph counters, quality metrics, and host info all come from the
+  // polling hooks defined later (useStatusPoll / useQualityPoll / useSysInfoPoll).
+  // Nothing else ever writes to these, so no local state is needed.
 
   // Persistent settings (localStorage-backed). A single object keeps storage
   // compact and makes future additions one-line.
@@ -926,12 +902,9 @@ ${cmdList}
   // Three polling hooks — see ./usePolls.ts for the fetch logic. Each manages
   // its own interval + abort handling; parent just reads the state they return.
   const host = getHost();
-  const { kg: kgFromPoll, lastOk: kgLastOk } = useStatusPoll(host, isAuthenticated);
-  const qualityFromPoll = useQualityPoll(host, isAuthenticated);
-  const sysInfoFromPoll = useSysInfoPoll(host, isAuthenticated);
-  useEffect(() => { setKg(kgFromPoll); }, [kgFromPoll]);
-  useEffect(() => { if (qualityFromPoll) setQuality(qualityFromPoll); }, [qualityFromPoll]);
-  useEffect(() => { setSysInfo(sysInfoFromPoll); }, [sysInfoFromPoll]);
+  const { kg, lastOk: kgLastOk } = useStatusPoll(host, isAuthenticated);
+  const quality = useQualityPoll(host, isAuthenticated);
+  const sysInfo = useSysInfoPoll(host, isAuthenticated);
 
   // ---- Conversations (Claude/ChatGPT/Gemini-style sidebar state) ----
   type Conversation = {
