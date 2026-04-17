@@ -22,6 +22,19 @@ export const formatRam = (mb: number): { value: string; unit: string } => {
 export const formatTime = (ts: number): string =>
   new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+// Epoch-ms → day-bucket label ("Today", "Yesterday", "Apr 15"). Used for the
+// sticky day separators in the chat list.
+export const formatDayBucket = (ts: number, now = Date.now()): string => {
+  const d = new Date(ts);
+  const today = new Date(now);
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(today) - startOfDay(d)) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: today.getFullYear() === d.getFullYear() ? undefined : 'numeric' });
+};
+
 // Epoch-ms → relative-time string ("3m ago", "2h ago", "Apr 17"). Thresholds
 // tuned so a 'right now' feels responsive but older items fall back to dates.
 export const formatRelative = (ts: number, now = Date.now()): string => {

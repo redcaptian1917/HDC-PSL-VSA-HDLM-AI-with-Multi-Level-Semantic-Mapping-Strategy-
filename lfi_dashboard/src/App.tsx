@@ -36,7 +36,7 @@ import css from 'highlight.js/lib/languages/css';
 import xml from 'highlight.js/lib/languages/xml';
 import go from 'highlight.js/lib/languages/go';
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportAllAsJson, formatRelative } from './util';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportAllAsJson, formatRelative, formatDayBucket } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -1495,6 +1495,7 @@ ${cmdList}
     C, themeKey: settings.theme,
     onCopy: copyWithToast,
     onCopyEvent: (lang, length) => logEvent('code_copied', { lang, length }),
+    highlight: chatSearch || undefined,
   };
   const renderMessageBody = (text: string) => renderMdBody(text, mdCtx);
 
@@ -2712,8 +2713,31 @@ ${cmdList}
                 <div ref={messagesEndRef} />
               </>
             )}
-            renderMessage={(msg) => (
+            renderMessage={(msg, index) => (
               <>
+                {(() => {
+                  // Day separator: show when this message starts a new day vs
+                  // the previous visible one. Sticky positioning would require
+                  // restructuring Virtuoso scroll; a static separator is enough
+                  // to give users their bearings while scrolling history.
+                  const prev = index > 0 ? messages[index - 1] : null;
+                  const sameDay = prev && new Date(prev.timestamp).toDateString() === new Date(msg.timestamp).toDateString();
+                  if (sameDay) return null;
+                  return (
+                    <div role='separator' aria-label={formatDayBucket(msg.timestamp)}
+                      style={{
+                        textAlign: 'center', margin: '12px 0 18px',
+                        fontSize: '11px', fontWeight: 700,
+                        color: C.textMuted, textTransform: 'uppercase',
+                        letterSpacing: '0.10em',
+                        display: 'flex', alignItems: 'center', gap: '12px',
+                      }}>
+                      <span style={{ flex: 1, height: '1px', background: C.borderSubtle }} />
+                      <span>{formatDayBucket(msg.timestamp)}</span>
+                      <span style={{ flex: 1, height: '1px', background: C.borderSubtle }} />
+                    </div>
+                  );
+                })()}
                 {msg.role === 'system' && <SystemMessage content={msg.content} C={C} />}
                 {msg.role === 'web' && <WebMessage content={msg.content} C={C} isDesktop={isDesktop} />}
                 {msg.role === 'tool' && (

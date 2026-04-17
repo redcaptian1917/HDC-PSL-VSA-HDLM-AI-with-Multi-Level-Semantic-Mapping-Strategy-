@@ -10,7 +10,26 @@ export interface MarkdownCtx {
   themeKey: string;     // settings.theme — used to pick light/dark fenced-code background
   onCopy?: (text: string) => void;
   onCopyEvent?: (lang: string, length: number) => void;
+  // Optional case-insensitive substring to wrap with <mark> in plain-text
+  // segments. Driven by Cmd+Shift+F in-conversation search. Skip code blocks
+  // and links to avoid mangling formatting.
+  highlight?: string;
 }
+
+// Wrap occurrences of `query` (case-insensitive) inside a plain-text string
+// with <mark>. Returns React node. No-op if query is empty. Uses split with
+// a capturing group, so odd indices are matches and even indices are
+// surrounding text — no stateful regex needed.
+const wrapHighlight = (text: string, query: string | undefined, baseKey: string): React.ReactNode => {
+  if (!query) return text;
+  const q = query.trim();
+  if (!q) return text;
+  const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i');
+  const parts = text.split(re);
+  return parts.map((p, i) => i % 2 === 1
+    ? <mark key={`${baseKey}-h${i}`} style={{ background: 'rgba(255,211,107,0.45)', color: 'inherit', padding: '0 1px', borderRadius: '2px' }}>{p}</mark>
+    : p);
+};
 
 export const renderInlineMd = (raw: string, baseKey: string, ctx: MarkdownCtx): React.ReactNode[] => {
   const { C, themeKey } = ctx;
@@ -44,7 +63,7 @@ export const renderInlineMd = (raw: string, baseKey: string, ctx: MarkdownCtx): 
               style={{ color: C.accent, textDecoration: 'underline' }}
             >{linkMatch[1]}</a>);
           } else if (lp) {
-            out.push(<span key={`${baseKey}-t${i}-${j}-${k}`}>{lp}</span>);
+            out.push(<span key={`${baseKey}-t${i}-${j}-${k}`}>{wrapHighlight(lp, ctx.highlight, `${baseKey}-t${i}-${j}-${k}`)}</span>);
           }
         });
       }
