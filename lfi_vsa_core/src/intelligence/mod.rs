@@ -57,3 +57,6 @@ pub use serial_streamer::SerialStreamer;
 pub mod camel_barrier;
 pub mod knowledge_benchmark;
 pub mod storage_tiering;
+pub mod data_connector;
+
+pub use data_connector::{DataSourceRegistry, DataSourceConfig, SourceType, IngestResult, ColumnMapping};
