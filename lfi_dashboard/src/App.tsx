@@ -42,13 +42,16 @@ import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
 import { SKILLS, AVATAR_PRESETS, type Skill as CatalogSkill } from './catalogs';
 import { SystemMessage, WebMessage, ToolMessage, UserMessage, AssistantMessage } from './MessageBubble';
-import { TicTacToeModal } from './TicTacToeModal';
-import { KnowledgeBrowser } from './KnowledgeBrowser';
-import { ActivityModal } from './ActivityModal';
-import { CommandPalette, type CmdPaletteItem } from './CommandPalette';
+// Code-splitting: the overlays below are only rendered on user action, so we
+// load their code on demand. Cuts the initial JS bundle by ~1000 lines of TSX.
+import { type CmdPaletteItem } from './CommandPalette';
 import { DARK, THEMES } from './themes';
-import { SettingsModal } from './SettingsModal';
 import { WelcomeScreen } from './WelcomeScreen';
+const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
+const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
+const ActivityModal = React.lazy(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })));
+const CommandPalette = React.lazy(() => import('./CommandPalette').then(m => ({ default: m.CommandPalette })));
+const SettingsModal = React.lazy(() => import('./SettingsModal').then(m => ({ default: m.SettingsModal })));
 
 hljs.registerLanguage('rust', rust);
 hljs.registerLanguage('javascript', javascript);
@@ -1917,6 +1920,7 @@ ${cmdList}
   );
 
   return (
+    <React.Suspense fallback={null}>
     <div style={{
       display: 'flex', flexDirection: 'column', height: '100vh', width: '100%',
       background: C.bg, color: C.text,
@@ -3440,6 +3444,7 @@ ${cmdList}
         .eruda-entry-btn { bottom: 80px !important; right: 10px !important; }
       `}</style>
     </div>
+    </React.Suspense>
   );
 };
 
