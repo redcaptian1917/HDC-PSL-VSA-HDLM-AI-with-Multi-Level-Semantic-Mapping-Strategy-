@@ -723,14 +723,48 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
           }}>{auditError}</div>
         )}
         {auditResult && (
-          <pre style={{
-            marginTop: T.spacing.md, padding: T.spacing.md, background: C.bgInput,
-            border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
-            fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: T.typography.sizeSm,
-            color: C.text, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '320px',
-          }}>
-            {JSON.stringify(auditResult, null, 2)}
-          </pre>
+          <>
+            {/* c2-364 / task 143: confidence meter above the JSON. Reads
+                from the common 'confidence' / 'score' / 'probability' fields;
+                skipped entirely if none is present. Gradient red -> yellow
+                -> green via threshold color, not a CSS gradient, so the
+                color jumps rather than interpolates -- easier to read at
+                a glance than a smooth rainbow. */}
+            {(() => {
+              const raw = (auditResult && typeof auditResult === 'object')
+                ? (auditResult.confidence ?? auditResult.score ?? auditResult.probability)
+                : null;
+              const n = typeof raw === 'number' ? raw : null;
+              if (n == null) return null;
+              const v01 = Math.max(0, Math.min(1, n > 1.5 ? n / 100 : n));
+              const col = v01 < 0.33 ? C.red : v01 < 0.67 ? C.yellow : C.green;
+              return (
+                <div style={{
+                  marginTop: T.spacing.md, display: 'flex',
+                  alignItems: 'center', gap: T.spacing.sm,
+                }}>
+                  <span style={{ width: '96px', fontSize: T.typography.sizeSm, color: C.textMuted }}>
+                    Confidence
+                  </span>
+                  <BarChart C={C} value={v01 * 100} color={col} height='12px'
+                    trackBg={C.bgInput} style={{ flex: 1 }} />
+                  <span style={{
+                    width: '56px', textAlign: 'right',
+                    fontSize: T.typography.sizeSm, color: col,
+                    fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold,
+                  }}>{(v01 * 100).toFixed(0)}%</span>
+                </div>
+              );
+            })()}
+            <pre style={{
+              marginTop: T.spacing.md, padding: T.spacing.md, background: C.bgInput,
+              border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
+              fontFamily: T.typography.fontMono, fontSize: T.typography.sizeSm,
+              color: C.text, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '320px',
+            }}>
+              {JSON.stringify(auditResult, null, 2)}
+            </pre>
+          </>
         )}
       </div>
       {/* Rolling audit history — last 10, localStorage-backed */}
