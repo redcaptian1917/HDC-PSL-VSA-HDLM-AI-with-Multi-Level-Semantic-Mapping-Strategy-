@@ -91,6 +91,30 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
     return () => clearInterval(id);
   }, [refetch]);
 
+  // Parse the latest line of recent_training_log, which looks like:
+  //   "[2026-04-16T20:16:21-04:00] cycle=696 domain=physics done"
+  // Returns the parsed pieces plus an age in seconds so the UI can show
+  // "2m ago · domain=physics cycle=696".
+  const lastCycle = (() => {
+    const log: string[] | undefined = accuracy?.recent_training_log;
+    if (!Array.isArray(log) || log.length === 0) return null;
+    for (let i = log.length - 1; i >= 0; i--) {
+      const line = log[i];
+      const m = line.match(/^\[([^\]]+)\] cycle=(\d+) domain=(\w+) (\w+)/);
+      if (m) {
+        const when = Date.parse(m[1]);
+        if (!Number.isNaN(when)) {
+          return {
+            ts: when,
+            ageSec: Math.max(0, Math.floor((Date.now() - when) / 1000)),
+            cycle: m[2], domain: m[3], state: m[4],
+          };
+        }
+      }
+    }
+    return null;
+  })();
+
   const totalFacts: number | null = accuracy?.total_facts ?? totalFactsFallback ?? null;
   const adversarialFacts: number | null = accuracy?.adversarial_facts ?? null;
   const psl = accuracy?.psl_calibration || null;
@@ -154,8 +178,40 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
     );
   }
 
+  // Human-friendly "N min ago" / "N hr ago" from a seconds age.
+  const ageLabel = (sec: number): string => {
+    if (sec < 60) return `${sec}s ago`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+    return `${Math.floor(sec / 86400)}d ago`;
+  };
+
   return (
     <div>
+      {/* Most recent training cycle — surfaces a single concrete "thing just happened"
+          signal so the dashboard feels alive even when the other counters haven't moved. */}
+      {lastCycle && (
+        <div style={{
+          padding: '10px 14px', marginBottom: '14px', borderRadius: '8px',
+          background: lastCycle.ageSec < 300 ? C.greenBg : C.bgInput,
+          border: `1px solid ${lastCycle.ageSec < 300 ? C.greenBorder : C.borderSubtle}`,
+          display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px',
+        }}>
+          <span
+            className={lastCycle.ageSec < 300 ? 'lfi-trainer-pulse' : undefined}
+            style={{
+              display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%',
+              background: lastCycle.ageSec < 300 ? C.green : C.textDim,
+            }}
+          />
+          <span style={{ color: C.textMuted, fontWeight: 600 }}>Most recent cycle</span>
+          <span style={{ color: C.text }}>#{lastCycle.cycle}</span>
+          <span style={{ color: C.accent, fontWeight: 600 }}>{lastCycle.domain}</span>
+          <span style={{ color: C.textMuted }}>{lastCycle.state}</span>
+          <span style={{ marginLeft: 'auto', color: C.textDim, fontSize: '11px' }}>{ageLabel(lastCycle.ageSec)}</span>
+        </div>
+      )}
+
       {/* Summary cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
         <div style={{ padding: '14px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: '10px', textAlign: 'center' }}>
