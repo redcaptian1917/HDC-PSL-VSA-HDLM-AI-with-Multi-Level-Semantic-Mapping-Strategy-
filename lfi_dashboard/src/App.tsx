@@ -2002,8 +2002,8 @@ ${cmdList}
           }}>
             <pre style={{
               margin: '0 auto 18px', color: C.accent,
-              fontSize: '32px', fontWeight: 800, letterSpacing: '0.04em',
-              textShadow: `0 0 24px ${C.accentGlow}`,
+              fontSize: '32px', fontWeight: 700, letterSpacing: '-0.01em',
+              // c0-019: no glow/textShadow. Crisp plain title.
             }}>
             PlausiDen <span style={{ opacity: 0.7 }}>AI</span>
             </pre>
