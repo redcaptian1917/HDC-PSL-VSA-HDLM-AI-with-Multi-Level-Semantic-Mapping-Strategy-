@@ -75,7 +75,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
         <span style={{
           padding: '2px 8px', fontSize: '10px', fontWeight: 700,
           background: statusBg, color: statusColor,
-          borderRadius: '4px', textTransform: 'uppercase',
+          borderRadius: T.radii.sm, textTransform: 'uppercase',
           flexShrink: 0,
         }}>{msg.toolStatus || 'done'}</span>
         {msg.toolDuration != null && (
@@ -95,7 +95,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
             <div style={{ marginBottom: '8px' }}>
               <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>Input</div>
               <pre style={{
-                padding: '8px 10px', background: C.bgInput, borderRadius: '6px',
+                padding: '8px 10px', background: C.bgInput, borderRadius: T.radii.md,
                 fontFamily: T.typography.fontMono,
                 fontSize: '11.5px', color: C.textSecondary,
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
@@ -106,7 +106,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
             <div>
               <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>Output</div>
               <pre style={{
-                padding: '8px 10px', background: C.bgInput, borderRadius: '6px',
+                padding: '8px 10px', background: C.bgInput, borderRadius: T.radii.md,
                 fontFamily: T.typography.fontMono,
                 fontSize: '11.5px', color: C.textSecondary,
                 whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0,
@@ -163,7 +163,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
               width: '28px', height: '28px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'transparent', border: 'none',
-              color: C.textMuted, cursor: 'pointer', borderRadius: '6px',
+              color: C.textMuted, cursor: 'pointer', borderRadius: T.radii.md,
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
@@ -180,7 +180,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
             width: '28px', height: '28px',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: 'transparent', border: 'none',
-            color: C.textMuted, cursor: 'pointer', borderRadius: '6px',
+            color: C.textMuted, cursor: 'pointer', borderRadius: T.radii.md,
           }}
           onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
@@ -209,7 +209,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
           <button onClick={onCancelEdit}
             style={{ padding: '6px 14px', fontSize: '12px', background: 'transparent',
-              border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: '6px',
+              border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: T.radii.md,
               cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
           <button onClick={() => {
             const trimmed = editText.trim();
@@ -218,7 +218,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           }}
             style={{ padding: '6px 14px', fontSize: '12px',
               background: C.accent, border: 'none', color: '#fff',
-              borderRadius: '6px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+              borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
             Send
           </button>
         </div>
@@ -326,7 +326,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 display: 'inline-block', marginLeft: '8px',
                 padding: '1px 6px', fontSize: '10px',
                 background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
-                borderRadius: '4px', color: C.textDim,
+                borderRadius: T.radii.sm, color: C.textDim,
                 cursor: 'pointer', fontFamily: T.typography.fontMono,
               }}>
               #{msg.conclusion_id}
@@ -354,7 +354,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               width: '30px', height: '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'transparent', border: 'none',
-              color: C.textMuted, borderRadius: '6px', cursor: 'pointer',
+              color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
               fontFamily: 'inherit',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.text; }}
@@ -371,7 +371,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 width: '30px', height: '30px',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 background: 'transparent', border: 'none',
-                color: C.textMuted, borderRadius: '6px',
+                color: C.textMuted, borderRadius: T.radii.md,
                 cursor: isThinking ? 'wait' : 'pointer', fontFamily: 'inherit',
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.text; }}
@@ -387,7 +387,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               width: '30px', height: '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'transparent', border: 'none',
-              color: C.textMuted, borderRadius: '6px', cursor: 'pointer',
+              color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = C.green; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; }}>
@@ -402,7 +402,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               width: '30px', height: '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'transparent', border: 'none',
-              color: C.textMuted, borderRadius: '6px', cursor: 'pointer',
+              color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = C.red; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; }}>
@@ -422,7 +422,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 title={`Model confidence on this response: ${pct}%`}
                 style={{
                   fontSize: '10px', fontWeight: 700, color, background: bg,
-                  padding: '2px 8px', borderRadius: '4px', alignSelf: 'center',
+                  padding: '2px 8px', borderRadius: T.radii.sm, alignSelf: 'center',
                   fontFamily: T.typography.fontMono,
                 }}>
                 {pct}% confident
@@ -455,7 +455,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 style={{
                   padding: '6px 12px', fontSize: '12px',
                   background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
-                  color: C.textSecondary, borderRadius: '999px',
+                  color: C.textSecondary, borderRadius: T.radii.pill,
                   cursor: 'pointer', fontFamily: 'inherit',
                   transition: 'border-color 0.15s',
                 }}
@@ -478,7 +478,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '5px 10px', fontSize: '11px', fontWeight: 600,
                 color: C.textMuted, background: 'transparent',
-                border: `1px solid ${C.borderSubtle}`, borderRadius: '6px',
+                border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}>
               Show reasoning ({msg.reasoning.length}) {reasoningExpanded ? '\u25B2' : '\u25BC'}
@@ -550,7 +550,7 @@ const ReasoningSteps: React.FC<{ C: any; steps: string[] }> = ({ C, steps }) => 
 
 export const WebMessage: React.FC<{ content: string; C: any; isDesktop: boolean }> = React.memo(({ content, C, isDesktop }) => (
   <div style={{
-    padding: '14px 16px', borderRadius: '12px',
+    padding: '14px 16px', borderRadius: T.radii.xxl,
     background: C.greenBg, border: `1px solid ${C.greenBorder}`,
     maxWidth: isDesktop ? '75%' : '100%',
   }}>

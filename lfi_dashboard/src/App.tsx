@@ -4220,7 +4220,7 @@ ${cmdList}
                   position: 'absolute', top: '8px', left: '50%',
                   transform: 'translateX(-50%)',
                   zIndex: T.z.sticky, pointerEvents: 'none',
-                  padding: '4px 12px', borderRadius: '999px',
+                  padding: '4px 12px', borderRadius: T.radii.pill,
                   background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
                   boxShadow: T.shadows.cardLight,
                   fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
@@ -4852,7 +4852,7 @@ ${cmdList}
                       display: 'flex', alignItems: 'center', gap: '6px',
                       padding: '5px 10px', fontSize: '11.5px', fontWeight: 600,
                       background: C.accentBg, border: `1px solid ${C.accentBorder}`,
-                      color: C.accent, borderRadius: '999px',
+                      color: C.accent, borderRadius: T.radii.pill,
                       cursor: 'pointer', fontFamily: 'inherit',
                     }}>
                     {activeSkillMeta.icon}

@@ -74,7 +74,7 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
         {error && !loading && (
           <div role='alert' style={{
             padding: '16px 18px', marginBottom: T.spacing.lg,
-            background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: '10px',
+            background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.xl,
             display: 'flex', flexDirection: 'column', gap: T.spacing.sm,
           }}>
             <div style={{ fontSize: T.typography.sizeMd, fontWeight: 700, color: C.red }}>Could not load knowledge</div>
@@ -86,7 +86,7 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
                 style={{
                   alignSelf: 'flex-start', padding: '6px 14px', fontSize: T.typography.sizeSm, fontWeight: 700,
                   background: C.accentBg, border: `1px solid ${C.accentBorder}`, color: C.accent,
-                  borderRadius: '6px', cursor: 'pointer', fontFamily: 'inherit',
+                  borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
                 }}>Retry</button>
             )}
           </div>

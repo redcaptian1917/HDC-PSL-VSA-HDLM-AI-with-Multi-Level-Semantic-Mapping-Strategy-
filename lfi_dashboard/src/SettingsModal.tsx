@@ -245,7 +245,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   style={{
                     padding: '14px', background: preview.bgCard,
                     border: `2px solid ${picked ? C.accent : C.border}`,
-                    borderRadius: '12px', cursor: 'pointer', fontFamily: 'inherit',
+                    borderRadius: T.radii.xxl, cursor: 'pointer', fontFamily: 'inherit',
                     textAlign: 'left',
                     // Solid ring replaces the former glow so selection stays
                     // obvious on the flat-no-neon palette.
@@ -303,7 +303,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       ...s,
                       customTheme: { ...(s.customTheme || { bg: C.bg, accent: C.accent, text: C.text, green: C.green, red: C.red }), [key]: e.target.value },
                     }))}
-                    style={{ width: '32px', height: '32px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: 'transparent' }} />
+                    style={{ width: '32px', height: '32px', border: 'none', borderRadius: T.radii.md, cursor: 'pointer', background: 'transparent' }} />
                   <span style={{ fontSize: T.typography.sizeSm, color: C.textSecondary }}>{label}</span>
                 </label>
               ))}
@@ -313,7 +313,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 style={{
                   marginTop: '10px', padding: '6px 14px', fontSize: T.typography.sizeXs,
                   background: 'transparent', border: `1px solid ${C.border}`,
-                  color: C.textMuted, borderRadius: '6px', cursor: 'pointer', fontFamily: 'inherit',
+                  color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
                 }}>Reset custom colors</button>
             )}
           </div>

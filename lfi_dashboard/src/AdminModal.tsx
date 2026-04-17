@@ -1237,7 +1237,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               padding: '3px 10px', fontSize: T.typography.sizeXs,
                               background: active ? C.accentBg : C.bgInput,
                               border: `1px solid ${active ? C.accentBorder : C.borderSubtle}`,
-                              color: C.text, borderRadius: '999px', cursor: 'pointer',
+                              color: C.text, borderRadius: T.radii.pill, cursor: 'pointer',
                               fontFamily: 'inherit', fontWeight: T.typography.weightSemibold,
                             }}>
                             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: dotColor }} aria-hidden='true' />
