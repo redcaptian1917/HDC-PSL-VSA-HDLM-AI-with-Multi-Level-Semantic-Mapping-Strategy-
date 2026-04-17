@@ -1,5 +1,6 @@
 import React from 'react';
 import { T } from './tokens';
+import { formatShortcut } from './util';
 
 // Cmd+K command palette. Parent builds the full items list (items capture lots
 // of closure state like tier handlers, conversations, skills) and passes it
@@ -14,16 +15,9 @@ export interface CmdPaletteItem {
   // c2-243 / #104: optional keyboard hint. Use '$mod' as a placeholder for
   // the platform modifier ('⌘' on mac, 'Ctrl' elsewhere) and '+' as the
   // separator, e.g. '$mod+N', '$mod+Shift+D'. Single-key hints like '?' pass
-  // through verbatim.
+  // through verbatim. c2-265: formatShortcut now lives in util.ts.
   shortcut?: string;
 }
-
-// mac vs rest — checked once at module load. navigator.platform is
-// deprecated but still reliable enough for this cosmetic choice, and
-// userAgentData isn't universally available yet.
-const IS_MAC = typeof navigator !== 'undefined'
-  && /Mac|iPhone|iPad|iPod/.test(navigator.platform || '');
-const formatShortcut = (s: string): string => s.replace(/\$mod/g, IS_MAC ? '\u2318' : 'Ctrl');
 
 export interface CommandPaletteProps {
   C: any;

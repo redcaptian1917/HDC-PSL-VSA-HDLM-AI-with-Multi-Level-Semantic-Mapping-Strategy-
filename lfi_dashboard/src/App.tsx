@@ -28,7 +28,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 // hljsLazy.ts so each lives in its own Vite chunk; only the theme CSS
 // (required before any highlighted HTML renders) ships in the initial bundle.
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportAllAsJson, formatRelative, formatDayBucket } from './util';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportAllAsJson, formatRelative, formatDayBucket, mod } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -1395,6 +1395,38 @@ ${cmdList}
   }, [currentConversationId, conversations]);
 
   // Save draft to conversation when switching away, restore when switching in.
+  // c2-266: flush the active-convo draft to localStorage on pagehide /
+  // beforeunload so refreshes and tab-closes no longer lose typed text.
+  // Refs mirror the latest input + id so the handler can read without
+  // re-binding. Writes straight into LS (not React state) because the page
+  // is leaving — state updates wouldn't flush in time.
+  const inputRefForDraft = useRef(input);
+  useEffect(() => { inputRefForDraft.current = input; }, [input]);
+  const currentConvoIdRefForDraft = useRef(currentConversationId);
+  useEffect(() => { currentConvoIdRefForDraft.current = currentConversationId; }, [currentConversationId]);
+  useEffect(() => {
+    const flushDraft = () => {
+      const id = currentConvoIdRefForDraft.current;
+      if (!id) return;
+      try {
+        const raw = localStorage.getItem(LS_CONVERSATIONS_KEY);
+        if (!raw) return; // persistence off or nothing stored yet
+        const convos = JSON.parse(raw);
+        if (!Array.isArray(convos)) return;
+        const draft = inputRefForDraft.current;
+        const next = convos.map((c: any) => c && c.id === id ? { ...c, draft } : c);
+        localStorage.setItem(LS_CONVERSATIONS_KEY, JSON.stringify(next));
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('beforeunload', flushDraft);
+    // pagehide fires reliably on mobile Safari where beforeunload is muted.
+    window.addEventListener('pagehide', flushDraft);
+    return () => {
+      window.removeEventListener('beforeunload', flushDraft);
+      window.removeEventListener('pagehide', flushDraft);
+    };
+  }, []);
+
   // Uses a ref for the LAST-active id so we save the current `input` to the
   // outgoing conversation before it's replaced.
   const lastActiveConvoRef = useRef<string>('');
@@ -3107,7 +3139,7 @@ ${cmdList}
           }}>
             <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.borderSubtle}` }}>
               <button onClick={() => createNewConversation()}
-                title={`New chat (${navigator.platform.toLowerCase().includes('mac') ? '\u2318' : 'Ctrl'}+N)`}
+                title={`New chat (${mod()}+N)`}
                 style={{
                   width: '100%', padding: '8px 12px', marginBottom: '8px',
                   background: C.accentBg, border: `1px solid ${C.accentBorder}`,
@@ -3125,7 +3157,7 @@ ${cmdList}
                   fontSize: '10px', color: C.accent, opacity: 0.7,
                   border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.sm,
                   padding: '1px 5px', letterSpacing: '0.02em',
-                }}>{navigator.platform.toLowerCase().includes('mac') ? '\u2318' : 'Ctrl'}N</kbd>
+                }}>{mod()}N</kbd>
               </button>
               <input
                 type='search'
@@ -4400,7 +4432,7 @@ ${cmdList}
                   title='Open the command palette'
                   style={{ cursor: 'pointer', color: C.textMuted }}
                   onClick={() => { setShowCmdPalette(true); setCmdQuery(''); setCmdIndex(0); }}>
-                  {navigator.platform.toLowerCase().includes('mac') ? '\u2318K' : 'Ctrl+K'}
+                  {mod()}K
                 </span>
                 <span style={{ cursor: 'pointer', color: C.textMuted }} onClick={() => { setInput('/'); setShowSlashMenu(true); setSlashFilter(''); inputRef.current?.focus(); }}>
                   / commands

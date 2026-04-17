@@ -85,6 +85,24 @@ export const stripMarkdown = (src: string): string => {
     .trim();
 };
 
+// c2-265: platform modifier detection, shared across components so all
+// shortcut chips render \u2318 on mac and Ctrl elsewhere. navigator.platform
+// is deprecated but still the most reliable signal for this cosmetic choice
+// (navigator.userAgentData isn't universally available in older Chromium).
+// Evaluated once at module load — it's safe to cache because the platform
+// doesn't change across a single session.
+export const IS_MAC: boolean =
+  typeof navigator !== 'undefined' &&
+  /Mac|iPhone|iPad|iPod/.test(navigator.platform || '');
+
+// Convenience for rendering a single-char modifier — e.g. mod() + 'N'.
+export const mod = (): string => (IS_MAC ? '\u2318' : 'Ctrl');
+
+// Expand '$mod' placeholders in a shortcut descriptor string. Used by the
+// Command Palette items and anywhere else that stores platform-agnostic
+// shortcut strings in data.
+export const formatShortcut = (s: string): string => s.replace(/\$mod/g, mod());
+
 // Clipboard write with an execCommand fallback for browsers that block the
 // async Clipboard API (e.g. insecure-context). Never throws.
 export const copyToClipboard = async (text: string): Promise<void> => {

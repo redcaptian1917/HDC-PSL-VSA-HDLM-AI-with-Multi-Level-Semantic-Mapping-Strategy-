@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useModalFocus } from './useModalFocus';
 import { T } from './tokens';
+import { IS_MAC } from './util';
 
 // Keyboard-shortcut cheatsheet. Opened with "?" (standard pattern from
 // GitHub/Gmail/etc). Content is static — if shortcuts change in App.tsx,
@@ -72,8 +73,9 @@ export interface ShortcutsModalProps {
 export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ C, onClose }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
-  const isMac = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac');
-  const renderKey = (k: string) => (k === '⌘' && !isMac ? 'Ctrl' : k);
+  // c2-265: IS_MAC sourced from util.ts so the substitution rule matches the
+  // one used by the command palette chip.
+  const renderKey = (k: string) => (k === '\u2318' && !IS_MAC ? 'Ctrl' : k);
   return (
     <div onClick={onClose}
       style={{
