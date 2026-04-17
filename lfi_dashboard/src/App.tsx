@@ -367,7 +367,7 @@ const SovereignCommandConsole: React.FC = () => {
     { cmd: '/settings', label: 'Open settings', desc: 'All preferences',
       run: () => setShowSettings(true) },
     { cmd: '/logs', label: 'Activity logs', desc: 'Chat log + UI events',
-      run: () => { setShowActivity(true); fetchChatLog(50); } },
+      run: () => { setAdminInitialTab('logs'); setShowAdmin(true); fetchChatLog(50); } },
     { cmd: '/pulse', label: 'Model: Pulse', desc: 'Fast tier',
       run: () => handleTierSwitch('Pulse') },
     { cmd: '/bridge', label: 'Model: Bridge', desc: 'Balanced tier',
@@ -511,6 +511,10 @@ ${cmdList}
   const activeSkillMeta = skills.find(s => s.id === activeSkill) || skills[0];
   const [showHistory, setShowHistory] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  // Which AdminModal tab to open when the user triggers Admin via a
+  // dedicated link (e.g., Activity menu → Logs). Reset to 'dashboard' on
+  // close so normal Admin opens default to Dashboard.
+  const [adminInitialTab, setAdminInitialTab] = useState<'dashboard' | 'domains' | 'training' | 'quality' | 'system' | 'fleet' | 'logs'>('dashboard');
 
   const avatarPresets = AVATAR_PRESETS;
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -2367,7 +2371,7 @@ ${cmdList}
           { id: 'open-knowledge', label: 'Knowledge browser', hint: 'Facts, concepts, reviews', group: 'Navigate',
             onRun: () => { setShowKnowledge(true); fetchKnowledge(); } },
           { id: 'open-logs', label: 'Open activity logs', hint: 'Chat log + UI events', group: 'Navigate',
-            onRun: () => { setShowActivity(true); fetchChatLog(50); } },
+            onRun: () => { setAdminInitialTab('logs'); setShowAdmin(true); fetchChatLog(50); } },
           { id: 'toggle-dev', label: `${settings.developerMode ? 'Disable' : 'Enable'} developer mode`, hint: 'Telemetry + plan panel', group: 'Navigate',
             onRun: () => { setSettings(s => ({ ...s, developerMode: !s.developerMode })); } },
           ...conversations.slice(0, 20).map(c => ({
@@ -2400,7 +2404,8 @@ ${cmdList}
             factsCount={kg.facts}
             sourcesCount={kg.sources}
             localEvents={localEvents}
-            onClose={() => setShowAdmin(false)}
+            initialTab={adminInitialTab}
+            onClose={() => { setShowAdmin(false); setAdminInitialTab('dashboard'); }}
           />
         </AppErrorBoundary>
       )}
@@ -2717,7 +2722,7 @@ ${cmdList}
                     </svg>
                     Settings
                   </button>
-                  <button onClick={() => { setShowAccountMenu(false); setShowActivity(true);
+                  <button onClick={() => { setShowAccountMenu(false); setAdminInitialTab('logs'); setShowAdmin(true);
                       fetchChatLog(50);
                     }}
                     style={{ display: 'flex', alignItems: 'center', gap: '10px',
@@ -3306,12 +3311,27 @@ ${cmdList}
             isDesktop={isDesktop}
             onAtBottomChange={setChatAtBottom}
             onVisibleRangeChange={(start) => setChatTopIndex(start)}
-            renderEmpty={() => (
-              <WelcomeScreen
-                C={C} isDesktop={isDesktop}
-                onPickPrompt={(p) => { setInput(p); inputRef.current?.focus(); }}
-              />
-            )}
+            renderEmpty={() => {
+              // Pick the most-recent non-empty conversation that isn't the
+              // currently-active one (which is empty — that's why we're in
+              // the welcome state). Surface its title + last user turn as
+              // a contextual "Continue" card.
+              const recent = [...conversations]
+                .filter(c => c.id !== currentConversationId && c.messages.length > 0)
+                .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+              const lastUser = recent ? [...recent.messages].reverse().find(m => m.role === 'user') : null;
+              const recentContext = recent ? {
+                title: recent.title,
+                lastUserMsg: lastUser ? (lastUser.content.length > 80 ? lastUser.content.slice(0, 80) + '…' : lastUser.content) : undefined,
+              } : null;
+              return (
+                <WelcomeScreen
+                  C={C} isDesktop={isDesktop}
+                  onPickPrompt={(p) => { setInput(p); inputRef.current?.focus(); }}
+                  recentContext={recentContext}
+                />
+              );
+            }}
             renderFooter={() => (
               <>
                 {isThinking && (() => {

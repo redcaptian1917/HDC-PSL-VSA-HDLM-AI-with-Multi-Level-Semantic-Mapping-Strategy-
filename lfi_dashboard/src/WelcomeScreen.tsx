@@ -4,10 +4,14 @@ import React from 'react';
 // prompts, minimal copy. Parent owns the input textarea + ref; we pre-fill.
 // c0-020: onboarding state — welcoming, professional, prompt cards as
 // clickable launchpads.
+// #93 contextual: when the user has a recent non-empty conversation,
+// surface a "Continue where you left off" card so returning visits feel
+// like a natural resumption rather than a blank slate.
 export interface WelcomeScreenProps {
   C: any;
   isDesktop: boolean;
   onPickPrompt: (text: string) => void;
+  recentContext?: { title: string; lastUserMsg?: string } | null;
 }
 
 // c0-023 fix: prior preset prompts produced poor responses from the
@@ -23,7 +27,7 @@ const QUICK_STARTS: { t: string; p: string }[] = [
   { t: 'Learn something', p: 'Teach me something useful about networking I probably do not know.' },
 ];
 
-export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPickPrompt }) => (
+export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPickPrompt, recentContext }) => (
   <div style={{ textAlign: 'center', padding: isDesktop ? '72px 24px 40px' : '40px 20px 24px' }}>
     <h1 style={{ fontSize: isDesktop ? '28px' : '22px', fontWeight: 600, color: C.text, margin: '0 0 8px', letterSpacing: '-0.01em' }}>
       PlausiDen <span style={{ color: C.accent }}>AI</span>
@@ -31,6 +35,37 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPi
     <p style={{ fontSize: '14px', color: C.textSecondary, margin: '0 0 28px', maxWidth: '440px', marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.55 }}>
       Sovereign AI that runs on your hardware. Private by default, remembers across sessions.
     </p>
+    {/* Contextual continuation card — shown only when a recent conversation
+        exists. Pre-fills a resumption prompt so users don't stare at an
+        empty blank page on return visits. */}
+    {recentContext && (
+      <button
+        onClick={() => onPickPrompt(`Continuing from "${recentContext.title}": `)}
+        aria-label={`Continue conversation: ${recentContext.title}`}
+        style={{
+          display: 'block', textAlign: 'left',
+          maxWidth: '720px', width: '100%', margin: '0 auto 12px',
+          padding: '14px 18px', borderRadius: '6px',
+          background: C.accentBg, border: `1px solid ${C.accentBorder}`, cursor: 'pointer',
+          fontFamily: 'inherit', color: C.text,
+          transition: 'border-color 0.12s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.accentBorder; }}
+      >
+        <div style={{ fontSize: '11px', color: C.accent, fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Continue where you left off
+        </div>
+        <div style={{ fontSize: '13.5px', color: C.text, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {recentContext.title}
+        </div>
+        {recentContext.lastUserMsg && (
+          <div style={{ fontSize: '12px', color: C.textSecondary, marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            Last: “{recentContext.lastUserMsg}”
+          </div>
+        )}
+      </button>
+    )}
     <div style={{
       display: 'grid',
       gridTemplateColumns: isDesktop ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)',

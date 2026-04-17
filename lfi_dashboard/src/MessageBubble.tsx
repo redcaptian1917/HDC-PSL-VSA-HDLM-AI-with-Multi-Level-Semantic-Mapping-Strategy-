@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { T } from './tokens';
 
 // Sub-components of the chat message list. Extracted from App.tsx in stages —
@@ -452,16 +452,59 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                   borderLeft: `3px solid ${C.accent}`,
                   borderRadius: '0 8px 8px 0',
                 }}>
-                {msg.reasoning.map((step, j) => (
-                  <p key={j} style={{ fontSize: '12px', color: C.textSecondary, lineHeight: '1.6', margin: '4px 0' }}>
-                    <span style={{ color: C.accent, fontWeight: 700 }}>[{j}]</span> {step}
-                  </p>
-                ))}
+                <ReasoningSteps C={C} steps={msg.reasoning} />
               </div>
             )}
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+// Collapsible per-step reasoning list. Each step is a disclosure that
+// shows the first 80 chars by default; click to expand the full text.
+const ReasoningSteps: React.FC<{ C: any; steps: string[] }> = ({ C, steps }) => {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggle = (i: number) => setExpanded(prev => {
+    const next = new Set(prev);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    return next;
+  });
+  const shortOf = (s: string) => s.length > 80 ? s.slice(0, 80).trimEnd() + '…' : s;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      {steps.map((step, j) => {
+        const isOpen = expanded.has(j);
+        const needsToggle = step.length > 80;
+        return (
+          <div key={j} style={{
+            borderBottom: j < steps.length - 1 ? `1px solid ${C.borderSubtle}` : 'none',
+            padding: '4px 0',
+          }}>
+            <button
+              onClick={() => needsToggle && toggle(j)}
+              aria-expanded={needsToggle ? isOpen : undefined}
+              aria-label={needsToggle ? `Step ${j} ${isOpen ? 'collapse' : 'expand'}` : undefined}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: '8px', width: '100%',
+                background: 'transparent', border: 'none', padding: 0,
+                cursor: needsToggle ? 'pointer' : 'default', textAlign: 'left',
+                fontFamily: 'inherit', color: C.textSecondary,
+              }}>
+              <span style={{ color: C.accent, fontWeight: 700, fontSize: '11px', minWidth: '22px', lineHeight: '1.6' }}>[{j}]</span>
+              <span style={{ fontSize: '12px', lineHeight: '1.6', flex: 1, whiteSpace: isOpen ? 'pre-wrap' : 'normal' }}>
+                {isOpen ? step : shortOf(step)}
+              </span>
+              {needsToggle && (
+                <span style={{ color: C.textDim, fontSize: '10px', flexShrink: 0, lineHeight: '1.6' }}>
+                  {isOpen ? '▴' : '▾'}
+                </span>
+              )}
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 };
