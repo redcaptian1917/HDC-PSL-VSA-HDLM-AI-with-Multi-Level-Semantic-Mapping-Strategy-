@@ -36,7 +36,7 @@ import css from 'highlight.js/lib/languages/css';
 import xml from 'highlight.js/lib/languages/xml';
 import go from 'highlight.js/lib/languages/go';
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle } from './util';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -1347,23 +1347,6 @@ ${cmdList}
   const renderMessageBody = (text: string) => renderMdBody(text, mdCtx);
 
   // Per-conversation export as Markdown
-  const exportConversationMd = (convo: Conversation) => {
-    let md = `# ${convo.title}\n\nExported ${new Date().toISOString()}\n\n---\n\n`;
-    for (const m of convo.messages) {
-      const ts = new Date(m.timestamp).toLocaleString();
-      if (m.role === 'user') md += `**You** (${ts}):\n${m.content}\n\n`;
-      else if (m.role === 'assistant') md += `**PlausiDen AI** (${ts}):\n${m.content}\n\n`;
-      else if (m.role === 'system') md += `*[system: ${m.content}]*\n\n`;
-      else if (m.role === 'web') md += `**Web Search:**\n${m.content}\n\n`;
-    }
-    const blob = new Blob([md], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${convo.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40)}.md`;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  };
-
   const tierColor = (t: string) => {
     if (t.includes('BigBrain')) return C.purple;
     if (t.includes('Bridge')) return C.yellow;

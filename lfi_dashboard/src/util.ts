@@ -35,6 +35,28 @@ export const copyToClipboard = async (text: string): Promise<void> => {
   }
 };
 
+// Serialise a conversation to a markdown file and trigger a browser download.
+// Pure beyond the DOM side effects; kept dependency-free so tests can stub them.
+export interface ExportableMessage { role: string; content: string; timestamp: number }
+export interface ExportableConversation { title: string; messages: ExportableMessage[] }
+export const exportConversationMd = (convo: ExportableConversation): void => {
+  let md = `# ${convo.title}\n\nExported ${new Date().toISOString()}\n\n---\n\n`;
+  for (const m of convo.messages) {
+    const ts = new Date(m.timestamp).toLocaleString();
+    if (m.role === 'user') md += `**You** (${ts}):\n${m.content}\n\n`;
+    else if (m.role === 'assistant') md += `**PlausiDen AI** (${ts}):\n${m.content}\n\n`;
+    else if (m.role === 'system') md += `*[system: ${m.content}]*\n\n`;
+    else if (m.role === 'web') md += `**Web Search:**\n${m.content}\n\n`;
+  }
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${convo.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40)}.md`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
+
 // Auto-title a conversation from its message list. Used once, but extracted so
 // the heuristic (questions preserved, first clause preferred, 52-char cap) is
 // easy to test + tune without scrolling through App.tsx.
