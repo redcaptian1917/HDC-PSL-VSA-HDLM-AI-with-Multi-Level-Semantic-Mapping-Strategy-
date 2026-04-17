@@ -201,6 +201,11 @@ const SovereignCommandConsole: React.FC = () => {
   // (probe to /api/status fails too). Lets the disconnect banner show a
   // different, more actionable message when the dev server is down.
   const [backendOffline, setBackendOffline] = useState(false);
+  // Network-level offline state (navigator.onLine). Distinct from server
+  // disconnect: if the user's WiFi drops, no point blaming the backend.
+  const [networkOffline, setNetworkOffline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' && navigator.onLine === false
+  );
   // Ephemeral toast (copy feedback, etc). Single-slot — newer toasts replace.
   // `exiting` decouples the display-done moment from the DOM unmount so we
   // can run an exit animation before removing the node.
@@ -650,6 +655,17 @@ ${cmdList}
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Network-level online/offline listener. Reads navigator.onLine and keeps
+  // a separate banner color (amber vs red) so users know if the problem is
+  // their WiFi vs the server.
+  useEffect(() => {
+    const on = () => setNetworkOffline(false);
+    const off = () => setNetworkOffline(true);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
   }, []);
 
   // Backend health probe — when WS is down, periodically GET /api/status to
@@ -1942,25 +1958,36 @@ ${cmdList}
         </div>
       )}
       {/* ========== GLOBAL DISCONNECT BANNER ========== */}
-      {showDisconnectBanner && (
-        <div role='status' aria-live='polite'
-          style={{
-            position: 'fixed', top: 0, left: 0, right: 0, zIndex: T.z.toast,
-            background: C.redBg, color: C.red, borderBottom: `1px solid ${C.redBorder}`,
-            padding: `${T.spacing.sm} ${T.spacing.lg}`, textAlign: 'center',
-            fontSize: T.typography.sizeMd, fontWeight: T.typography.weightSemibold,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: T.spacing.sm,
-          }}>
-          <span style={{
-            width: '8px', height: '8px', borderRadius: T.radii.round,
-            background: C.red, animation: 'scc-pulse 1.4s infinite ease-in-out',
-          }} />
-          <span>{backendOffline
+      {(showDisconnectBanner || networkOffline) && (() => {
+        // Precedence: network offline (amber) > backend offline (red) > WS
+        // dropped (red). This tells the user where the problem actually is.
+        const isNetwork = networkOffline;
+        const bg = isNetwork ? C.yellowBg : C.redBg;
+        const fg = isNetwork ? C.yellow : C.red;
+        const border = isNetwork ? C.yellowBg /* approx */ : C.redBorder;
+        const msg = isNetwork
+          ? 'Your device is offline — check your network connection'
+          : backendOffline
             ? `Backend offline — start the server at ${getHost()}:3000`
-            : 'Connection lost — reconnecting…'}</span>
-          <style>{`@keyframes scc-pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }`}</style>
-        </div>
-      )}
+            : 'Connection lost — reconnecting…';
+        return (
+          <div role='status' aria-live='polite'
+            style={{
+              position: 'fixed', top: 0, left: 0, right: 0, zIndex: T.z.toast,
+              background: bg, color: fg, borderBottom: `1px solid ${border}`,
+              padding: `${T.spacing.sm} ${T.spacing.lg}`, textAlign: 'center',
+              fontSize: T.typography.sizeMd, fontWeight: T.typography.weightSemibold,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: T.spacing.sm,
+            }}>
+            <span style={{
+              width: '8px', height: '8px', borderRadius: T.radii.round,
+              background: fg, animation: 'scc-pulse 1.4s infinite ease-in-out',
+            }} />
+            <span>{msg}</span>
+            <style>{`@keyframes scc-pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }`}</style>
+          </div>
+        );
+      })()}
       {/* ========== TOOL CONFIRMATION DIALOG ========== */}
       {pendingConfirm && (
         <div style={{
