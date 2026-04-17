@@ -33,6 +33,7 @@ pub mod knowledge_graph;
 
 pub mod emotion_detector;
 pub mod conversation_summarizer;
+pub mod suggestion_engine;
 
 pub use knowledge_graph::{KnowledgeGraph, EdgeType, FactEdge, Subgraph, GraphStats};
 pub use emotion_detector::{detect_emotion, Emotion, EmotionAnalysis};
