@@ -196,6 +196,11 @@ const SovereignCommandConsole: React.FC = () => {
   const [backendOffline, setBackendOffline] = useState(false);
   // Ephemeral toast (copy feedback, etc). Single-slot — newer toasts replace.
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
+  // Negative-feedback modal target. Per c0-008 bug #4: thumbs-down opens a
+  // category picker + free-text field instead of a browser prompt().
+  const [negFeedbackFor, setNegFeedbackFor] = useState<{ msgId: number; conclusionId?: number } | null>(null);
+  const [negFeedbackCategory, setNegFeedbackCategory] = useState<string>('Incorrect');
+  const [negFeedbackText, setNegFeedbackText] = useState<string>('');
   // Tracks whether the chat is scrolled to the latest message. False = user
   // is reading history; we surface a "scroll to bottom" affordance.
   const [chatAtBottom, setChatAtBottom] = useState(true);
@@ -530,6 +535,12 @@ ${cmdList}
   // handleSend twice before React flushes setInput('') — the second call
   // reads stale `input` from closure and would double-post.
   const sendingRef = useRef(false);
+  // BUG-FIX 2026-04-17 c0-008: cross-session message bleed. We capture the
+  // conversation id at handleSend time so WS chunks can be routed to the
+  // ORIGINATING conversation even if the user switches mid-stream. Without
+  // this, setMessages (which writes to the active conversation) appended
+  // chunks to the wrong convo.
+  const streamingConvoIdRef = useRef<string>('');
 
   // ---- Helpers ----
   const getHost = () => {
@@ -658,15 +669,31 @@ ${cmdList}
           const msg = JSON.parse(event.data);
           console.debug("// SCC: Chat msg:", msg.type);
 
+          // Helper: apply a messages reducer to the conversation that owns this
+          // in-flight WS exchange (captured at handleSend time). When that
+          // convo is also the active one, also update the live `messages`
+          // state. Without this, switching conversations mid-stream caused
+          // chunks to bleed into the new active convo (BUG c0-008 #2).
+          const applyToStreamingConvo = (reducer: (prev: ChatMessage[]) => ChatMessage[]) => {
+            const targetId = streamingConvoIdRef.current;
+            if (targetId) {
+              setConversations(prev => prev.map(c => c.id === targetId
+                ? { ...c, messages: reducer(c.messages), updatedAt: Date.now() } : c));
+            }
+            if (!targetId || targetId === currentConversationId) {
+              setMessages(reducer);
+            }
+          };
+
           if (msg.type === 'progress') {
             setThinkingStep(msg.step || 'Processing...');
           } else if (msg.type === 'chat_chunk') {
             // Streaming: append partial text to the last assistant message,
             // or create one if this is the first chunk.
             setIsThinking(false);
-            setMessages(prev => {
+            applyToStreamingConvo(prev => {
               const last = prev[prev.length - 1];
-              if (last && last.role === 'assistant' && last._streaming) {
+              if (last && last.role === 'assistant' && (last as any)._streaming) {
                 return [...prev.slice(0, -1), { ...last, content: last.content + (msg.text || '') }];
               }
               return [...prev, {
@@ -677,7 +704,7 @@ ${cmdList}
             });
           } else if (msg.type === 'chat_done') {
             // End of streaming — finalize the message.
-            setMessages(prev => {
+            applyToStreamingConvo(prev => {
               const last = prev[prev.length - 1];
               if (last && (last as any)._streaming) {
                 const { _streaming, ...clean } = last as any;
@@ -694,7 +721,7 @@ ${cmdList}
           } else if (msg.type === 'chat_response') {
             setIsThinking(false);
             setThinkingStart(null);
-            setMessages(prev => [...prev, {
+            applyToStreamingConvo(prev => [...prev, {
               id: msgId(), role: 'assistant',
               content: msg.content || '',
               mode: msg.mode, confidence: msg.confidence,
@@ -709,7 +736,7 @@ ${cmdList}
             // it actually USED (which may have been down-scaled by the router).
           } else if (msg.type === 'web_result') {
             console.debug("// SCC: Web result, sources:", msg.source_count);
-            setMessages(prev => [...prev, {
+            applyToStreamingConvo(prev => [...prev, {
               id: msgId(), role: 'web',
               content: `${msg.source_count} sources | trust: ${(msg.trust * 100).toFixed(0)}%\n\n${msg.summary}`,
               timestamp: Date.now(),
@@ -717,7 +744,7 @@ ${cmdList}
           } else if (msg.type === 'chat_error') {
             console.debug("// SCC: Chat error:", msg.error);
             setIsThinking(false);
-            setMessages(prev => [...prev, {
+            applyToStreamingConvo(prev => [...prev, {
               id: msgId(), role: 'system',
               content: `Error: ${msg.error}`, timestamp: Date.now(),
             }]);
@@ -1410,6 +1437,9 @@ ${cmdList}
         setIsThinking(false);
         return;
       }
+      // Capture the originating conversation BEFORE the WS write so chunks
+      // can be routed back even if the user switches conversations mid-stream.
+      streamingConvoIdRef.current = currentConversationId;
       chatWsRef.current!.send(JSON.stringify({
         content: trimmed,
         incognito: isCurrentIncognito || false,
@@ -1638,6 +1668,98 @@ ${cmdList}
       overflow: 'hidden',
       fontSize: `${fontScale}em`,
     }}>
+      {/* ========== NEGATIVE FEEDBACK MODAL (bug #4 from c0-008) ========== */}
+      {negFeedbackFor && (
+        <div onClick={() => setNegFeedbackFor(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: T.z.modal + 60,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: T.spacing.lg,
+          }}>
+          <div role='dialog' aria-modal='true' aria-labelledby='scc-negfb-title'
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: '460px',
+              background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
+              padding: T.spacing.xl, boxShadow: T.shadows.modal,
+            }}>
+            <h3 id='scc-negfb-title' style={{
+              margin: '0 0 6px', fontSize: T.typography.sizeXl,
+              fontWeight: T.typography.weightBold, color: C.text,
+            }}>What was wrong?</h3>
+            <p style={{ margin: '0 0 16px', fontSize: T.typography.sizeMd, color: C.textSecondary, lineHeight: T.typography.lineLoose }}>
+              Help PlausiDen learn from this. Your feedback never leaves your machine unless you opt-in to telemetry.
+            </p>
+            <label style={{ fontSize: T.typography.sizeSm, fontWeight: T.typography.weightSemibold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+              Category
+            </label>
+            <select value={negFeedbackCategory}
+              onChange={(e) => setNegFeedbackCategory(e.target.value)}
+              aria-label='Feedback category'
+              style={{
+                width: '100%', marginTop: '6px', marginBottom: '14px',
+                padding: '10px 12px', background: C.bgInput,
+                border: `1px solid ${C.borderSubtle}`, color: C.text,
+                borderRadius: T.radii.md, fontFamily: 'inherit', fontSize: T.typography.sizeBody,
+              }}>
+              <option>Incorrect</option>
+              <option>Unhelpful</option>
+              <option>Off-topic</option>
+              <option>Too verbose</option>
+              <option>Needs more detail</option>
+              <option>Other</option>
+            </select>
+            <label style={{ fontSize: T.typography.sizeSm, fontWeight: T.typography.weightSemibold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+              Details (optional)
+            </label>
+            <textarea value={negFeedbackText}
+              onChange={(e) => setNegFeedbackText(e.target.value)}
+              aria-label='Detailed feedback'
+              autoComplete='off' spellCheck={true}
+              placeholder='What should the AI have said?'
+              maxLength={2000}
+              style={{
+                width: '100%', marginTop: '6px', minHeight: '88px',
+                padding: '10px 12px', background: C.bgInput,
+                border: `1px solid ${C.borderSubtle}`, color: C.text,
+                borderRadius: T.radii.md, fontFamily: 'inherit', fontSize: T.typography.sizeBody,
+                resize: 'vertical', boxSizing: 'border-box',
+              }} />
+            <div style={{ display: 'flex', gap: T.spacing.sm, justifyContent: 'flex-end', marginTop: T.spacing.lg }}>
+              <button onClick={() => setNegFeedbackFor(null)}
+                style={{
+                  padding: '10px 18px', background: 'transparent',
+                  border: `1px solid ${C.border}`, color: C.textMuted,
+                  borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: T.typography.sizeMd,
+                }}>Cancel</button>
+              <button onClick={() => {
+                const target = negFeedbackFor!;
+                const body = JSON.stringify({
+                  message_id: target.msgId,
+                  conclusion_id: target.conclusionId,
+                  rating: 'negative',
+                  category: negFeedbackCategory,
+                  text: negFeedbackText.trim(),
+                });
+                fetch(`http://${getHost()}:3000/api/feedback`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+                }).catch(() => {});
+                logEvent('feedback_negative', { msgId: target.msgId, category: negFeedbackCategory });
+                setNegFeedbackFor(null);
+                showToast('Feedback sent');
+              }}
+                style={{
+                  padding: '10px 18px', background: C.accent, border: 'none',
+                  color: '#fff', borderRadius: T.radii.md, cursor: 'pointer',
+                  fontFamily: 'inherit', fontSize: T.typography.sizeMd,
+                  fontWeight: T.typography.weightSemibold,
+                }}>Send</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ========== EPHEMERAL TOAST (copy feedback, etc.) ========== */}
       {toast && (
         <div role='status' aria-live='polite' key={toast.id}
@@ -2806,10 +2928,18 @@ ${cmdList}
                         }).catch(() => {});
                     }}
                     onFollowUpChip={(chip) => { setInput(chip); inputRef.current?.focus(); }}
-                    onFeedbackPositive={() => { logEvent('feedback_positive', { msgId: msg.id }); }}
+                    onFeedbackPositive={() => {
+                      logEvent('feedback_positive', { msgId: msg.id });
+                      fetch(`http://${getHost()}:3000/api/feedback`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message_id: msg.id, conclusion_id: (msg as any).conclusion_id, rating: 'positive', category: null, text: '' }),
+                      }).catch(() => {});
+                      showToast('Thanks for the feedback');
+                    }}
                     onFeedbackNegative={() => {
-                      const feedback = prompt('What should the AI have said instead? (optional)');
-                      logEvent('feedback_negative', { msgId: msg.id, feedback: feedback || '' });
+                      setNegFeedbackFor({ msgId: msg.id, conclusionId: (msg as any).conclusion_id });
+                      setNegFeedbackCategory('Incorrect');
+                      setNegFeedbackText('');
                     }}
                     formatTime={formatTime}
                   />

@@ -53,9 +53,23 @@ function ChatViewInner<T extends { id: number | string }>(
       ref={virtuosoRef}
       style={{ flex: 1 }}
       data={messages}
-      followOutput='smooth'
+      // Follow only when at-bottom — but be generous about what counts as
+      // at-bottom (50px instead of the 4px default), so streaming chunks
+      // don't fight the user when they nudge the scroll a few pixels up.
+      // BUG-FIX 2026-04-17 c0-008: user reported "scroll is jumpy/wonky".
+      // Function form returns 'smooth' only when at bottom; otherwise false
+      // so Virtuoso stops trying to follow. This also fixes the case where
+      // streaming chat_chunk updates the last message in place — content
+      // grows but message count doesn't, and followOutput now fires anyway.
+      followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
+      atBottomThreshold={50}
+      // On initial mount + conversation switch, render the last message.
+      initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : 0}
       atBottomStateChange={onAtBottomChange}
       computeItemKey={(_i, m) => String(m.id)}
+      // Increase overscan so heights are pre-computed off-screen — reduces
+      // mid-scroll height-correction jumps when the user scrolls fast.
+      increaseViewportBy={{ top: 400, bottom: 400 }}
       components={{
         Header: () => <div style={{ height: isDesktop ? '24px' : '12px' }} />,
         Footer: () => (
