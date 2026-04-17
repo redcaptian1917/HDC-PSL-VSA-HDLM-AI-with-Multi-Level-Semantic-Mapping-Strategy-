@@ -984,15 +984,26 @@ ${cmdList}
     }
   };
 
+  const [qosError, setQosError] = useState<string | null>(null);
+  const [qosFetchedAt, setQosFetchedAt] = useState<number | null>(null);
   const fetchQos = async () => {
     console.debug("// SCC: Fetching QoS report");
     setAdminLoading('qos');
+    setQosError(null);
     try {
-      const res = await fetch(`http://${getHost()}:3000/api/qos`);
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 10000);
+      const res = await fetch(`http://${getHost()}:3000/api/qos`, { signal: ctrl.signal });
+      clearTimeout(to);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setQosReport(data);
-    } catch (e) { console.error("// SCC: QoS fetch error:", e); }
-    finally { setAdminLoading(''); }
+      setQosFetchedAt(Date.now());
+    } catch (e: any) {
+      console.error("// SCC: QoS fetch error:", e);
+      setQosError(String(e?.message || e));
+      setQosFetchedAt(Date.now());
+    } finally { setAdminLoading(''); }
   };
 
   const clearChat = () => {
@@ -1948,37 +1959,55 @@ ${cmdList}
             )}
           </div>
         )}
-        {/* QoS display */}
-        {qosReport && (
+        {/* QoS display — explicit error/empty/loaded states (was invisible before
+            on fetch failure, reading as 'nothing happened' to the user). */}
+        {qosFetchedAt !== null && (
           <div style={{ marginTop: '14px' }}>
-            <div style={{ fontSize: '10px', fontWeight: 700, color: C.textMuted, marginBottom: '8px', textTransform: 'uppercase' }}>
-              QoS Report
+            <div style={{ fontSize: '10px', fontWeight: 700, color: C.textMuted, marginBottom: '8px', textTransform: 'uppercase', display: 'flex', justifyContent: 'space-between' }}>
+              <span>QoS Report</span>
+              <span style={{ color: C.textDim, fontWeight: 500 }}>{new Date(qosFetchedAt).toLocaleTimeString()}</span>
             </div>
-            <div style={{
-              padding: '10px', borderRadius: '8px', fontSize: '11px',
-              background: qosReport.passed ? C.greenBg : C.redBg,
-              border: `1px solid ${qosReport.passed ? C.greenBorder : C.redBorder}`,
-              color: qosReport.passed ? C.green : C.red,
-              fontWeight: 700,
-            }}>
-              {qosReport.passed
-                ? `ALL ${qosReport.checks?.length ?? 0} CHECKS PASS`
-                : `${qosReport.critical_failures ?? 0} CRITICAL \u00B7 ${qosReport.warnings ?? 0} WARN`}
-            </div>
-            {qosReport.checks && qosReport.checks.length > 0 && (
-              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                {qosReport.checks.map((c, i) => (
-                  <div key={i} style={{
-                    display: 'flex', justifyContent: 'space-between', gap: '8px',
-                    fontSize: '11px', padding: '6px 8px', borderRadius: '6px',
-                    background: c.passed ? C.greenBg : C.redBg,
-                    border: `1px solid ${c.passed ? C.greenBorder : C.redBorder}`,
-                  }}>
-                    <span style={{ color: C.textSecondary, flexShrink: 1 }}>{c.name}</span>
-                    <span style={{ color: c.passed ? C.green : C.red, fontWeight: 700 }}>{c.value}</span>
+            {qosError ? (
+              <div style={{
+                padding: '10px 12px', fontSize: '11px', lineHeight: 1.4,
+                background: C.redBg, border: `1px solid ${C.redBorder}`,
+                borderRadius: '6px', color: C.red,
+              }}>Fetch failed: {qosError}</div>
+            ) : !qosReport ? (
+              <div style={{
+                padding: '10px 12px', fontSize: '11px',
+                background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                borderRadius: '6px', color: C.textMuted,
+              }}>QoS endpoint returned no data.</div>
+            ) : (
+              <>
+                <div style={{
+                  padding: '10px', borderRadius: '8px', fontSize: '11px',
+                  background: qosReport.passed ? C.greenBg : C.redBg,
+                  border: `1px solid ${qosReport.passed ? C.greenBorder : C.redBorder}`,
+                  color: qosReport.passed ? C.green : C.red,
+                  fontWeight: 700,
+                }}>
+                  {qosReport.passed
+                    ? `ALL ${qosReport.checks?.length ?? 0} CHECKS PASS`
+                    : `${qosReport.critical_failures ?? 0} CRITICAL \u00B7 ${qosReport.warnings ?? 0} WARN`}
+                </div>
+                {qosReport.checks && qosReport.checks.length > 0 && (
+                  <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {qosReport.checks.map((c, i) => (
+                      <div key={i} style={{
+                        display: 'flex', justifyContent: 'space-between', gap: '8px',
+                        fontSize: '11px', padding: '6px 8px', borderRadius: '6px',
+                        background: c.passed ? C.greenBg : C.redBg,
+                        border: `1px solid ${c.passed ? C.greenBorder : C.redBorder}`,
+                      }}>
+                        <span style={{ color: C.textSecondary, flexShrink: 1 }}>{c.name}</span>
+                        <span style={{ color: c.passed ? C.green : C.red, fontWeight: 700 }}>{c.value}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
