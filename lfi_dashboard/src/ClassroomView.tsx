@@ -184,6 +184,18 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
         {sub === 'curriculum' && (
           <div>
             <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 16px' }}>Curriculum</h2>
+            {loading && !data && (
+              <div aria-busy='true' aria-live='polite' style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {[0, 1, 2, 3, 4].map(i => (
+                  <div key={i} style={{
+                    height: '40px', borderRadius: T.radii.md,
+                    background: `linear-gradient(90deg, ${C.bgCard} 0%, ${C.bgHover} 50%, ${C.bgCard} 100%)`,
+                    backgroundSize: '200% 100%', animation: 'scc-skel-cls 1.3s ease-in-out infinite',
+                    animationDelay: `${i * 0.08}s`,
+                  }} />
+                ))}
+              </div>
+            )}
             {data?.training_files && data.training_files.length > 0 ? (
               <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeMd }}>
@@ -217,8 +229,23 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
         {sub === 'gradebook' && (
           <div>
             <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 16px' }}>Gradebook</h2>
+            {loading && !data && (
+              <div aria-busy='true' aria-live='polite' style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: T.spacing.md, marginBottom: T.spacing.xl,
+              }}>
+                {[0, 1, 2, 3].map(i => (
+                  <div key={i} style={{
+                    height: '80px', borderRadius: T.radii.lg,
+                    background: `linear-gradient(90deg, ${C.bgCard} 0%, ${C.bgHover} 50%, ${C.bgCard} 100%)`,
+                    backgroundSize: '200% 100%', animation: 'scc-skel-cls 1.3s ease-in-out infinite',
+                    animationDelay: `${i * 0.08}s`,
+                  }} />
+                ))}
+              </div>
+            )}
             <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              display: loading && !data ? 'none' : 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
               gap: T.spacing.md, marginBottom: T.spacing.xl,
             }}>
               <Stat C={C} label='Pass rate' value={(() => { const p = pctNorm(data?.training?.pass_rate); return p != null ? `${p.toFixed(1)}%` : '—'; })()} color={C.green} />

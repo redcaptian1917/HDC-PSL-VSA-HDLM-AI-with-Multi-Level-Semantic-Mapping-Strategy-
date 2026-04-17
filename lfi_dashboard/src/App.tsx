@@ -2703,11 +2703,13 @@ ${cmdList}
                     <div key={c.id}
                       onClick={() => setCurrentConversationId(c.id)}
                       style={{
-                        padding: '10px 12px', borderRadius: '8px', cursor: 'pointer',
+                        padding: '10px 12px', borderRadius: '6px', cursor: 'pointer',
                         background: isActive ? C.accentBg : 'transparent',
                         border: `1px solid ${isActive ? C.accentBorder : 'transparent'}`,
                         marginBottom: '4px', display: 'flex',
                         alignItems: 'center', justifyContent: 'space-between', gap: '4px',
+                        // c0-020: smooth hover transition instead of instant snap.
+                        transition: 'background-color 0.12s, border-color 0.12s',
                       }}
                       onMouseEnter={(e) => {
                         if (!isActive) e.currentTarget.style.background = C.bgHover;
