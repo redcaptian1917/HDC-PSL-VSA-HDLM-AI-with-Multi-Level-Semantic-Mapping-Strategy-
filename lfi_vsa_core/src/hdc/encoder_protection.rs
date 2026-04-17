@@ -129,4 +129,40 @@ mod tests {
         let p2 = enc.protect(&input).unwrap();
         assert_eq!(p1, p2, "Same input + same epoch = same output");
     }
+
+    /// Different secret seeds produce different encoders
+    #[test]
+    fn test_different_seeds_different_output() {
+        let enc_a = ProtectedEncoder::new(111, 0);
+        let enc_b = ProtectedEncoder::new(222, 0);
+        let input = BipolarVector::from_seed(42);
+        let pa = enc_a.protect(&input).unwrap();
+        let pb = enc_b.protect(&input).unwrap();
+        let sim = pa.similarity(&pb).unwrap();
+        assert!(sim.abs() < 0.1,
+            "Different seeds should give different outputs: sim={}", sim);
+    }
+
+    /// Protected vector preserves dimensionality
+    #[test]
+    fn test_protection_preserves_dim() {
+        let enc = ProtectedEncoder::new(42, 0);
+        let input = BipolarVector::from_seed(7);
+        let protected = enc.protect(&input).unwrap();
+        assert_eq!(input.dim(), protected.dim());
+    }
+
+    /// Epoch rotation: old encoder can't unprotect new epoch's data
+    #[test]
+    fn test_epoch_rotation_prevents_cross_decode() {
+        let enc0 = ProtectedEncoder::new(42, 0);
+        let enc1 = ProtectedEncoder::new(42, 1);
+        let input = BipolarVector::from_seed(7);
+        let protected_by_1 = enc1.protect(&input).unwrap();
+        // Try to unprotect with epoch 0's encoder
+        let wrong_decode = enc0.unprotect(&protected_by_1).unwrap();
+        let sim = wrong_decode.similarity(&input).unwrap();
+        assert!(sim.abs() < 0.1,
+            "Wrong epoch should not recover original: sim={}", sim);
+    }
 }

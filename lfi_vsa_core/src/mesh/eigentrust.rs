@@ -151,4 +151,61 @@ mod tests {
         let scores = et.compute(10, 1e-6);
         assert!(scores.is_empty());
     }
+
+    /// Alpha is clamped to [0.01, 0.5]
+    #[test]
+    fn test_alpha_clamping() {
+        let et = EigenTrust::new(0.0);
+        assert!((et.alpha - 0.01).abs() < f64::EPSILON);
+        let et2 = EigenTrust::new(1.0);
+        assert!((et2.alpha - 0.5).abs() < f64::EPSILON);
+    }
+
+    /// Trust values are clamped to [0, 1]
+    #[test]
+    fn test_trust_clamping() {
+        let mut et = EigenTrust::new(0.1);
+        et.set_trust("A", "B", 5.0);  // Should clamp to 1.0
+        et.set_trust("B", "A", -3.0); // Should clamp to 0.0
+        let scores = et.compute(10, 1e-6);
+        // Should not panic and should produce valid scores
+        assert!(scores.values().all(|&v| v >= 0.0 && v <= 1.0));
+    }
+
+    /// Single peer converges to 1.0
+    #[test]
+    fn test_single_peer() {
+        let mut et = EigenTrust::new(0.1);
+        et.set_trust("A", "A", 1.0);
+        let scores = et.compute(10, 1e-6);
+        assert!((scores["A"] - 1.0).abs() < 0.01,
+            "Single peer should have trust ~1.0, got {}", scores["A"]);
+    }
+
+    /// Chain of trust: A→B→C, A pre-trusted
+    #[test]
+    fn test_trust_chain() {
+        let mut et = EigenTrust::new(0.1);
+        et.set_trust("A", "B", 1.0);
+        et.set_trust("B", "C", 1.0);
+        et.set_pre_trusted("A", 1.0);
+        let scores = et.compute(50, 1e-6);
+        // Trust should propagate: A > B > C
+        assert!(scores["A"] >= scores["B"],
+            "A ({}) should have >= trust than B ({})", scores["A"], scores["B"]);
+    }
+
+    /// Scores sum to approximately 1.0 (probability distribution)
+    #[test]
+    fn test_scores_sum_to_one() {
+        let mut et = EigenTrust::new(0.1);
+        et.set_trust("A", "B", 0.9);
+        et.set_trust("B", "C", 0.7);
+        et.set_trust("C", "A", 0.5);
+        et.set_pre_trusted("A", 1.0);
+        let scores = et.compute(50, 1e-6);
+        let sum: f64 = scores.values().sum();
+        assert!((sum - 1.0).abs() < 0.01,
+            "Scores should sum to ~1.0, got {}", sum);
+    }
 }

@@ -178,6 +178,15 @@ const SovereignCommandConsole: React.FC = () => {
   // Debounced disconnect banner — avoid flashing the banner on the initial
   // pre-connect moment or on momentary reconnects under 2s.
   const [showDisconnectBanner, setShowDisconnectBanner] = useState(false);
+  // c2-254 / #116: when the chat WS is in the backoff window, track the
+  // absolute wall time of the next attempt. Banner shows "reconnecting in Ns"
+  // based on wsReconnectAt - Date.now(). Null when a connect is in-flight
+  // or the socket is healthy.
+  const [wsReconnectAt, setWsReconnectAt] = useState<number | null>(null);
+  // Banner countdown ticker. Bumping wsTick every 500ms forces the banner's
+  // inline JSX to re-render so the "in Ns" text decrements. Ticker only
+  // runs while wsReconnectAt is set — no wasted wakeups when connected.
+  const [, setWsTick] = useState(0);
   // Distinguishes "WS dropped (reconnecting)" from "backend is fully offline"
   // (probe to /api/status fails too). Lets the disconnect banner show a
   // different, more actionable message when the dev server is down.
@@ -401,6 +410,16 @@ const SovereignCommandConsole: React.FC = () => {
       run: () => { setShowKnowledge(true); fetchKnowledge(); } },
     { cmd: '/game', label: 'Play a game', desc: 'Tic-tac-toe vs the AI',
       run: () => { setShowGame('tictactoe'); tttReset(); } },
+    // c2-251 / #113: natural coverage for features already in the app but
+    // not reachable via slash.
+    { cmd: '/search', label: 'Search this chat', desc: 'Open the in-conversation search bar',
+      run: () => { setShowChatSearch(true); setTimeout(() => chatSearchInputRef.current?.focus(), 50); } },
+    { cmd: '/shortcuts', label: 'Keyboard shortcuts', desc: 'Open the cheatsheet (also: ?)',
+      run: () => { setShowShortcuts(true); } },
+    { cmd: '/admin', label: 'Admin console', desc: 'Dashboard, domains, system, fleet, logs',
+      run: () => { setShowAdmin(true); } },
+    { cmd: '/classroom', label: 'Classroom', desc: 'Training, grades, datasets',
+      run: () => { setShowAdmin(false); setActiveView('classroom'); } },
     { cmd: '/help', label: 'Help & docs', desc: 'Commands, shortcuts, tips, and feedback guide',
       run: () => {
         const cmdList = slashCommands.filter(c => c.cmd !== '/help').map(c => `  ${c.cmd.padEnd(14)} ${c.desc}`).join('\n');
@@ -775,12 +794,15 @@ ${cmdList}
 
     const connect = () => {
       console.debug("// SCC: chat WS connect()");
+      // c2-254 / #116: attempt in-flight → no countdown to show.
+      setWsReconnectAt(null);
       const ws = new WebSocket(wsUrl);
       chatWsRef.current = ws;
 
       ws.onopen = () => {
         console.debug("// SCC: Chat WS OPEN");
         setIsConnected(true);
+        setWsReconnectAt(null);
         reconnectDelayMs = 1000; // reset backoff after healthy connect
       };
 
@@ -902,6 +924,7 @@ ${cmdList}
         // Add 0-500ms jitter so a fleet of reconnecting clients doesn't stampede.
         const jitter = Math.floor(Math.random() * 500);
         reconnectTimer = setTimeout(connect, reconnectDelayMs + jitter);
+        setWsReconnectAt(Date.now() + reconnectDelayMs + jitter);
         reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_MS);
       };
 
@@ -914,6 +937,15 @@ ${cmdList}
     connect();
     return () => { clearTimeout(reconnectTimer); chatWsRef.current?.close(); };
   }, [isAuthenticated]);
+
+  // c2-254 / #116: tick every 500ms while wsReconnectAt is set so the
+  // banner countdown re-renders. Stops automatically when the socket
+  // reopens (wsReconnectAt cleared) so there's no idle interval running.
+  useEffect(() => {
+    if (wsReconnectAt == null) return;
+    const id = setInterval(() => setWsTick(t => t + 1), 500);
+    return () => clearInterval(id);
+  }, [wsReconnectAt]);
 
   // ---- WebSocket: Telemetry ----
   useEffect(() => {
@@ -2212,11 +2244,17 @@ ${cmdList}
         const bg = isNetwork ? C.yellowBg : C.redBg;
         const fg = isNetwork ? C.yellow : C.red;
         const border = isNetwork ? C.yellowBg /* approx */ : C.redBorder;
+        // c2-254 / #116: if we're in the chat-WS backoff window, show the
+        // countdown. remainingSec<=0 means the connect is in-flight — fall
+        // through to the generic "reconnecting…" text.
+        const remainingSec = wsReconnectAt ? Math.max(0, Math.ceil((wsReconnectAt - Date.now()) / 1000)) : 0;
         const msg = isNetwork
           ? 'Your device is offline — check your network connection'
           : backendOffline
             ? `Backend offline — start the server at ${getHost()}:3000`
-            : 'Connection lost — reconnecting…';
+            : remainingSec > 0
+              ? `Connection lost — reconnecting in ${remainingSec}s…`
+              : 'Connection lost — reconnecting…';
         return (
           <div role='status' aria-live='polite'
             style={{
@@ -3098,33 +3136,88 @@ ${cmdList}
                   No conversations yet.
                 </div>
               )}
-              {conversations
-                .filter(c => {
-                  // Hide archived from the main list; they live in their own
-                  // collapsible section at the bottom.
-                  if (c.archived && !showArchived) return false;
-                  if (c.archived && showArchived) return false; // render in archived section only
-                  if (!convoSearch.trim()) return true;
-                  const q = convoSearch.toLowerCase();
-                  if (c.title.toLowerCase().includes(q)) return true;
-                  return c.messages.some(m => m.content.toLowerCase().includes(q));
-                })
-                .sort((a, b) => {
-                  // Pinned first; within the pinned group, prefer the user's
-                  // manual drag order (pinOrder) and fall back to updatedAt
-                  // desc for rows that were never reordered. Starred is
-                  // orthogonal — shown via an icon but doesn't affect order.
-                  if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
-                  if (a.pinned && b.pinned) {
-                    const ao = typeof a.pinOrder === 'number' ? a.pinOrder : Number.MAX_SAFE_INTEGER;
-                    const bo = typeof b.pinOrder === 'number' ? b.pinOrder : Number.MAX_SAFE_INTEGER;
-                    if (ao !== bo) return ao - bo;
-                  }
-                  return b.updatedAt - a.updatedAt;
-                })
-                .map(c => {
-                  const isActive = c.id === currentConversationId;
+              {/* c2-252 / #114: day-bucket headers for non-pinned rows; plus
+                  c2-253 / #115: "Pinned" header when there's >=1 pinned row,
+                  and a no-matches empty state when search filters everything
+                  out. IIFE so closures reset on every render. */}
+              {(() => {
+                const filtered = conversations
+                  .filter(c => {
+                    if (c.archived && !showArchived) return false;
+                    if (c.archived && showArchived) return false;
+                    if (!convoSearch.trim()) return true;
+                    const q = convoSearch.toLowerCase();
+                    if (c.title.toLowerCase().includes(q)) return true;
+                    return c.messages.some(m => m.content.toLowerCase().includes(q));
+                  })
+                  .sort((a, b) => {
+                    // Pinned first; within pinned prefer manual pinOrder,
+                    // fall back to updatedAt desc.
+                    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+                    if (a.pinned && b.pinned) {
+                      const ao = typeof a.pinOrder === 'number' ? a.pinOrder : Number.MAX_SAFE_INTEGER;
+                      const bo = typeof b.pinOrder === 'number' ? b.pinOrder : Number.MAX_SAFE_INTEGER;
+                      if (ao !== bo) return ao - bo;
+                    }
+                    return b.updatedAt - a.updatedAt;
+                  });
+                // c2-255 / #117: precompute counts per bucket so the header
+                // can show "Today · 3". "Pinned" shares the same map.
+                const bucketCounts: Record<string, number> = {};
+                for (const c of filtered) {
+                  const key = c.pinned ? 'Pinned' : formatDayBucket(c.updatedAt);
+                  bucketCounts[key] = (bucketCounts[key] ?? 0) + 1;
+                }
+                if (filtered.length === 0 && convoSearch.trim()) {
                   return (
+                    <div style={{
+                      padding: `${T.spacing.xl} ${T.spacing.md}`, textAlign: 'center',
+                      color: C.textMuted, fontSize: T.typography.sizeSm, lineHeight: T.typography.lineNormal,
+                    }}>
+                      <div>No matches for <strong style={{ color: C.text }}>"{convoSearch.length > 30 ? convoSearch.slice(0, 30) + '\u2026' : convoSearch}"</strong></div>
+                      <button onClick={() => setConvoSearch('')}
+                        style={{
+                          marginTop: T.spacing.sm, padding: `${T.spacing.xs} ${T.spacing.md}`,
+                          background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                          color: C.textSecondary, borderRadius: T.radii.sm,
+                          fontSize: T.typography.sizeXs, cursor: 'pointer', fontFamily: 'inherit',
+                        }}>Clear search</button>
+                    </div>
+                  );
+                }
+                let lastBucket = '';
+                let hasEmittedPinnedHeader = false;
+                return filtered.flatMap(c => {
+                  const nodes: React.ReactNode[] = [];
+                  if (c.pinned && !hasEmittedPinnedHeader) {
+                    nodes.push(
+                      <div key='dh-pinned' aria-hidden='true' style={{
+                        padding: `${T.spacing.sm} ${T.spacing.sm} ${T.spacing.xs}`,
+                        fontSize: '10px', fontWeight: T.typography.weightBold,
+                        color: C.textDim, textTransform: 'uppercase',
+                        letterSpacing: T.typography.trackingLoose,
+                        userSelect: 'none',
+                      }}>Pinned <span style={{ color: C.textMuted, fontWeight: T.typography.weightMedium }}>{'\u00B7 '}{bucketCounts['Pinned']}</span></div>
+                    );
+                    hasEmittedPinnedHeader = true;
+                  }
+                  if (!c.pinned) {
+                    const bucket = formatDayBucket(c.updatedAt);
+                    if (bucket !== lastBucket) {
+                      nodes.push(
+                        <div key={`dh-${bucket}-${c.id}`} aria-hidden='true' style={{
+                          padding: `${T.spacing.sm} ${T.spacing.sm} ${T.spacing.xs}`,
+                          fontSize: '10px', fontWeight: T.typography.weightBold,
+                          color: C.textDim, textTransform: 'uppercase',
+                          letterSpacing: T.typography.trackingLoose,
+                          userSelect: 'none',
+                        }}>{bucket} <span style={{ color: C.textMuted, fontWeight: T.typography.weightMedium }}>{'\u00B7 '}{bucketCounts[bucket]}</span></div>
+                      );
+                      lastBucket = bucket;
+                    }
+                  }
+                  const isActive = c.id === currentConversationId;
+                  nodes.push(
                     <div key={c.id}
                       onClick={() => setCurrentConversationId(c.id)}
                       role='button' tabIndex={0}
@@ -3307,7 +3400,9 @@ ${cmdList}
                       </div>
                     </div>
                   );
-                })}
+                  return nodes;
+                });
+              })()}
               {/* Archived section — collapsible, hidden by default. Only appears
                   when at least one conversation is archived. */}
               {conversations.some(c => c.archived) && (

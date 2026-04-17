@@ -16,6 +16,10 @@ import { T } from './tokens';
 // changes elsewhere in App.tsx.
 export interface ChatViewHandle {
   scrollToBottom: () => void;
+  // c2-256 / #118: needed for chat-search match navigation. align='center'
+  // puts the match in the middle of the viewport rather than clipping at
+  // the top edge.
+  scrollToIndex: (index: number) => void;
 }
 
 export interface ChatViewProps<T extends { id: number | string }> {
@@ -45,6 +49,11 @@ function ChatViewInner<T extends { id: number | string }>(
       if (messages.length > 0) {
         virtuosoRef.current?.scrollToIndex({ index: messages.length - 1, align: 'end', behavior: 'smooth' });
       }
+    },
+    scrollToIndex: (index: number) => {
+      if (messages.length === 0) return;
+      const clamped = Math.max(0, Math.min(index, messages.length - 1));
+      virtuosoRef.current?.scrollToIndex({ index: clamped, align: 'center', behavior: 'smooth' });
     },
   }), [messages.length]);
   if (messages.length === 0) {

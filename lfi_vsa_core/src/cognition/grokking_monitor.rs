@@ -170,4 +170,64 @@ mod tests {
         assert!(!triggers.is_empty());
         assert_eq!(mon.consolidations_triggered, 1);
     }
+
+    /// Window limits history length
+    #[test]
+    fn test_window_limits_history() {
+        let mut mon = GrokMonitor::new(5);
+        for s in snapshots("s", &[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0], &[0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1]) {
+            mon.record(s);
+        }
+        // With window=5, only last 5 should remain
+        // But detect_phase needs 10, so should be Undetermined
+        assert_eq!(mon.detect_phase("s"), GrokPhase::Undetermined);
+    }
+
+    /// Generalization gap returns correct value
+    #[test]
+    fn test_generalization_gap() {
+        let mut mon = GrokMonitor::new(20);
+        mon.record(StrategySnapshot {
+            strategy_name: "g".into(),
+            train_accuracy: 0.9, test_accuracy: 0.6,
+            l2_norm: 1.0, timestamp: 0,
+        });
+        let gap = mon.generalization_gap("g");
+        assert!((gap.unwrap() - 0.3).abs() < f64::EPSILON);
+    }
+
+    /// Generalization gap returns None for missing strategy
+    #[test]
+    fn test_generalization_gap_missing() {
+        let mon = GrokMonitor::new(20);
+        assert!(mon.generalization_gap("missing").is_none());
+    }
+
+    /// Multiple strategies tracked independently
+    #[test]
+    fn test_multiple_strategies() {
+        let mut mon = GrokMonitor::new(20);
+        // Strategy A: memorizing
+        for s in snapshots("A", &[0.3,0.4,0.5,0.6,0.7,0.8,0.85,0.9,0.92,0.95], &[0.3,0.3,0.3,0.3,0.3,0.3,0.3,0.3,0.3,0.3]) {
+            mon.record(s);
+        }
+        // Strategy B: cleaning up
+        for s in snapshots("B", &[0.5,0.6,0.7,0.75,0.8,0.82,0.83,0.84,0.85,0.85], &[0.3,0.4,0.5,0.6,0.7,0.75,0.78,0.80,0.82,0.83]) {
+            mon.record(s);
+        }
+        assert_eq!(mon.detect_phase("A"), GrokPhase::Memorization);
+        assert_eq!(mon.detect_phase("B"), GrokPhase::Cleanup);
+    }
+
+    /// Consolidation only triggers once per check
+    #[test]
+    fn test_consolidation_increments() {
+        let mut mon = GrokMonitor::new(20);
+        for s in snapshots("c", &[0.5,0.6,0.7,0.75,0.8,0.82,0.83,0.84,0.85,0.85], &[0.3,0.4,0.5,0.6,0.7,0.75,0.78,0.80,0.82,0.83]) {
+            mon.record(s);
+        }
+        let _ = mon.should_consolidate();
+        let _ = mon.should_consolidate();
+        assert_eq!(mon.consolidations_triggered, 2);
+    }
 }

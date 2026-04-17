@@ -369,4 +369,102 @@ mod tests {
             }
         }
     }
+
+    /// Bind is self-inverse: bind(A, bind(A, B)) ≈ B
+    #[test]
+    fn bind_self_inverse() {
+        let a = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let b = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let ab = a.bind(&b).unwrap();
+        let result = a.bind(&ab).unwrap();
+        let sim = result.similarity(&b);
+        assert!((sim - 1.0).abs() < 0.001,
+            "bind(A, bind(A, B)) should recover B, similarity = {}", sim);
+    }
+
+    /// Bundle of a single vector returns that vector
+    #[test]
+    fn bundle_single_identity() {
+        let v = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let result = HyperMemory::bundle(&[v.clone()]).unwrap();
+        let sim = v.similarity(&result);
+        assert!((sim - 1.0).abs() < 0.001,
+            "bundle of single vector should be identity, similarity = {}", sim);
+    }
+
+    /// Project reduces dimensionality correctly
+    #[test]
+    fn project_reduces_dim() {
+        let v = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let projected = v.project(1000).unwrap();
+        assert_eq!(projected.dimensions, 1000);
+        assert_eq!(projected.vector.len(), 1000);
+    }
+
+    /// Project to same or higher dim fails
+    #[test]
+    fn project_upward_fails() {
+        let v = HyperMemory::generate_seed(1000);
+        assert!(v.project(1000).is_err());
+        assert!(v.project(2000).is_err());
+    }
+
+    /// Permute by 0 is identity
+    #[test]
+    fn permute_zero_identity() {
+        let v = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let result = v.permute(0).unwrap();
+        let sim = v.similarity(&result);
+        assert!((sim - 1.0).abs() < 0.001,
+            "permute(0) should be identity, similarity = {}", sim);
+    }
+
+    /// Permute by full dim is identity (cyclic)
+    #[test]
+    fn permute_full_cycle_identity() {
+        let v = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let result = v.permute(DIM_PROLETARIAT).unwrap();
+        let sim = v.similarity(&result);
+        assert!((sim - 1.0).abs() < 0.001,
+            "permute(dim) should be identity, similarity = {}", sim);
+    }
+
+    /// Random vectors have ~0.5 similarity (matching fraction)
+    /// In this implementation, similarity = fraction of matching elements.
+    /// Random bipolar vectors match ~50% of elements.
+    #[test]
+    fn random_vectors_half_similar() {
+        let a = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let b = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let sim = a.similarity(&b);
+        assert!((sim - 0.5).abs() < 0.05,
+            "random vectors should have ~0.5 similarity, got {}", sim);
+    }
+
+    /// from_string is deterministic (same input = same vector)
+    #[test]
+    fn from_string_deterministic() {
+        let v1 = HyperMemory::from_string("hello world", DIM_PROLETARIAT);
+        let v2 = HyperMemory::from_string("hello world", DIM_PROLETARIAT);
+        let sim = v1.similarity(&v2);
+        assert!((sim - 1.0).abs() < f64::EPSILON,
+            "from_string should be deterministic, similarity = {}", sim);
+    }
+
+    /// Dimension mismatch in bind returns error
+    #[test]
+    fn bind_dim_mismatch_errors() {
+        let a = HyperMemory::new(100);
+        let b = HyperMemory::new(200);
+        assert!(a.bind(&b).is_err());
+    }
+
+    /// Audit orthogonality returns ~0.5 (matching fraction for random probes)
+    #[test]
+    fn audit_orthogonality_near_half() {
+        let v = HyperMemory::generate_seed(DIM_PROLETARIAT);
+        let mean_sim = v.audit_orthogonality();
+        assert!((mean_sim - 0.5).abs() < 0.05,
+            "orthogonality audit should be ~0.5, got {}", mean_sim);
+    }
 }

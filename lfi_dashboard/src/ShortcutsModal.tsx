@@ -44,6 +44,24 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', 'Shift', 'D'], label: 'Cycle through themes' },
     ],
   },
+  // c2-250 / #112: document the sidebar row shortcuts added in c2-247+249
+  // so the cheatsheet matches the behaviour. All modifier-free — works on
+  // whichever row has focus.
+  {
+    group: 'Conversations (on focused sidebar row)',
+    items: [
+      { keys: ['↑'], label: 'Focus previous conversation' },
+      { keys: ['↓'], label: 'Focus next conversation' },
+      { keys: ['Home'], label: 'Focus first conversation' },
+      { keys: ['End'], label: 'Focus last conversation' },
+      { keys: ['Enter'], label: 'Open the focused conversation' },
+      { keys: ['P'], label: 'Pin / unpin' },
+      { keys: ['S'], label: 'Star / unstar' },
+      { keys: ['F2'], label: 'Rename inline' },
+      { keys: ['Del'], label: 'Delete (with undo toast)' },
+      { keys: ['drag'], label: 'Drag a pinned row to reorder' },
+    ],
+  },
 ];
 
 export interface ShortcutsModalProps {
