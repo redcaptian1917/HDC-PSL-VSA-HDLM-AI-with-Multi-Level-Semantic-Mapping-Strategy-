@@ -3545,6 +3545,7 @@ ${cmdList}
                 <div style={{ marginTop: '12px', borderTop: `1px solid ${C.borderSubtle}`, paddingTop: '8px' }}>
                   <button onClick={() => setShowArchived(v => !v)}
                     aria-expanded={showArchived}
+                    aria-controls='lfi-archived-section'
                     style={{
                       width: '100%', textAlign: 'left', padding: '6px 8px',
                       background: 'transparent', border: 'none', cursor: 'pointer',
@@ -3555,6 +3556,11 @@ ${cmdList}
                     <span style={{ transform: showArchived ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform 0.15s', display: 'inline-block' }}>{'\u25B8'}</span>
                     Archived ({conversations.filter(c => c.archived).length})
                   </button>
+                  {/* c2-280: group the bulk actions + archived rows in a
+                      single region so the toggle button's aria-controls
+                      points at something concrete. hidden attr makes screen
+                      readers skip the node when collapsed. */}
+                  <div id='lfi-archived-section' role='region' aria-label='Archived conversations' hidden={!showArchived}>
                   {/* c2-244 / #105: bulk actions for the archive. Only shown
                       when the section is expanded so users can see what
                       they're about to touch. Both actions confirm first. */}
@@ -3635,6 +3641,7 @@ ${cmdList}
                         </div>
                       );
                     })}
+                  </div>
                 </div>
               )}
             </div>
