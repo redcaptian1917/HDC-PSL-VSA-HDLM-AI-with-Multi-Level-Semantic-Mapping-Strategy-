@@ -327,6 +327,44 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                     </div>
                   );
                 })}
+                {/* c2-363 / task 120: auto-detect strengths (>=80) and
+                    weaknesses (<60) and surface them as a compact summary row
+                    at the bottom of the breakdown card. Skips any metric that
+                    falls into the middle (60-79) tier -- those are neither
+                    highlights nor concerns. If the row is empty (all middle)
+                    we render nothing. */}
+                {(() => {
+                  const entries = (['quality', 'adversarial', 'coverage', 'training'] as const)
+                    .map(k => {
+                      const v = data.score?.breakdown?.[k];
+                      if (typeof v !== 'number') return null;
+                      const pc = v <= 1.5 ? v * 100 : v;
+                      return { k, pc };
+                    })
+                    .filter((e): e is { k: string; pc: number } => e !== null);
+                  const strengths = entries.filter(e => e.pc >= 80);
+                  const weaknesses = entries.filter(e => e.pc < 60);
+                  if (strengths.length === 0 && weaknesses.length === 0) return null;
+                  return (
+                    <div style={{
+                      display: 'flex', gap: T.spacing.md, flexWrap: 'wrap',
+                      marginTop: T.spacing.md, paddingTop: T.spacing.md,
+                      borderTop: `1px solid ${C.borderSubtle}`,
+                      fontSize: T.typography.sizeSm,
+                    }}>
+                      {strengths.length > 0 && (
+                        <span style={{ color: C.green }}>
+                          <strong>Strengths:</strong> {strengths.map(e => e.k).join(', ')}
+                        </span>
+                      )}
+                      {weaknesses.length > 0 && (
+                        <span style={{ color: C.red }}>
+                          <strong>Weaknesses:</strong> {weaknesses.map(e => e.k).join(', ')}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
