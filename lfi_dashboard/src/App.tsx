@@ -2545,6 +2545,7 @@ ${cmdList}
               }}>
               <textarea
                 ref={inputRef}
+                aria-label='Chat message input'
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={(e) => {
