@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { T } from './tokens';
+// c2-347: shared stat/summary card (replaces the local Stat helper).
+import { StatCard } from './components/StatCard';
 import { compactNum, formatRelative } from './util';
 
 // c0-037 #3 / c2-329: standalone Library page. Fetches /api/library/sources
@@ -186,10 +188,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ C, host, isDesktop }) 
               display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(auto-fit, minmax(180px, 1fr))' : 'repeat(2, 1fr)',
               gap: T.spacing.md, marginBottom: T.spacing.xl,
             }}>
-              <Stat C={C} label='Sources' value={String(totals.count)} color={C.accent} />
-              <Stat C={C} label='Facts' value={compactNum(totals.facts)} color={C.purple} />
-              <Stat C={C} label='Vetted' value={`${totals.vetted} / ${totals.count}`} color={C.green} />
-              <Stat C={C} label='Avg quality' value={totals.avgQ != null ? totals.avgQ.toFixed(2) : '—'} color={totals.avgQ != null ? qualityColor(totals.avgQ) : C.textMuted} />
+              <StatCard C={C} label='Sources' value={String(totals.count)} color={C.accent} />
+              <StatCard C={C} label='Facts' value={compactNum(totals.facts)} color={C.purple} />
+              <StatCard C={C} label='Vetted' value={`${totals.vetted} / ${totals.count}`} color={C.green} />
+              <StatCard C={C} label='Avg quality' value={totals.avgQ != null ? totals.avgQ.toFixed(2) : '—'} color={totals.avgQ != null ? qualityColor(totals.avgQ) : C.textMuted} />
             </div>
 
             {/* Filter */}
@@ -269,15 +271,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ C, host, isDesktop }) 
 
 // ---- Private helpers ----
 
-const Stat: React.FC<{ C: any; label: string; value: string; color: string }> = ({ C, label, value, color }) => (
-  <div style={{
-    padding: `${T.spacing.md} ${T.spacing.lg}`, borderRadius: T.radii.md,
-    background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
-  }}>
-    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{label}</div>
-    <div style={{ fontSize: '24px', fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>{value}</div>
-  </div>
-);
+// c2-347: the local Stat helper moved to components/StatCard.tsx.
 
 const Th: React.FC<{
   C: any; children: React.ReactNode; onClick: () => void; align?: 'left' | 'right' | 'center'; 'aria-sort': 'ascending' | 'descending' | 'none';

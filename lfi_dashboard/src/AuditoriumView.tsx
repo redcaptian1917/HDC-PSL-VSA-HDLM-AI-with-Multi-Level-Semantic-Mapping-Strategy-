@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { T } from './tokens';
+// c2-347: shared stat/summary card (replaces the local Stat helper).
+import { StatCard } from './components/StatCard';
 import { formatRelative } from './util';
 
 // c0-037 #12 / c2-331: Auditorium — AVP-2 audit state surface.
@@ -154,19 +156,19 @@ export const AuditoriumView: React.FC<AuditoriumViewProps> = ({ C, host, isDeskt
           display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(auto-fit, minmax(200px, 1fr))' : 'repeat(2, 1fr)',
           gap: T.spacing.md, marginBottom: T.spacing.xl,
         }}>
-          <Stat C={C} label='Passes'
+          <StatCard C={C} label='Passes'
             value={`${passesCompleted} / ${totalPasses}`}
             color={passesCompleted >= totalPasses ? C.green : passesCompleted > 0 ? C.yellow : C.textMuted} />
-          <Stat C={C} label='Findings fixed'
+          <StatCard C={C} label='Findings fixed'
             value={findingsTotal != null ? `${findingsFixed ?? 0} / ${findingsTotal}` : '—'}
             color={findingsTotal != null && findingsFixed != null
               ? (findingsFixed >= findingsTotal ? C.green
                  : findingsFixed / Math.max(findingsTotal, 1) >= 0.5 ? C.yellow : C.red)
               : C.textMuted} />
-          <Stat C={C} label='Security score'
+          <StatCard C={C} label='Security score'
             value={securityPct != null ? `${securityPct.toFixed(1)}%` : '—'}
             color={scoreColor(securityPct)} />
-          <Stat C={C} label='Code quality'
+          <StatCard C={C} label='Code quality'
             value={qualityPct != null ? `${qualityPct.toFixed(1)}%` : '—'}
             color={scoreColor(qualityPct)} />
         </div>
@@ -276,15 +278,7 @@ export const AuditoriumView: React.FC<AuditoriumViewProps> = ({ C, host, isDeskt
 
 // ---- Private helpers ----
 
-const Stat: React.FC<{ C: any; label: string; value: string; color: string }> = ({ C, label, value, color }) => (
-  <div style={{
-    padding: `${T.spacing.md} ${T.spacing.lg}`, borderRadius: T.radii.md,
-    background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
-  }}>
-    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{label}</div>
-    <div style={{ fontSize: '24px', fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>{value}</div>
-  </div>
-);
+// c2-347: the local Stat helper moved to components/StatCard.tsx.
 
 const Th: React.FC<{ C: any; children: React.ReactNode; align?: 'left' | 'right' | 'center' }> = ({ C, children, align = 'left' }) => (
   <th style={{

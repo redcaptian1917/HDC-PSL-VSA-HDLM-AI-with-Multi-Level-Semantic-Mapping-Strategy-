@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { T } from './tokens';
+// c2-347: shared stat/summary card (replaces the local Stat helper).
+import { StatCard } from './components/StatCard';
 import { formatRelative } from './util';
 
 // c0-037 #2 / c2-328: standalone Fleet dashboard page (was Admin tab only).
@@ -146,10 +148,10 @@ export const FleetView: React.FC<FleetViewProps> = ({ C, host, isDesktop }) => {
                 display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(auto-fit, minmax(180px, 1fr))' : 'repeat(2, 1fr)',
                 gap: T.spacing.md, marginBottom: T.spacing.xl,
               }}>
-                <Stat C={C} label='Instances' value={String(fleet.instances?.length ?? 0)} color={C.accent} />
-                <Stat C={C} label='Tasks total' value={typeof fleet.stats.total_tasks === 'number' ? String(fleet.stats.total_tasks) : '—'} color={C.purple} />
-                <Stat C={C} label='Running' value={typeof fleet.stats.running === 'number' ? String(fleet.stats.running) : '—'} color={C.yellow} />
-                <Stat C={C} label='Completed' value={typeof fleet.stats.completed === 'number' ? String(fleet.stats.completed) : '—'} color={C.green} />
+                <StatCard C={C} label='Instances' value={String(fleet.instances?.length ?? 0)} color={C.accent} />
+                <StatCard C={C} label='Tasks total' value={typeof fleet.stats.total_tasks === 'number' ? String(fleet.stats.total_tasks) : '—'} color={C.purple} />
+                <StatCard C={C} label='Running' value={typeof fleet.stats.running === 'number' ? String(fleet.stats.running) : '—'} color={C.yellow} />
+                <StatCard C={C} label='Completed' value={typeof fleet.stats.completed === 'number' ? String(fleet.stats.completed) : '—'} color={C.green} />
               </div>
             )}
             {fleet.instances && fleet.instances.length > 0 && (
@@ -203,16 +205,9 @@ export const FleetView: React.FC<FleetViewProps> = ({ C, host, isDesktop }) => {
 };
 
 // ---- Private helpers ----
-
-const Stat: React.FC<{ C: any; label: string; value: string; color: string }> = ({ C, label, value, color }) => (
-  <div style={{
-    padding: `${T.spacing.md} ${T.spacing.lg}`, borderRadius: T.radii.md,
-    background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
-  }}>
-    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{label}</div>
-    <div style={{ fontSize: '24px', fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>{value}</div>
-  </div>
-);
+// c2-347: the local Stat helper moved to components/StatCard.tsx; the
+// FleetView-only `InstanceCard` below stays local since it has page-
+// specific fields (status, tasks_pending, current_task).
 
 const InstanceCard: React.FC<{ C: any; inst: FleetInstance }> = ({ C, inst }) => {
   const statusColor = inst.status === 'running' ? C.green

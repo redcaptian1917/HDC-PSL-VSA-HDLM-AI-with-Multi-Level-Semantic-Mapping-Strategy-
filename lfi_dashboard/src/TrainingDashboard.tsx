@@ -4,6 +4,8 @@ import { T } from './tokens';
 // c2-340 / c0-auto-2 task 50: 20px + 24px heading sizes sourced from the
 // cross-platform design-system (T.typography caps at 22).
 import { typography as dsType } from './design-system';
+// c2-347: shared uppercase meta-label.
+import { Label } from './components/Label';
 
 // c2-240 / #20: typography weights, tracking, and the most repeated radii
 // migrated to tokens.ts. Card padding stays in px — the 14/10/8 cascade is
@@ -348,9 +350,9 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
         return (
           <div style={{ marginBottom: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em' }}>
+              <Label color={C.textMuted}>
                 Per-Domain Coverage ({domains.length})
-              </div>
+              </Label>
               <div style={{ fontSize: '9px', color: C.textDim }}>bar width = fact share · tint = quality</div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.xs }}>
@@ -401,9 +403,9 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
       {/* Recent training log (from /api/admin/training/accuracy) */}
       {Array.isArray(accuracy?.recent_training_log) && accuracy.recent_training_log.length > 0 && (
         <div>
-          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em', marginBottom: '10px' }}>
+          <Label color={C.textMuted} mb={'10px'}>
             Recent Training Log
-          </div>
+          </Label>
           <pre style={{
             padding: '12px', background: C.bgInput, borderRadius: T.radii.lg,
             fontSize: T.typography.sizeXs, color: C.textSecondary,
