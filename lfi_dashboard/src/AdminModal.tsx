@@ -355,7 +355,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* ---------- Dashboard ---------- */}
           {tab === 'dashboard' && (
             <div>
-              {err.dashboard && <AdminErr C={C} msg={err.dashboard} />}
+              {err.dashboard && <AdminErr C={C} msg={err.dashboard} onRetry={() => loadTab('dashboard')} retrying={loading === 'dashboard'} />}
               {/* Skeleton loader — only shown while the first fetch is in
                   flight AND we don't yet have any cached data. Subsequent
                   refreshes render fresh data silently. Per c0-020. */}
@@ -697,7 +697,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     cursor: loading === 'domains' ? 'wait' : 'pointer',
                   }}>{loading === 'domains' ? 'Loading…' : 'Refresh'}</button>
               </div>
-              {err.domains && <AdminErr C={C} msg={err.domains} />}
+              {err.domains && <AdminErr C={C} msg={err.domains} onRetry={() => loadTab('domains')} retrying={loading === 'domains'} />}
               <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeMd }}>
                   <thead>
@@ -777,7 +777,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* ---------- Training ---------- */}
           {tab === 'training' && (
             <div>
-              {err.training && <AdminErr C={C} msg={err.training} />}
+              {err.training && <AdminErr C={C} msg={err.training} onRetry={() => loadTab('training')} retrying={loading === 'training'} />}
               {accuracy ? (
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
@@ -848,7 +848,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* ---------- Quality ---------- */}
           {tab === 'quality' && (
             <div>
-              {err.quality && <AdminErr C={C} msg={err.quality} />}
+              {err.quality && <AdminErr C={C} msg={err.quality} onRetry={() => loadTab('quality')} retrying={loading === 'quality'} />}
               {quality ? (
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
@@ -920,7 +920,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* ---------- System ---------- */}
           {tab === 'system' && (
             <div>
-              {err.system && <AdminErr C={C} msg={err.system} />}
+              {err.system && <AdminErr C={C} msg={err.system} onRetry={() => loadTab('system')} retrying={loading === 'system'} />}
               {sysInfo ? (
                 <>
                   {/* Resource gauges — CPU temp / RAM / Disk as horizontal
@@ -992,7 +992,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* ---------- Fleet (c0-031 autonomous directive #7) ---------- */}
           {tab === 'fleet' && (
             <div>
-              {err.fleet && <AdminErr C={C} msg={err.fleet} />}
+              {err.fleet && <AdminErr C={C} msg={err.fleet} onRetry={() => loadTab('fleet')} retrying={loading === 'fleet'} />}
               {fleet === null && !err.fleet && (
                 <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted }}>
                   {loading === 'fleet' ? 'Loading fleet…' : 'Fleet endpoint not yet responsive.'}
@@ -1101,7 +1101,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* ---------- Logs ---------- */}
           {tab === 'logs' && (
             <div>
-              {err.logs && <AdminErr C={C} msg={err.logs} />}
+              {err.logs && <AdminErr C={C} msg={err.logs} onRetry={() => loadTab('logs')} retrying={loading === 'logs'} />}
               {/* Server logs (primary) */}
               {logs && logs.length > 0 && (
                 <div style={{ marginBottom: T.spacing.lg }}>
@@ -1289,13 +1289,28 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
 // ---- Private helpers ----
 
-const AdminErr: React.FC<{ C: any; msg: string }> = ({ C, msg }) => (
+// c2-302: accepts an optional onRetry so per-tab errors can offer inline
+// recovery without scrolling up to the header refresh button.
+const AdminErr: React.FC<{ C: any; msg: string; onRetry?: () => void; retrying?: boolean }> = ({ C, msg, onRetry, retrying }) => (
   <div role='alert' style={{
     padding: '12px 14px', marginBottom: T.spacing.md,
     background: C.redBg, border: `1px solid ${C.redBorder}`,
     color: C.red, borderRadius: T.radii.md, fontSize: T.typography.sizeMd,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.md,
   }}>
-    <strong>Could not load:</strong> {msg}
+    <span><strong>Could not load:</strong> {msg}</span>
+    {onRetry && (
+      <button onClick={onRetry} disabled={retrying}
+        style={{
+          background: 'transparent', border: `1px solid ${C.redBorder}`,
+          color: C.red, borderRadius: T.radii.sm,
+          padding: `${T.spacing.xs} ${T.spacing.md}`,
+          cursor: retrying ? 'wait' : 'pointer',
+          fontFamily: 'inherit', fontSize: T.typography.sizeXs,
+          fontWeight: T.typography.weightBold, textTransform: 'uppercase',
+          letterSpacing: '0.06em', flexShrink: 0,
+        }}>{retrying ? 'Retrying…' : 'Retry'}</button>
+    )}
   </div>
 );
 

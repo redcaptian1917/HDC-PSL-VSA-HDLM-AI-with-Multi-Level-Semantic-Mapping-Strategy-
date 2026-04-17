@@ -4552,6 +4552,23 @@ ${cmdList}
                       const text = e.results?.[0]?.[0]?.transcript || '';
                       if (text) setInput(prev => (prev ? prev + ' ' : '') + text);
                     };
+                    // c2-304: surface the listening state + error cases so the
+                    // user isn't staring at a button that silently fails when
+                    // mic permission is denied or the service can't reach the
+                    // browser's speech endpoint.
+                    rec.onstart = () => { showToast('Listening…'); };
+                    rec.onerror = (e: any) => {
+                      const err = e?.error || 'unknown';
+                      const friendly = err === 'not-allowed' || err === 'service-not-allowed'
+                        ? 'Microphone permission denied — enable it in browser settings.'
+                        : err === 'no-speech' ? 'No speech detected.'
+                        : err === 'audio-capture' ? 'No microphone found.'
+                        : err === 'network' ? 'Voice service unreachable.'
+                        : `Voice input failed: ${err}`;
+                      showToast(friendly);
+                      logEvent('voice_error', { error: err });
+                    };
+                    rec.onend = () => { logEvent('voice_ended', {}); };
                     rec.start();
                     logEvent('voice_started', {});
                   }}
@@ -4612,7 +4629,10 @@ ${cmdList}
                 {/* Send */}
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim() || !isConnected || isThinking}
+                  // c2-303: mirror the handleSend guard — an empty text box
+                  // with pasted images queued is a valid send. Previously the
+                  // button stayed disabled even when pastedImages had entries.
+                  disabled={(!input.trim() && pastedImages.length === 0) || !isConnected || isThinking}
                   className="scc-send-btn"
                   title='Send (Enter)'
                   aria-label={isThinking ? 'Sending…' : 'Send message'}

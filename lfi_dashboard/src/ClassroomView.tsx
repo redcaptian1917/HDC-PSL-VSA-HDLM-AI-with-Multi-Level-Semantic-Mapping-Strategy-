@@ -241,7 +241,22 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
             padding: '12px 14px', marginBottom: T.spacing.lg,
             background: C.redBg, border: `1px solid ${C.redBorder}`,
             color: C.red, borderRadius: T.radii.md, fontSize: T.typography.sizeMd,
-          }}><strong>Could not load:</strong> {err}</div>
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.md,
+          }}>
+            <span><strong>Could not load:</strong> {err}</span>
+            {/* c2-301: inline Retry so users don't have to scroll to the
+                top-right refresh button to recover from a transient fault. */}
+            <button onClick={load} disabled={loading}
+              style={{
+                background: 'transparent', border: `1px solid ${C.redBorder}`,
+                color: C.red, borderRadius: T.radii.sm,
+                padding: `${T.spacing.xs} ${T.spacing.md}`,
+                cursor: loading ? 'wait' : 'pointer',
+                fontFamily: 'inherit', fontSize: T.typography.sizeXs,
+                fontWeight: T.typography.weightBold, textTransform: 'uppercase',
+                letterSpacing: '0.06em', flexShrink: 0,
+              }}>{loading ? 'Retrying…' : 'Retry'}</button>
+          </div>
         )}
 
         {/* --- Student Profile --- */}
