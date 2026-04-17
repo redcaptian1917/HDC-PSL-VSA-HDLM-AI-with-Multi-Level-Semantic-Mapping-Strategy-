@@ -366,6 +366,78 @@ const DomainBars: React.FC<{ C: any; rows: Array<{ domain: string; count: number
   );
 };
 
+const LibraryTab: React.FC<{ C: any; domains: Array<{ domain: string; count: number }>; files: Array<{ file: string; pairs: number; size_mb: number }> }> = ({ C, domains, files }) => {
+  const [q, setQ] = React.useState('');
+  const normQ = q.trim().toLowerCase();
+  const matchedDomains = normQ ? domains.filter(d => d.domain.toLowerCase().includes(normQ)) : domains;
+  const matchedFiles = normQ ? files.filter(f => f.file.toLowerCase().includes(normQ)) : files;
+  return (
+    <div>
+      <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Library</h2>
+      <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+        Browse what the AI has learned. Full-text search will land when /api/classroom/library supports it; for now you can filter
+        domains and training files.
+      </p>
+      <input
+        type='search' value={q} onChange={e => setQ(e.target.value)}
+        autoComplete='off' spellCheck={false}
+        placeholder={`Filter ${domains.length} domains / ${files.length} files…`}
+        aria-label='Library search'
+        style={{
+          width: '100%', padding: '10px 12px', marginBottom: T.spacing.lg,
+          background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+          borderRadius: T.radii.md, color: C.text, fontFamily: 'inherit',
+          fontSize: T.typography.sizeBody, outline: 'none',
+        }}
+      />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: T.spacing.lg }}>
+        <div>
+          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+            Domains ({matchedDomains.length})
+          </div>
+          {matchedDomains.length === 0 ? (
+            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }}>No domains match.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {matchedDomains.slice(0, 50).map(d => (
+                <div key={d.domain} style={{
+                  display: 'flex', justifyContent: 'space-between',
+                  padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
+                  fontSize: '12px',
+                }}>
+                  <span style={{ color: C.text }}>{d.domain}</span>
+                  <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{d.count.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+            Training files ({matchedFiles.length})
+          </div>
+          {matchedFiles.length === 0 ? (
+            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }}>No files match.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {matchedFiles.slice(0, 50).map(f => (
+                <div key={f.file} style={{
+                  display: 'flex', justifyContent: 'space-between',
+                  padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
+                  fontSize: '12px',
+                }}>
+                  <span style={{ color: C.text, fontFamily: 'ui-monospace, monospace' }}>{f.file}</span>
+                  <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{f.pairs.toLocaleString()} pairs</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Placeholder: React.FC<{ C: any; title: string; body: string; data: unknown }> = ({ C, title, body, data }) => (
   <div>
     <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>{title}</h2>
