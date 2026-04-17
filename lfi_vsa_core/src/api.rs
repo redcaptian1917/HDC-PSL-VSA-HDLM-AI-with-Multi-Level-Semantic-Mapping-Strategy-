@@ -219,7 +219,7 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 let _ = socket.send(Message::Text(progress.to_string())).await;
 
                 // Route through CognitiveCore
-                let response_payload = {
+                let mut response_payload = {
                     let mut agent = state.agent.lock();
 
                     // Auto-learn from conversational patterns — extract
@@ -322,7 +322,7 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     match agent.chat_traced(input) {
                         Ok((response, conclusion_id)) => {
                             let thought = &response.thought;
-                            let payload = json!({
+                            let mut payload = json!({
                                 "type": "chat_response",
                                 "content": response.text,
                                 "mode": format!("{:?}", thought.mode),
@@ -401,6 +401,30 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                     actual: 1.0, // Assumed correct unless user corrects
                                     domain: thought.intent.as_ref().map(|i| format!("{:?}", i)),
                                 });
+                            }
+
+                            // FACT VERIFICATION: Check response claims against knowledge base
+                            // before sending. Adds trust_score to the response metadata.
+                            let trust_info = {
+                                let content_str = payload.get("content")
+                                    .and_then(|v| v.as_str()).unwrap_or("");
+                                if content_str.len() > 50 {
+                                    let detector = crate::intelligence::hallucination_detector::HallucinationDetector::new(state.db.clone());
+                                    let report = detector.analyze(content_str);
+                                    Some(json!({
+                                        "trust_score": (report.trust_score * 100.0).round() / 100.0,
+                                        "verified_claims": report.verified_count,
+                                        "unsupported_claims": report.unsupported_count,
+                                        "flagged": report.flagged,
+                                    }))
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(trust) = trust_info {
+                                if let Some(obj) = payload.as_object_mut() {
+                                    obj.insert("fact_check".to_string(), trust);
+                                }
                             }
 
                             payload
@@ -3218,12 +3242,65 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/admin/training/:action", post(admin_training_control_handler))
         .route("/api/admin/logs", get(admin_logs_handler))
         .route("/api/presence", get(presence_handler))
+        .route("/api/metrics/prometheus", get(prometheus_metrics_handler))
         .layer(cors)
         // OBSERVABILITY: Request logging — method, path, status, latency
         .layer(axum::middleware::from_fn(request_logging_middleware))
         // SECURITY: Add security headers to all responses
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(state))
+}
+
+/// GET /api/metrics/prometheus — Prometheus-compatible metrics endpoint.
+/// Returns key system metrics for monitoring dashboards.
+async fn prometheus_metrics_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let uptime = 0.0f64; // Uptime tracked separately if needed
+    let agent = state.agent.lock();
+    let experience_stats = state.experience.lock().stats.clone();
+    drop(agent);
+
+    // Get DB stats (best effort, don't block on lock)
+    let (facts_total, domains_count) = match state.db.conn.lock() {
+        Ok(conn) => {
+            let facts: i64 = conn.query_row("SELECT count(*) FROM facts", [], |r| r.get(0)).unwrap_or(0);
+            let domains: i64 = conn.query_row("SELECT count(DISTINCT domain) FROM facts", [], |r| r.get(0)).unwrap_or(0);
+            (facts, domains)
+        },
+        Err(_) => (0, 0),
+    };
+
+    // Prometheus text format
+    let metrics = format!(
+        "# HELP plausiden_facts_total Total facts in brain.db\n\
+         # TYPE plausiden_facts_total gauge\n\
+         plausiden_facts_total {}\n\
+         # HELP plausiden_domains_total Distinct domains\n\
+         # TYPE plausiden_domains_total gauge\n\
+         plausiden_domains_total {}\n\
+         # HELP plausiden_uptime_seconds Server uptime\n\
+         # TYPE plausiden_uptime_seconds gauge\n\
+         plausiden_uptime_seconds {:.1}\n\
+         # HELP plausiden_corrections_total User corrections captured\n\
+         # TYPE plausiden_corrections_total counter\n\
+         plausiden_corrections_total {}\n\
+         # HELP plausiden_positive_feedback_total Positive feedback received\n\
+         # TYPE plausiden_positive_feedback_total counter\n\
+         plausiden_positive_feedback_total {}\n\
+         # HELP plausiden_knowledge_gaps_total Knowledge gaps detected\n\
+         # TYPE plausiden_knowledge_gaps_total counter\n\
+         plausiden_knowledge_gaps_total {}\n",
+        facts_total, domains_count, uptime,
+        experience_stats.corrections_captured,
+        experience_stats.positive_feedback,
+        experience_stats.knowledge_gaps_detected,
+    );
+
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        metrics,
+    )
 }
 
 /// OBSERVABILITY: Request logging middleware — logs method, path, status, latency.
