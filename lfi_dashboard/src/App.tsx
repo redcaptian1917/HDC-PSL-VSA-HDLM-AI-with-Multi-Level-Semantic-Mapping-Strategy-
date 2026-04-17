@@ -68,6 +68,9 @@ import { ChatView, type ChatViewHandle } from './ChatView';
 const ShortcutsModal = React.lazy(() => import('./ShortcutsModal').then(m => ({ default: m.ShortcutsModal })));
 
 const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
+// c2-356 / task #67: in-browser xterm.js terminal. Lazy because xterm is
+// ~200 KB and most sessions never open it.
+const XTermModal = React.lazy(() => import('./XTermModal').then(m => ({ default: m.XTermModal })));
 const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
 const ActivityModal = React.lazy(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })));
 const CommandPalette = React.lazy(() => import('./CommandPalette').then(m => ({ default: m.CommandPalette })));
@@ -422,6 +425,9 @@ const SovereignCommandConsole: React.FC = () => {
       run: () => { setShowKnowledge(true); fetchKnowledge(); } },
     { cmd: '/game', label: 'Play a game', desc: 'Tic-tac-toe vs the AI',
       run: () => { setShowGame('tictactoe'); tttReset(); } },
+    // c2-356 / task #67: in-browser xterm.js terminal.
+    { cmd: '/terminal', label: 'Terminal', desc: 'Open the in-browser terminal (xterm.js, client-local)',
+      run: () => { setShowTerminal(true); } },
     // c2-251 / #113: natural coverage for features already in the app but
     // not reachable via slash.
     { cmd: '/search', label: 'Search this chat', desc: 'Open the in-conversation search bar',
@@ -485,6 +491,8 @@ ${cmdList}
   ];
   const [showCmdPalette, setShowCmdPalette] = useState(false);
   const [showGame, setShowGame] = useState<null | 'tictactoe' | 'twenty_questions'>(null);
+  // c2-356 / task #67: in-browser terminal toggle.
+  const [showTerminal, setShowTerminal] = useState(false);
   // Tool confirmation — per Bible §3.5. First web search per session requires
   // explicit approval; after that auto-approved.
   const [webSearchApproved, setWebSearchApproved] = useState(false);
@@ -1297,7 +1305,7 @@ ${cmdList}
       if (!mod && !e.altKey && e.key.length === 1) {
         const target = e.target as HTMLElement | null;
         const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
-        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin;
+        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin || showTerminal;
         // c0-020: only forward keystrokes to the chat input when the Chat
         // view is the active top-level section. Typing in Classroom should
         // not hijack to chat — users may be scanning tables etc.
@@ -1358,7 +1366,7 @@ ${cmdList}
         // in-conversation search so results are filterable.
         const target = e.target as HTMLElement | null;
         const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
-        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin || !!negFeedbackFor;
+        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin || !!negFeedbackFor || showTerminal;
         const inChatView = activeView === 'chat' && !anyModalOpen;
         // Shift-variant always opens our search (power-user shortcut, not
         // overloaded by the browser). Plain Cmd+F only hijacks in chat view.
@@ -1379,6 +1387,7 @@ ${cmdList}
         else if (showActivity) setShowActivity(false);
         else if (showAdmin) setShowAdmin(false);
         else if (showGame) setShowGame(null);
+        else if (showTerminal) setShowTerminal(false);
         // c2-310: Training Dashboard was reachable via /training slash but
         // Escape only closed it via click-outside or the X button. Added
         // here so the global Esc affordance is uniform across modals.
@@ -2822,6 +2831,13 @@ ${cmdList}
           onReset={tttReset}
           onClose={() => setShowGame(null)}
         />
+      )}
+
+      {/* ========== TERMINAL MODAL ========== */}
+      {/* c2-356 / task #67: xterm.js terminal overlay. Opened via the
+          command palette (/terminal) or any future keyboard shortcut. */}
+      {showTerminal && (
+        <XTermModal C={C} onClose={() => setShowTerminal(false)} />
       )}
 
       {/* ========== COMMAND PALETTE (Cmd+K) ========== */}
