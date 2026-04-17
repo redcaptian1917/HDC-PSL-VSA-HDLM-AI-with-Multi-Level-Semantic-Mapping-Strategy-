@@ -1853,7 +1853,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     let agent = Mutex::new(agent);
     {
         let mut agent_lock = agent.lock();
-        let hydration_facts = db.get_recent_facts(10_000);
+        let hydration_facts = db.get_recent_facts(0);
         for (key, value, _source, _conf) in &hydration_facts {
             agent_lock.conversation_facts.insert(key.clone(), value.clone());
             let mut guard = agent_lock.shared_knowledge.lock();
