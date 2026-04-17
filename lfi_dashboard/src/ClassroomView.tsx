@@ -562,6 +562,61 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
               <Stat C={C} label='Correct' value={data?.training?.total_correct != null ? compactNum(data.training.total_correct) : '—'} color={C.green} />
               <Stat C={C} label='Avg quality' value={typeof data?.quality?.average === 'number' ? data.quality.average.toFixed(2) : '—'} color={C.yellow} />
             </div>
+            {/* c2-368 / task 131: quality distribution histogram. The backend
+                currently only exposes aggregate buckets (high/low counts +
+                average), not a per-fact quality array, so a true 10-bin
+                histogram isn't renderable. Until the backend adds /api/
+                classroom/quality_distribution we render the 3-bin view
+                (low / mid / high) from the available counts so the surface
+                is not empty. Fill colors match the stat-card accents. */}
+            {data?.quality && (typeof data.quality.high_quality_count === 'number' ||
+                typeof data.quality.low_quality_count === 'number') && (() => {
+              const hi = data.quality.high_quality_count ?? 0;
+              const lo = data.quality.low_quality_count ?? 0;
+              const total = hi + lo;
+              const mid = 0; // placeholder until backend exposes per-fact bins
+              const bins = [
+                { label: 'Low',  n: lo,  col: C.red },
+                { label: 'Mid',  n: mid, col: C.yellow },
+                { label: 'High', n: hi,  col: C.green },
+              ];
+              const max = Math.max(...bins.map(b => b.n), 1);
+              if (total === 0) return null;
+              const width = 420;
+              const height = 140;
+              const barW = (width - 60) / bins.length;
+              return (
+                <div style={{ marginBottom: T.spacing.xl }}>
+                  <Label color={C.textMuted} mb={T.spacing.md}>
+                    Quality distribution
+                  </Label>
+                  <svg width={width} height={height} aria-label='Quality distribution histogram'>
+                    {bins.map((b, i) => {
+                      const h = (b.n / max) * (height - 30);
+                      const x = 40 + i * barW + barW * 0.15;
+                      const w = barW * 0.7;
+                      const y = (height - 20) - h;
+                      return (
+                        <g key={b.label}>
+                          <rect x={x} y={y} width={w} height={h} fill={b.col} rx={3} />
+                          <text x={x + w / 2} y={y - 4}
+                            fontSize={T.typography.sizeXs}
+                            fill={C.textSecondary} textAnchor='middle'
+                            fontFamily={T.typography.fontMono}>
+                            {b.n.toLocaleString()}
+                          </text>
+                          <text x={x + w / 2} y={height - 4}
+                            fontSize={T.typography.sizeXs}
+                            fill={C.textMuted} textAnchor='middle'>
+                            {b.label}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+              );
+            })()}
             {sortedDomains.length > 0 && (
               <div>
                 <Label color={C.textMuted} mb={T.spacing.md}>
