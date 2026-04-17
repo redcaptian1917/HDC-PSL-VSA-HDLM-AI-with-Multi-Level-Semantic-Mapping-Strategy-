@@ -578,6 +578,11 @@ ${cmdList}
     const wsUrl = `ws://${getHost()}:3000/ws/chat`;
     console.debug("// SCC: Connecting chat WS:", wsUrl);
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    // Exponential backoff for chat WS reconnect. Starts at 1s, doubles up to 30s,
+    // resets to 1s on a successful open. Prior fixed 3s hammered the backend
+    // during brief network blips AND waited too long after a server restart.
+    let reconnectDelayMs = 1000;
+    const RECONNECT_MAX_MS = 30000;
 
     const connect = () => {
       console.debug("// SCC: chat WS connect()");
@@ -587,8 +592,7 @@ ${cmdList}
       ws.onopen = () => {
         console.debug("// SCC: Chat WS OPEN");
         setIsConnected(true);
-        // Connection status is visible in the header badge; don't spam a system
-        // bubble on every reconnect (React strict mode + reconnect timer doubled it).
+        reconnectDelayMs = 1000; // reset backoff after healthy connect
       };
 
       ws.onmessage = (event) => {
@@ -666,9 +670,12 @@ ${cmdList}
       };
 
       ws.onclose = (ev) => {
-        console.debug("// SCC: Chat WS CLOSED:", ev.code);
+        console.debug("// SCC: Chat WS CLOSED:", ev.code, 'reconnect in', reconnectDelayMs, 'ms');
         setIsConnected(false);
-        reconnectTimer = setTimeout(connect, 3000);
+        // Add 0-500ms jitter so a fleet of reconnecting clients doesn't stampede.
+        const jitter = Math.floor(Math.random() * 500);
+        reconnectTimer = setTimeout(connect, reconnectDelayMs + jitter);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_MS);
       };
 
       ws.onerror = (ev) => {
@@ -687,10 +694,14 @@ ${cmdList}
     const wsUrl = `ws://${getHost()}:3000/ws/telemetry`;
     console.debug("// SCC: Connecting telemetry WS:", wsUrl);
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    // Telemetry is non-critical — start at 2s, cap at 60s. Resets on open.
+    let reconnectDelayMs = 2000;
+    const RECONNECT_MAX_MS = 60000;
 
     const connect = () => {
       const ws = new WebSocket(wsUrl);
       telemetryWsRef.current = ws;
+      ws.onopen = () => { reconnectDelayMs = 2000; };
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
@@ -699,7 +710,11 @@ ${cmdList}
           }
         } catch (e) { console.error("// SCC: Telemetry parse error:", e); }
       };
-      ws.onclose = () => { reconnectTimer = setTimeout(connect, 5000); };
+      ws.onclose = () => {
+        const jitter = Math.floor(Math.random() * 1000);
+        reconnectTimer = setTimeout(connect, reconnectDelayMs + jitter);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_MS);
+      };
       ws.onerror = (ev) => console.error("// SCC: Telemetry WS ERROR:", ev);
     };
 

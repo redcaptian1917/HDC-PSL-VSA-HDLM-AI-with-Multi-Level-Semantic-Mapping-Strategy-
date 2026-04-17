@@ -21,3 +21,4 @@
 //! - NAT traversal: fallback to relay if hole-punching fails
 
 pub mod node;
+pub mod eigentrust;
