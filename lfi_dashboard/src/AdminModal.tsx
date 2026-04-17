@@ -702,75 +702,58 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   }}>{loading === 'domains' ? 'Loading…' : 'Refresh'}</button>
               </div>
               {err.domains && <ErrorAlert C={C} message={err.domains} onRetry={() => loadTab('domains')} retrying={loading === 'domains'} />}
-              <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeMd }}>
-                  <thead>
-                    <tr>
-                      {([
-                        { key: 'domain', label: 'Domain', align: 'left' as const },
-                        { key: 'facts', label: 'Facts', align: 'right' as const },
-                        { key: 'avg_quality', label: 'Avg Quality', align: 'right' as const },
-                        { key: 'avg_length', label: 'Avg Length', align: 'right' as const },
-                      ]).map(h => (
-                        <th key={h.key as string}
-                          onClick={() => setDomainSort(s => ({
-                            key: h.key as keyof DomainRow,
-                            dir: s.key === h.key && s.dir === 'desc' ? 'asc' : 'desc',
-                          }))}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setDomainSort(s => ({
-                                key: h.key as keyof DomainRow,
-                                dir: s.key === h.key && s.dir === 'desc' ? 'asc' : 'desc',
-                              }));
-                            }
-                          }}
-                          role='button'
-                          tabIndex={0}
-                          aria-sort={
-                            /* c2-273: surface sort state to screen readers.
-                               WAI-ARIA sort token set: 'ascending' / 'descending' /
-                               'none' (or absent). */
-                            domainSort.key === h.key
-                              ? (domainSort.dir === 'asc' ? 'ascending' : 'descending')
-                              : 'none'
-                          }
-                          aria-label={`${h.label}, sortable${domainSort.key === h.key ? `, currently ${domainSort.dir === 'asc' ? 'ascending' : 'descending'}` : ''}`}
-                          style={{
-                            textAlign: h.align, padding: '10px 14px',
-                            fontWeight: T.typography.weightBold, color: C.textSecondary,
-                            background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}`,
-                            cursor: 'pointer', userSelect: 'none', position: 'sticky', top: 0,
-                          }}>
-                          {h.label}{sortArrow(domainSort.key === h.key, domainSort.dir)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredDomains.map((d, i) => (
-                      <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
-                        <td style={{ padding: '10px 14px', fontWeight: T.typography.weightSemibold }}>{d.domain}</td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: countColor(d.facts), fontWeight: T.typography.weightBold, fontFamily: T.typography.fontMono }}>
-                          {d.facts.toLocaleString()}
-                        </td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: typeof d.avg_quality === 'number' ? qualityColor(d.avg_quality) : C.textMuted, fontFamily: T.typography.fontMono }}>
-                          {typeof d.avg_quality === 'number' ? d.avg_quality.toFixed(2) : '—'}
-                        </td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right', color: C.textMuted, fontFamily: T.typography.fontMono }}>
-                          {typeof d.avg_length === 'number' ? d.avg_length.toFixed(0) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredDomains.length === 0 && (
-                      <tr><td colSpan={4} style={{ padding: '28px', textAlign: 'center', color: C.textMuted, fontStyle: 'italic' }}>
-                        {domains === null ? 'Loading…' : 'No domains match.'}
-                      </td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              {/* c2-377 / BIG #180: domains table migrated to DataTable.
+                  Existing domainSort + filteredDomains state is lifted into
+                  DataTable via sort+onSortChange so the DomainRow type-safe
+                  SortKey stays authoritative. Filter input above is
+                  unchanged -- DataTable consumes the already-filtered
+                  array. */}
+              {(() => {
+                const cols: ReadonlyArray<Column<DomainRow>> = [
+                  {
+                    id: 'domain', header: 'Domain', align: 'left',
+                    sortKey: (d) => d.domain.toLowerCase(),
+                    accessor: (d) => <span style={{ fontWeight: T.typography.weightSemibold }}>{d.domain}</span>,
+                  },
+                  {
+                    id: 'facts', header: 'Facts', align: 'right',
+                    sortKey: (d) => d.facts,
+                    accessor: (d) => (
+                      <span style={{ color: countColor(d.facts), fontWeight: T.typography.weightBold, fontFamily: T.typography.fontMono }}>
+                        {d.facts.toLocaleString()}
+                      </span>
+                    ),
+                  },
+                  {
+                    id: 'avg_quality', header: 'Avg Quality', align: 'right',
+                    sortKey: (d) => typeof d.avg_quality === 'number' ? d.avg_quality : -1,
+                    accessor: (d) => (
+                      <span style={{ color: typeof d.avg_quality === 'number' ? qualityColor(d.avg_quality) : C.textMuted, fontFamily: T.typography.fontMono }}>
+                        {typeof d.avg_quality === 'number' ? d.avg_quality.toFixed(2) : '\u2014'}
+                      </span>
+                    ),
+                  },
+                  {
+                    id: 'avg_length', header: 'Avg Length', align: 'right',
+                    sortKey: (d) => typeof d.avg_length === 'number' ? d.avg_length : -1,
+                    accessor: (d) => (
+                      <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>
+                        {typeof d.avg_length === 'number' ? d.avg_length.toFixed(0) : '\u2014'}
+                      </span>
+                    ),
+                  },
+                ];
+                return (
+                  <DataTable<DomainRow> C={C}
+                    rows={filteredDomains}
+                    columns={cols}
+                    rowKey={(d) => d.domain}
+                    sort={{ col: domainSort.key as string, dir: domainSort.dir }}
+                    onSortChange={(next) => setDomainSort({ key: next.col as keyof DomainRow, dir: next.dir })}
+                    emptyText={domains === null ? 'Loading\u2026' : 'No domains match.'}
+                    cellFontSize={T.typography.sizeMd} />
+                );
+              })()}
               <div style={{ marginTop: T.spacing.sm, fontSize: T.typography.sizeSm, color: C.textDim }}>
                 {filteredDomains.length} of {domains?.length ?? 0} domains
                 {domains && ` · ${domains.reduce((s, d) => s + d.facts, 0).toLocaleString()} facts total`}
@@ -1253,46 +1236,68 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         );
                       })}
                     </div>
-                    <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden', maxHeight: '45vh', overflowY: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeSm }}>
-                        <thead>
-                          <tr>
-                            <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Time</th>
-                            <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Kind</th>
-                            <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Data</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filtered.slice(0, 200).map((e, i) => {
-                            // Color dot to visually group kinds — positive
-                            // signals green, negatives red, navigation neutral
-                            // accent. Makes the scroll scan-able at a glance.
-                            const dotColor =
-                              e.kind.includes('error') || e.kind.includes('failed') || e.kind.includes('negative') ? C.red
-                              : e.kind.includes('positive') || e.kind.includes('success') || e.kind.includes('done') ? C.green
-                              : e.kind.includes('warn') || e.kind.includes('stop') ? C.yellow
-                              : C.accent;
+                    {/* c2-377 / BIG #180: client events table migrated to
+                        DataTable. Preserves dot-color semantics via the
+                        Kind accessor; maxHeight scroll container kept since
+                        DataTable doesn't own vertical sizing. */}
+                    {(() => {
+                      type ERow = { t: number; kind: string; data?: unknown };
+                      const rows = filtered.slice(0, 200) as ERow[];
+                      const dotColorFor = (kind: string): string =>
+                        kind.includes('error') || kind.includes('failed') || kind.includes('negative') ? C.red
+                        : kind.includes('positive') || kind.includes('success') || kind.includes('done') ? C.green
+                        : kind.includes('warn') || kind.includes('stop') ? C.yellow
+                        : C.accent;
+                      const cols: ReadonlyArray<Column<ERow>> = [
+                        {
+                          id: 'time', header: 'Time', align: 'left', width: '110px',
+                          sortKey: (e) => e.t,
+                          accessor: (e) => (
+                            <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap' }}>
+                              {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </span>
+                          ),
+                        },
+                        {
+                          id: 'kind', header: 'Kind', align: 'left', width: '180px',
+                          sortKey: (e) => e.kind,
+                          accessor: (e) => {
+                            const col = dotColorFor(e.kind);
                             return (
-                              <tr key={i}>
-                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: T.typography.fontMono, whiteSpace: 'nowrap' }}>
-                                  {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                                </td>
-                                <td style={{ padding: '6px 12px', fontFamily: T.typography.fontMono, color: C.text, whiteSpace: 'nowrap' }}>
-                                  <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: dotColor, marginRight: '8px', verticalAlign: 'middle' }} aria-hidden='true' />
-                                  <span style={{ color: dotColor }}>{e.kind}</span>
-                                </td>
-                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: T.typography.fontMono, maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {e.data ? JSON.stringify(e.data) : ''}
-                                </td>
-                              </tr>
+                              <span style={{ fontFamily: T.typography.fontMono, color: col, whiteSpace: 'nowrap' }}>
+                                <span aria-hidden='true' style={{
+                                  display: 'inline-block', width: '6px', height: '6px',
+                                  borderRadius: '50%', background: col, marginRight: '8px',
+                                  verticalAlign: 'middle',
+                                }} />
+                                {e.kind}
+                              </span>
                             );
-                          })}
-                          {filtered.length === 0 && (
-                            <tr><td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: C.textMuted, fontStyle: 'italic' }}>No events match.</td></tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                          },
+                        },
+                        {
+                          id: 'data', header: 'Data', align: 'left', sortable: false,
+                          accessor: (e) => (
+                            <span style={{
+                              color: C.textMuted, fontFamily: T.typography.fontMono,
+                              maxWidth: '520px', overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              display: 'inline-block',
+                            }}>{e.data ? JSON.stringify(e.data) : ''}</span>
+                          ),
+                        },
+                      ];
+                      return (
+                        <div style={{ maxHeight: '45vh', overflowY: 'auto' }}>
+                          <DataTable<ERow> C={C}
+                            rows={rows}
+                            columns={cols}
+                            rowKey={(e) => `${e.t}-${e.kind}`}
+                            sort={{ col: 'time', dir: 'desc' }}
+                            emptyText='No events match.' />
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}
