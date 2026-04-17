@@ -73,7 +73,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '4px', borderBottom: `1px solid ${C.borderSubtle}`, marginBottom: '18px' }}>
+      <div role='tablist' aria-label='Settings sections'
+        style={{ display: 'flex', gap: '4px', borderBottom: `1px solid ${C.borderSubtle}`, marginBottom: '18px' }}>
         {([
           { id: 'profile', label: 'Profile' },
           { id: 'appearance', label: 'Appearance' },
@@ -81,6 +82,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           { id: 'data', label: 'Data' },
         ] as const).map(t => (
           <button key={t.id} onClick={() => onTabChange(t.id)}
+            role='tab' aria-selected={tab === t.id}
             style={{
               padding: '8px 12px', fontSize: '12px', fontWeight: 700,
               background: 'transparent', border: 'none', cursor: 'pointer',

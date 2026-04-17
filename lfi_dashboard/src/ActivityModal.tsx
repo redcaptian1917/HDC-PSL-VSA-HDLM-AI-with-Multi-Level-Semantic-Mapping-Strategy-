@@ -82,13 +82,15 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
           {'\u2715'}
         </button>
       </div>
-      <div style={{ display: 'flex', gap: '4px', padding: '8px 12px', borderBottom: `1px solid ${C.borderSubtle}` }}>
+      <div role='tablist' aria-label='Activity sections'
+        style={{ display: 'flex', gap: '4px', padding: '8px 12px', borderBottom: `1px solid ${C.borderSubtle}` }}>
         {([
           { id: 'chat', label: `Conversations (${serverChatLog.length})` },
           { id: 'events', label: `UI events (${localEvents.length})` },
           { id: 'system', label: 'System' },
         ] as const).map(t => (
           <button key={t.id} onClick={() => onTabChange(t.id)}
+            role='tab' aria-selected={tab === t.id}
             style={{
               padding: '8px 14px', fontSize: '12px',
               background: tab === t.id ? C.accentBg : 'transparent',
