@@ -13,7 +13,7 @@
 // ============================================================
 
 use crate::hdc::vector::BipolarVector;
-use chrono::Timelike;
+use chrono::{Timelike, Datelike};
 use crate::hdc::holographic::HolographicMemory;
 use crate::hdc::error::HdcError;
 use crate::cognition::planner::{Plan, Planner};
@@ -1120,22 +1120,55 @@ impl CognitiveCore {
             else { "evening" }
         );
 
+        // CONTEXTUAL MEMORY INJECTION: Load user profile + conversation facts
+        // so the AI never forgets who it's talking to or what they care about.
+        let memory_block = {
+            let mut mem = String::new();
+            // Load user profile from database
+            let db_path = crate::persistence::BrainDb::default_path();
+            if let Ok(db) = crate::persistence::BrainDb::open(&db_path) {
+                let profile = db.load_profile();
+                if !profile.is_empty() {
+                    mem.push_str("User profile (remembered from past conversations):\n");
+                    for (key, value, _category) in profile.iter().take(10) {
+                        mem.push_str(&format!("- {}: {}\n", key, value));
+                    }
+                    mem.push('\n');
+                }
+            }
+            mem
+        };
+
+        // SITUATIONAL AWARENESS: Day of week, season, system context
+        let day_name = now.format("%A").to_string();
+        let month = now.month();
+        let season = match month {
+            3..=5 => "spring",
+            6..=8 => "summer",
+            9..=11 => "autumn",
+            _ => "winter",
+        };
+
         // SECURITY: Use serde_json to build the request body instead of string formatting.
         // This eliminates JSON injection via malformed facts or user input.
         // AVP-PASS-3: Fixed brittle string escaping that broke on backslashes/quotes in facts.
         let system_prompt = format!(
             "You are PlausiDen AI, built by PlausiDen Technologies. You are a sovereign, \
              knowledgeable AI that runs locally on the user's hardware. You have access to a \
-             database of 56 million facts.\n\n{}\n\nRules:\n\
+             database of 59 million verified facts across 87 domains.\n\n\
+             {}\
+             {}It is {} ({}, {}). \n\nRules:\n\
              - Answer the question directly. No preamble.\n\
              - If knowledge from your database is provided below, USE IT as your primary source.\n\
              - Be specific and detailed. Give real examples, real numbers, real names.\n\
-             - If you're not sure, say so honestly.\n\
+             - If you're not sure, say so honestly. State your confidence level.\n\
              - Match the tone to the question: technical for technical, casual for casual.\n\
              - Never say 'As an AI' or 'I don't have feelings'. Just answer like a knowledgeable person.\n\
-             - Be aware of the time of day — don't say 'good morning' at night.\n\
-             - Don't repeat the same jokes or phrases across conversations.\n\n{}",
-            time_context, context_block
+             - If you know the user's name, use it occasionally.\n\
+             - Reference the time/day naturally when relevant (don't force it).\n\
+             - Don't repeat the same jokes or phrases across conversations.\n\
+             - When uncertain, offer to look deeper or suggest related topics.\n\n{}",
+            memory_block, time_context, day_name, season, now.format("%B %d"), context_block
         );
 
         let full_prompt = format!("{}\nQuestion: {}", system_prompt, prompt);
