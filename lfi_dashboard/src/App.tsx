@@ -4710,6 +4710,11 @@ ${cmdList}
           [style*="animation: scc-skel-admin"],
           [style*="animation: scc-skel-cls"],
           [style*="animation: scc-skel"],
+          /* c2-279: keep the refresh-button spinners in sync — they were
+             added after the initial reduced-motion list was compiled
+             (c2-258 admin, c2-259 classroom). */
+          [style*="animation: scc-admin-spin"],
+          [style*="animation: scc-cls-spin"],
           [style*="animation: lfi-fadein"] {
             animation: none !important;
           }
