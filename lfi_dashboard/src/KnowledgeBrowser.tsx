@@ -1,6 +1,8 @@
 import React, { useRef } from 'react';
 import { useModalFocus } from './useModalFocus';
 import { T } from './tokens';
+// c2-349 / task 29: shared shimmer skeleton.
+import { SkeletonLoader } from './components/SkeletonLoader';
 
 // Knowledge browser modal: facts, concepts, and the "due for review" list.
 // Pure presentational — parent owns the data and the fetchKnowledge trigger.
@@ -60,14 +62,9 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
         {loading && (
           <div aria-busy='true' aria-live='polite' style={{ padding: '12px 0' }}>
             {[0, 1, 2].map(i => (
-              <div key={i} style={{
-                height: '42px', marginBottom: T.spacing.md, borderRadius: T.radii.lg,
-                background: `linear-gradient(90deg, ${C.bgInput} 0%, ${C.bgHover} 50%, ${C.bgInput} 100%)`,
-                backgroundSize: '200% 100%',
-                animation: 'scc-skel 1.4s ease-in-out infinite',
-              }} />
+              <SkeletonLoader key={i} C={C} base='input' height='42px'
+                style={{ marginBottom: T.spacing.md }} />
             ))}
-            <style>{`@keyframes scc-skel { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }`}</style>
           </div>
         )}
         {/* Error — tell the user what/why/what next (Tier 4 §26). */}

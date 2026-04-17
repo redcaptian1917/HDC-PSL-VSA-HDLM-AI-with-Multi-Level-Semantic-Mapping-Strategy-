@@ -7,6 +7,8 @@ import { typography as dsType } from './design-system';
 import { Label } from './components/Label';
 // c2-348 / task 28: shared error banner.
 import { ErrorAlert } from './components/ErrorAlert';
+// c2-349 / task 29: shared shimmer skeleton.
+import { SkeletonLoader } from './components/SkeletonLoader';
 import { compactNum, formatRelative } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
@@ -296,13 +298,10 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                 auto-refreshes so the grade doesn't re-skeleton every 10s. */}
             {loading && !data && (
               <div aria-busy='true' aria-live='polite' style={{ textAlign: 'center', marginBottom: T.spacing.xl }}>
-                <div style={{
-                  width: isDesktop ? '180px' : '140px', height: isDesktop ? '128px' : '96px',
-                  margin: '0 auto', borderRadius: T.radii.lg,
-                  background: `linear-gradient(90deg, ${C.bgCard} 0%, ${C.bgHover} 50%, ${C.bgCard} 100%)`,
-                  backgroundSize: '200% 100%', animation: 'scc-skel-cls 1.3s ease-in-out infinite',
-                }} />
-                <style>{`@keyframes scc-skel-cls { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }`}</style>
+                <SkeletonLoader C={C}
+                  width={isDesktop ? '180px' : '140px'}
+                  height={isDesktop ? '128px' : '96px'}
+                  style={{ margin: '0 auto' }} />
               </div>
             )}
             <div style={{ textAlign: 'center', marginBottom: T.spacing.xl, display: loading && !data ? 'none' : 'block' }}>
@@ -356,12 +355,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
             {loading && !data && (
               <div aria-busy='true' aria-live='polite' style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.sm }}>
                 {[0, 1, 2, 3, 4].map(i => (
-                  <div key={i} style={{
-                    height: '40px', borderRadius: T.radii.md,
-                    background: `linear-gradient(90deg, ${C.bgCard} 0%, ${C.bgHover} 50%, ${C.bgCard} 100%)`,
-                    backgroundSize: '200% 100%', animation: 'scc-skel-cls 1.3s ease-in-out infinite',
-                    animationDelay: `${i * 0.08}s`,
-                  }} />
+                  <SkeletonLoader key={i} C={C} height='40px' borderRadius={T.radii.md} delay={i * 0.08} />
                 ))}
               </div>
             )}
@@ -404,12 +398,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                 gap: T.spacing.md, marginBottom: T.spacing.xl,
               }}>
                 {[0, 1, 2, 3].map(i => (
-                  <div key={i} style={{
-                    height: '80px', borderRadius: T.radii.lg,
-                    background: `linear-gradient(90deg, ${C.bgCard} 0%, ${C.bgHover} 50%, ${C.bgCard} 100%)`,
-                    backgroundSize: '200% 100%', animation: 'scc-skel-cls 1.3s ease-in-out infinite',
-                    animationDelay: `${i * 0.08}s`,
-                  }} />
+                  <SkeletonLoader key={i} C={C} height='80px' delay={i * 0.08} />
                 ))}
               </div>
             )}

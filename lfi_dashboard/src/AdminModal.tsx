@@ -10,6 +10,8 @@ import { compactNum, formatRelative } from './util';
 import { Label } from './components/Label';
 // c2-348 / task 28: shared error banner (replaces local AdminErr).
 import { ErrorAlert } from './components/ErrorAlert';
+// c2-349 / task 29: shared shimmer skeleton.
+import { SkeletonLoader } from './components/SkeletonLoader';
 
 // Full-screen admin modal per c0-017. Six tabs: Dashboard / Domains /
 // Training / Quality / System / Logs. Replaces the prior sidebar-slide admin
@@ -376,25 +378,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   refreshes render fresh data silently. Per c0-020. */}
               {loading === 'dashboard' && !dashboard && (
                 <div aria-busy='true' aria-live='polite'>
-                  <div style={{
-                    height: '120px', marginBottom: T.spacing.xl, borderRadius: T.radii.lg,
-                    background: `linear-gradient(90deg, ${C.bgInput} 0%, ${C.bgHover} 50%, ${C.bgInput} 100%)`,
-                    backgroundSize: '200% 100%', animation: 'scc-skel-admin 1.3s ease-in-out infinite',
-                  }} />
+                  <SkeletonLoader C={C} base='input' height='120px' style={{ marginBottom: T.spacing.xl }} />
                   <div style={{
                     display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
                     gap: T.spacing.md, marginBottom: T.spacing.xl,
                   }}>
                     {[0, 1, 2, 3, 4, 5].map(i => (
-                      <div key={i} style={{
-                        height: '70px', borderRadius: T.radii.lg,
-                        background: `linear-gradient(90deg, ${C.bgInput} 0%, ${C.bgHover} 50%, ${C.bgInput} 100%)`,
-                        backgroundSize: '200% 100%', animation: 'scc-skel-admin 1.3s ease-in-out infinite',
-                        animationDelay: `${i * 0.08}s`,
-                      }} />
+                      <SkeletonLoader key={i} C={C} base='input' height='70px' delay={i * 0.08} />
                     ))}
                   </div>
-                  <style>{`@keyframes scc-skel-admin { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }`}</style>
                 </div>
               )}
               {/* Accuracy grade + score breakdown from /api/admin/dashboard */}
