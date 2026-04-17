@@ -2478,6 +2478,113 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    /// GET /api/classroom/overview — student profile, grade, strengths/weaknesses
+    async fn classroom_overview_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let conn = match state.db.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return axum::Json(json!({"error": "db lock"})),
+        };
+
+        let total_facts: i64 = conn.query_row("SELECT count(*) FROM facts", [], |r| r.get(0)).unwrap_or(0);
+        let sources: i64 = conn.query_row("SELECT count(DISTINCT source) FROM facts", [], |r| r.get(0)).unwrap_or(0);
+        let avg_quality: f64 = conn.query_row("SELECT avg(COALESCE(quality_score,0.5)) FROM facts", [], |r| r.get(0)).unwrap_or(0.0);
+        let training_sessions: i64 = conn.query_row("SELECT count(*) FROM training_results", [], |r| r.get(0)).unwrap_or(0);
+        let learning_signals: i64 = conn.query_row("SELECT count(*) FROM learning_signals", [], |r| r.get(0)).unwrap_or(0);
+
+        // Pass/fail from training results
+        let (total_tested, total_correct): (i64, i64) = conn.query_row(
+            "SELECT COALESCE(SUM(total),0), COALESCE(SUM(correct),0) FROM training_results",
+            [], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap_or((0, 0));
+        let pass_rate = if total_tested > 0 { total_correct as f64 / total_tested as f64 * 100.0 } else { 0.0 };
+
+        // Strengths: top 5 domains by quality
+        let mut strengths_stmt = conn.prepare(
+            "SELECT domain, ROUND(AVG(quality_score),2) as q FROM facts WHERE domain IS NOT NULL GROUP BY domain HAVING COUNT(*)>1000 ORDER BY q DESC LIMIT 5"
+        ).ok();
+        let strengths: Vec<serde_json::Value> = strengths_stmt.as_mut().map(|s| {
+            s.query_map([], |row| Ok(json!({"domain": row.get::<_,String>(0).unwrap_or_default(), "quality": row.get::<_,f64>(1).unwrap_or(0.0)})))
+                .map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        }).unwrap_or_default();
+
+        // Weaknesses: bottom 5 domains by fact count (thin coverage)
+        let mut weak_stmt = conn.prepare(
+            "SELECT domain, COUNT(*) as cnt FROM facts WHERE domain IS NOT NULL GROUP BY domain ORDER BY cnt ASC LIMIT 5"
+        ).ok();
+        let weaknesses: Vec<serde_json::Value> = weak_stmt.as_mut().map(|s| {
+            s.query_map([], |row| Ok(json!({"domain": row.get::<_,String>(0).unwrap_or_default(), "count": row.get::<_,i64>(1).unwrap_or(0)})))
+                .map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        }).unwrap_or_default();
+
+        // Training hours from training_log
+        let training_hours: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(duration_seconds),0)/3600.0 FROM training_log", [], |r| r.get(0)
+        ).unwrap_or(0.0);
+
+        // Grade calculation (same as admin dashboard)
+        let accuracy_score = {
+            let q = avg_quality * 30.0;
+            let p = (pass_rate / 100.0 * 25.0).min(25.0);
+            let c = (sources as f64 / 200.0 * 20.0).min(20.0);
+            let t = ((training_sessions as f64 / 20.0 * 10.0).min(10.0) + (learning_signals as f64 / 50.0 * 5.0).min(5.0));
+            let a = (conn.query_row("SELECT count(*) FROM facts WHERE source IN ('adversarial','anli_r1','anli_r2','anli_r3','fever_gold','truthfulqa')", [], |r| r.get::<_,i64>(0)).unwrap_or(0) as f64 / 100_000.0 * 10.0).min(10.0);
+            q + p + c + t + a
+        };
+        let grade = match accuracy_score as u32 {
+            90..=100 => "A+", 85..=89 => "A", 80..=84 => "A-",
+            75..=79 => "B+", 70..=74 => "B", 65..=69 => "B-",
+            60..=64 => "C+", 50..=59 => "C", _ => "D",
+        };
+
+        axum::Json(json!({
+            "grade": grade,
+            "score": (accuracy_score * 10.0).round() / 10.0,
+            "total_facts": total_facts,
+            "total_sources": sources,
+            "avg_quality": (avg_quality * 100.0).round() / 100.0,
+            "pass_rate": (pass_rate * 10.0).round() / 10.0,
+            "training_sessions": training_sessions,
+            "learning_signals": learning_signals,
+            "training_hours": (training_hours * 10.0).round() / 10.0,
+            "strengths": strengths,
+            "weaknesses": weaknesses,
+        }))
+    }
+
+    /// GET /api/classroom/curriculum — all training datasets
+    async fn classroom_curriculum_handler() -> impl IntoResponse {
+        let training_files: Vec<serde_json::Value> = std::fs::read_dir("/home/user/LFI-data")
+            .map(|entries| {
+                let mut files: Vec<serde_json::Value> = entries.filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().map(|x| x == "jsonl" || x == "json" || x == "parquet").unwrap_or(false))
+                    .map(|e| {
+                        let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                        let lines = if size < 500_000_000 {
+                            std::fs::read_to_string(e.path()).map(|s| s.lines().count()).unwrap_or(0)
+                        } else { 0 };
+                        json!({
+                            "file": e.file_name().to_string_lossy(),
+                            "pairs": lines,
+                            "size_mb": (size as f64 / 1024.0 / 1024.0 * 10.0).round() / 10.0,
+                        })
+                    })
+                    .collect();
+                files.sort_by(|a, b| b["size_mb"].as_f64().partial_cmp(&a["size_mb"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
+                files
+            })
+            .unwrap_or_default();
+
+        let total_pairs: usize = training_files.iter().filter_map(|f| f["pairs"].as_u64()).map(|n| n as usize).sum();
+
+        axum::Json(json!({
+            "datasets": training_files,
+            "total_datasets": training_files.len(),
+            "total_pairs": total_pairs,
+        }))
+    }
+
     // Admin logs endpoint — real-time log access for the UI
     async fn admin_logs_handler(
         State(state): State<Arc<AppState>>,
@@ -2599,6 +2706,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/admin/training/accuracy", get(admin_training_accuracy_handler))
         .route("/api/admin/dashboard", get(admin_dashboard_handler))
         .route("/api/library/sources", get(library_sources_handler))
+        .route("/api/classroom/overview", get(classroom_overview_handler))
+        .route("/api/classroom/curriculum", get(classroom_curriculum_handler))
         .route("/api/admin/training/:action", post(admin_training_control_handler))
         .route("/api/admin/logs", get(admin_logs_handler))
         .layer(cors)
