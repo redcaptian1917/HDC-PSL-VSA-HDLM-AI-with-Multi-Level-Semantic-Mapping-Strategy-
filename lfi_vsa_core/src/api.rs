@@ -353,12 +353,18 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                 "confidence": thought.confidence,
                                 "conclusion_id": conclusion_id,
                             });
-                            let _ = std::fs::create_dir_all("/var/log/lfi");
-                            if let Ok(mut f) = std::fs::OpenOptions::new()
+                            // AVP-PASS-10: graceful degradation — log write failures
+                            if let Err(e) = std::fs::create_dir_all("/var/log/lfi") {
+                                warn!("// AUDIT: chat log dir create failed: {}", e);
+                            } else if let Ok(mut f) = std::fs::OpenOptions::new()
                                 .create(true).append(true).open("/var/log/lfi/chat.jsonl")
                             {
                                 use std::io::Write;
-                                let _ = writeln!(f, "{}", log_line);
+                                if let Err(e) = writeln!(f, "{}", log_line) {
+                                    warn!("// AUDIT: chat log write failed (disk full?): {}", e);
+                                }
+                            } else {
+                                warn!("// AUDIT: chat log file open failed");
                             }
                             } // end if !incognito_flag
 
@@ -492,7 +498,15 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                         use tokio::io::{AsyncBufReadExt, BufReader};
                         let mut reader = BufReader::new(stdout).lines();
                         let mut token_count = 0u32;
-                        while let Ok(Some(line)) = reader.next_line().await {
+                        let stream_deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+                        // AVP-PASS-10: graceful degradation — cap tokens and enforce timeout
+                        while let Ok(Some(line)) = tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            reader.next_line()
+                        ).await.unwrap_or(Ok(None)) {
+                            if std::time::Instant::now() > stream_deadline || token_count > 800 {
+                                break; // Hard timeout or token cap
+                            }
                             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
                                 if let Some(token) = parsed.get("response").and_then(|v| v.as_str()) {
                                     if !token.is_empty() {
