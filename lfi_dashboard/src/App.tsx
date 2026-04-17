@@ -3807,6 +3807,21 @@ ${cmdList}
         .eruda-entry-btn { bottom: 80px !important; right: 10px !important; }
         /* Skip link: keep off-screen until focus lands on it, then slide into view. */
         .lfi-skip-link:focus { top: 0 !important; outline: 2px solid ${C.accent}; }
+        /* c0-020 E4 a11y: visible focus ring on any interactive element
+           reached by keyboard. Mouse clicks suppress this because we use
+           :focus-visible, which is WCAG 2.1 AA compliant. */
+        button:focus-visible, a:focus-visible, [role="button"]:focus-visible,
+        [role="tab"]:focus-visible, [role="option"]:focus-visible {
+          outline: 2px solid ${C.accent};
+          outline-offset: 2px;
+          border-radius: 4px;
+        }
+        input:focus-visible, textarea:focus-visible, select:focus-visible {
+          /* Inputs already have their own border-focus style; reinforce with
+             a 2px ring so it's visible against any background. */
+          outline: 2px solid ${C.accent};
+          outline-offset: 1px;
+        }
       `}</style>
     </div>
     </React.Suspense>
