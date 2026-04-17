@@ -75,12 +75,17 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
     }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
-  // Auto-refresh active sub every 10s per c0-027.
+  // Auto-refresh every 10s per c0-027, but pause on tabs that are entirely
+  // driven by local interaction (Test Center: user is typing in the audit
+  // field; Office Hours: only reads localEvents; Library: user is typing in
+  // the filter). Keeps background polling from disrupting typing.
   useEffect(() => {
+    const liveTabs: Sub[] = ['profile', 'curriculum', 'gradebook', 'lessons', 'reports'];
+    if (!liveTabs.includes(sub)) return;
     const id = setInterval(load, 10000);
     return () => clearInterval(id);
     // eslint-disable-next-line
-  }, []);
+  }, [sub]);
 
   const sortedDomains = useMemo(() => {
     const arr = data?.domains || [];
