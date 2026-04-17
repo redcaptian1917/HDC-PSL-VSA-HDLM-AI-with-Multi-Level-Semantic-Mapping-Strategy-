@@ -103,7 +103,7 @@ Beyond-c0-078 work:
 - Phase 2 #4: WebSocket exponential backoff + jitter.
 - Phase 2 #1 partial: react-virtuoso installed; wiring pending a ChatView extraction.
 - react-virtuoso@4.18 added to package.json.
-- A11y pass: role=dialog + aria-modal + aria-label on 4 modals; role=tablist/tab/tabpanel + aria-selected on Settings + Activity tabs; aria-label on icon-only close buttons + chat textarea; role=status + aria-live=polite on thinking indicator.
+- A11y pass (ongoing): role=dialog + aria-modal + aria-label on 4 modals; role=tablist/tab/tabpanel + aria-selected on Settings + Activity tabs; aria-label on chat textarea, 5 AssistantMessage action-bar buttons (Copy/Regenerate/Good/Bad/Edit), send button, sidebar toggle (+aria-pressed), account menu (+aria-haspopup/expanded), plan-sidebar toggle (+aria-expanded), 5 conversation-row actions (star/pin/rename/export/delete — scoped to conversation title), Start/Stop training buttons, Tools, Attach, Voice, Model, Clear-skill; role=status + aria-live=polite on thinking indicator; provenance badge upgraded to keyboard-accessible button with Enter/Space handler.
 - Focus management: useModalFocus hook wired into all 4 modals (initial focus + Tab/Shift-Tab cycle trap + restore on close).
 - React.memo on SystemMessage + WebMessage leaf components.
 - First-visit theme defaults to OS `prefers-color-scheme`.
