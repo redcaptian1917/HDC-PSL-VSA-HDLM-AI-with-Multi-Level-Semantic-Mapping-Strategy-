@@ -44,6 +44,8 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
       background: C.bgCard,
     }}>
       <button onClick={onToggle}
+        aria-expanded={expanded}
+        aria-label={`${msg.toolName || 'tool'} — ${expanded ? 'collapse' : 'expand'}`}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
           padding: '10px 14px', background: 'transparent',
