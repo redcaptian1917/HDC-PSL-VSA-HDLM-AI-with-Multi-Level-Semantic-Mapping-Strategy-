@@ -57,7 +57,6 @@ import { AdminActions } from './AdminActions';
 import { renderMessageBody as renderMdBody, type MarkdownCtx } from './markdown';
 import { useTicTacToe } from './useTicTacToe';
 import { useStatusPoll, useQualityPoll, useSysInfoPoll } from './usePolls';
-import { useAutoScroll } from './useAutoScroll';
 import { ChatView, type ChatViewHandle } from './ChatView';
 const ShortcutsModal = React.lazy(() => import('./ShortcutsModal').then(m => ({ default: m.ShortcutsModal })));
 
@@ -540,7 +539,20 @@ ${cmdList}
     return h;
   };
 
-  const scrollToBottom = useAutoScroll(messagesEndRef, messages.length);
+  // REGRESSION-GUARD: Previously used useAutoScroll(messagesEndRef) which conflicted
+  // with Virtuoso's followOutput='smooth'. Now we use Virtuoso's imperative scrollToBottom
+  // exclusively. The old useAutoScroll tried scrollIntoView on a div that Virtuoso manages
+  // internally, causing wonky/jumpy scroll behavior.
+  const scrollToBottom = useCallback(() => {
+    chatViewRef.current?.scrollToBottom();
+  }, []);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    // Small delay to let Virtuoso render the new item before scrolling
+    const t = setTimeout(() => scrollToBottom(), 100);
+    return () => clearTimeout(t);
+  }, [messages.length, scrollToBottom]);
 
   // Tick elapsed seconds on the thinking indicator once per second while active.
   useEffect(() => {

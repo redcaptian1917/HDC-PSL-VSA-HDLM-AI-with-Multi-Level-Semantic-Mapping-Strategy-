@@ -138,7 +138,61 @@ export const renderMessageBody = (text: string, ctx: MarkdownCtx): React.ReactNo
         listType = null;
       }
     };
-    listLines.forEach((line) => {
+    // Pipe-table detection. A table block is:
+    //   | header1 | header2 |
+    //   |---------|---------|
+    //   | data    | data    |
+    // We scan ahead from any line starting with '|' to detect the separator
+    // row; if found, consume the contiguous block and render as <table>.
+    const splitRow = (line: string) => line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
+    const isSeparator = (line: string) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(line);
+    let i = 0;
+    while (i < listLines.length) {
+      const line = listLines[i];
+      const next = listLines[i + 1];
+      if (line.trim().startsWith('|') && next && isSeparator(next)) {
+        flushList();
+        const header = splitRow(line);
+        const rows: string[][] = [];
+        let j = i + 2;
+        while (j < listLines.length && listLines[j].trim().startsWith('|')) {
+          rows.push(splitRow(listLines[j]));
+          j++;
+        }
+        parts.push(
+          <div key={`tbl${key++}`} style={{ overflowX: 'auto', margin: '10px 0' }}>
+            <table style={{
+              borderCollapse: 'collapse', width: '100%',
+              fontSize: '13px', color: C.text,
+            }}>
+              <thead>
+                <tr>{header.map((h, hi) => (
+                  <th key={hi} style={{
+                    textAlign: 'left', padding: '8px 10px', fontWeight: 700,
+                    background: C.bgInput, borderBottom: `2px solid ${C.borderSubtle}`,
+                    borderRight: hi < header.length - 1 ? `1px solid ${C.borderSubtle}` : 'none',
+                  }}>{renderInlineMd(h, `th${key}-${hi}`, ctx)}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {rows.map((row, ri) => (
+                  <tr key={ri} style={{ background: ri % 2 === 0 ? 'transparent' : (themeKey === 'light' ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.02)') }}>
+                    {row.map((cell, ci) => (
+                      <td key={ci} style={{
+                        padding: '8px 10px',
+                        borderBottom: `1px solid ${C.borderSubtle}`,
+                        borderRight: ci < row.length - 1 ? `1px solid ${C.borderSubtle}` : 'none',
+                      }}>{renderInlineMd(cell, `td${key}-${ri}-${ci}`, ctx)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+        i = j;
+        continue;
+      }
       const bulletMatch = line.match(/^\s*[-*]\s+(.+)/);
       const numMatch = line.match(/^\s*\d+\.\s+(.+)/);
       if (bulletMatch) {
@@ -157,7 +211,8 @@ export const renderMessageBody = (text: string, ctx: MarkdownCtx): React.ReactNo
           parts.push(<br key={`br${key++}`} />);
         }
       }
-    });
+      i++;
+    }
     flushList();
   }
   return parts.length > 0 ? parts : [<span key='empty'>{renderInlineMd(text, 'solo', ctx)}</span>];
