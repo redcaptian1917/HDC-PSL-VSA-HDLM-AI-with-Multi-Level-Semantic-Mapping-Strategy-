@@ -231,6 +231,10 @@ const SovereignCommandConsole: React.FC = () => {
   // view), 'highlight' keeps all messages visible and marks matches in
   // place. User toggles via a button in the search bar.
   const [chatSearchMode, setChatSearchMode] = useState<'filter' | 'highlight'>('filter');
+  // c2-256 / #118: cursor into the matching-message index list. Enter cycles
+  // forward, Shift+Enter backward, scrollToIndex brings the match into view.
+  // Reset to 0 whenever the query changes.
+  const [chatSearchCursor, setChatSearchCursor] = useState(0);
   const chatSearchInputRef = useRef<HTMLInputElement>(null);
   const showToast = useCallback((msg: string, onUndo?: () => void) => {
     // Date.now() + random to avoid id collisions when two toasts fire in the
@@ -3596,7 +3600,24 @@ ${cmdList}
           {/* Inline message search (Cmd+Shift+F). Slides down from the top of
               main while open; clearing the input or closing restores the full
               list. Filters the messages array passed to ChatView. */}
-          {showChatSearch && (
+          {showChatSearch && (() => {
+            // c2-257 / #119: shared match-jumper reused by the Enter
+            // keyboard handler and the ↑/↓ buttons so the cursor state
+            // stays authoritative.
+            const jumpMatch = (dir: 1 | -1) => {
+              const q = chatSearch.toLowerCase();
+              if (!q) return;
+              const indices: number[] = [];
+              messages.forEach((m, i) => { if (m.content?.toLowerCase().includes(q)) indices.push(i); });
+              if (indices.length === 0) return;
+              const nextCursor = (chatSearchCursor + dir + indices.length) % indices.length;
+              setChatSearchCursor(nextCursor);
+              chatViewRef.current?.scrollToIndex(indices[nextCursor]);
+            };
+            const matchCount = chatSearch
+              ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())).length
+              : 0;
+            return (
             <div role='search' style={{
               padding: T.spacing.sm + ' ' + T.spacing.lg,
               background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`,
@@ -3606,11 +3627,20 @@ ${cmdList}
                 ref={chatSearchInputRef}
                 type='search'
                 aria-label='Search this conversation'
-                placeholder='Search messages…'
+                placeholder='Search messages… (Enter to jump to next match)'
                 autoComplete='off' spellCheck={false}
                 value={chatSearch}
-                onChange={(e) => setChatSearch(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Escape') { setShowChatSearch(false); setChatSearch(''); } }}
+                onChange={(e) => { setChatSearch(e.target.value); setChatSearchCursor(0); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { setShowChatSearch(false); setChatSearch(''); return; }
+                  // c2-256 / #118: Enter / Shift+Enter cycles through match
+                  // indices in highlight mode. Filter mode already hides non-
+                  // matches, so jumping would be redundant.
+                  if (e.key === 'Enter' && chatSearchMode === 'highlight' && chatSearch.trim()) {
+                    e.preventDefault();
+                    jumpMatch(e.shiftKey ? -1 : 1);
+                  }
+                }}
                 style={{
                   flex: 1, padding: T.spacing.sm + ' ' + T.spacing.md,
                   background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
@@ -3619,8 +3649,34 @@ ${cmdList}
                 }}
               />
               <span style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
-                {chatSearch ? `${messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())).length} of ${messages.length}` : `${messages.length} msgs`}
+                {!chatSearch
+                  ? `${messages.length} msgs`
+                  : chatSearchMode === 'highlight' && matchCount > 0
+                    ? `${Math.min(chatSearchCursor + 1, matchCount)} / ${matchCount}`
+                    : `${matchCount} of ${messages.length}`}
               </span>
+              {/* c2-257 / #119: visible prev/next match buttons, shown only
+                  in highlight mode with at least one match so they never
+                  render as dead controls. Mouse users can cycle without
+                  re-focusing the input. */}
+              {chatSearchMode === 'highlight' && chatSearch && matchCount > 0 && (
+                <>
+                  <button onClick={() => jumpMatch(-1)} aria-label='Previous match' title='Previous match (Shift+Enter)'
+                    style={{
+                      background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                      color: C.textMuted, borderRadius: T.radii.sm, cursor: 'pointer',
+                      padding: '2px 6px', fontSize: '12px', lineHeight: 1,
+                      fontFamily: 'inherit',
+                    }}>{'\u2191'}</button>
+                  <button onClick={() => jumpMatch(1)} aria-label='Next match' title='Next match (Enter)'
+                    style={{
+                      background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                      color: C.textMuted, borderRadius: T.radii.sm, cursor: 'pointer',
+                      padding: '2px 6px', fontSize: '12px', lineHeight: 1,
+                      fontFamily: 'inherit',
+                    }}>{'\u2193'}</button>
+                </>
+              )}
               {/* Mode toggle: filter (hide non-matches) vs highlight (mark
                   inline, keep everything visible). */}
               <button onClick={() => setChatSearchMode(m => m === 'filter' ? 'highlight' : 'filter')}
@@ -3643,7 +3699,8 @@ ${cmdList}
                   cursor: 'pointer', fontSize: '18px', padding: '4px 8px',
                 }}>{'\u2715'}</button>
             </div>
-          )}
+            );
+          })()}
           {/* Floating "scroll to bottom" — appears when user has scrolled
               up away from the latest message in a non-empty chat. Avoids the
               UX trap where new AI replies arrive but the user is reading

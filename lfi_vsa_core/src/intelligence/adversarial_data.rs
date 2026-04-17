@@ -137,4 +137,80 @@ mod tests {
         assert!(categories.contains("social_engineering"));
         assert!(categories.contains("vulnerable_code"));
     }
+
+    #[test]
+    fn logical_fallacies_non_empty() {
+        let data = AdversarialDataGenerator::logical_fallacies();
+        assert!(data.len() >= 5, "Should have at least 5 logical fallacy examples");
+        for ex in &data {
+            assert!(ex.tags.iter().any(|t| t.contains("fallacy")),
+                "Logical fallacy examples should be tagged: {:?}", ex.tags);
+        }
+    }
+
+    #[test]
+    fn prompt_injections_non_empty() {
+        let data = AdversarialDataGenerator::prompt_injections();
+        assert!(data.len() >= 5, "Should have at least 5 prompt injection examples");
+        for ex in &data {
+            assert!(ex.tags.iter().any(|t| t.contains("injection")),
+                "Injection examples should be tagged: {:?}", ex.tags);
+        }
+    }
+
+    #[test]
+    fn sql_injections_non_empty() {
+        let data = AdversarialDataGenerator::sql_injections();
+        assert!(!data.is_empty());
+        for ex in &data {
+            assert!(ex.tags.iter().any(|t| t.contains("sql")),
+                "SQL examples should contain 'sql' tag: {:?}", ex.tags);
+        }
+    }
+
+    #[test]
+    fn contradictions_non_empty() {
+        let data = AdversarialDataGenerator::contradictions();
+        assert!(data.len() >= 5);
+        for ex in &data {
+            assert!(ex.tags.iter().any(|t| t.contains("contradiction")));
+        }
+    }
+
+    #[test]
+    fn social_engineering_non_empty() {
+        let data = AdversarialDataGenerator::social_engineering();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn vulnerable_code_non_empty() {
+        let data = AdversarialDataGenerator::vulnerable_code();
+        assert!(!data.is_empty());
+        for ex in &data {
+            assert!(ex.tags.iter().any(|t| t.contains("vulnerable")));
+        }
+    }
+
+    #[test]
+    fn all_adversarial_is_union() {
+        let all = AdversarialDataGenerator::all_adversarial();
+        let sum = AdversarialDataGenerator::logical_fallacies().len()
+            + AdversarialDataGenerator::prompt_injections().len()
+            + AdversarialDataGenerator::sql_injections().len()
+            + AdversarialDataGenerator::xss_payloads().len()
+            + AdversarialDataGenerator::contradictions().len()
+            + AdversarialDataGenerator::social_engineering().len()
+            + AdversarialDataGenerator::vulnerable_code().len();
+        assert_eq!(all.len(), sum,
+            "all_adversarial ({}) should be union of all generators ({})", all.len(), sum);
+    }
+
+    #[test]
+    fn no_duplicate_inputs() {
+        let all = AdversarialDataGenerator::all_adversarial();
+        let inputs: std::collections::HashSet<&str> = all.iter().map(|e| e.input.as_str()).collect();
+        assert_eq!(inputs.len(), all.len(),
+            "No duplicate inputs: {} unique vs {} total", inputs.len(), all.len());
+    }
 }

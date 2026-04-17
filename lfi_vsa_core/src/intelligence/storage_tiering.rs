@@ -76,4 +76,47 @@ mod tests {
         let engine = TieringEngine::default();
         assert_eq!(engine.classify(2, 30), StorageTier::Warm);
     }
+
+    /// Hot threshold is exact boundary
+    #[test]
+    fn test_hot_at_exact_threshold() {
+        let engine = TieringEngine::default();
+        assert_eq!(engine.classify(5, 0), StorageTier::Hot); // exactly at threshold
+        assert_eq!(engine.classify(4, 0), StorageTier::Warm); // below threshold
+    }
+
+    /// Cold boundary is exact
+    #[test]
+    fn test_cold_at_exact_boundary() {
+        let engine = TieringEngine::default();
+        assert_eq!(engine.classify(0, 90), StorageTier::Warm); // at boundary = warm
+        assert_eq!(engine.classify(0, 91), StorageTier::Cold); // past boundary = cold
+    }
+
+    /// Hot takes priority over cold (frequently accessed old fact stays hot)
+    #[test]
+    fn test_hot_overrides_cold() {
+        let engine = TieringEngine::default();
+        // Frequently accessed but old → should be Hot (access count wins)
+        assert_eq!(engine.classify(10, 200), StorageTier::Hot);
+    }
+
+    /// Zero access, zero days = warm
+    #[test]
+    fn test_zero_zero_is_warm() {
+        let engine = TieringEngine::default();
+        assert_eq!(engine.classify(0, 0), StorageTier::Warm);
+    }
+
+    /// Custom thresholds work
+    #[test]
+    fn test_custom_thresholds() {
+        let engine = TieringEngine {
+            hot_threshold: 100,
+            cold_after_days: 7,
+        };
+        assert_eq!(engine.classify(50, 0), StorageTier::Warm); // below custom hot
+        assert_eq!(engine.classify(100, 0), StorageTier::Hot); // at custom hot
+        assert_eq!(engine.classify(0, 8), StorageTier::Cold); // past custom cold
+    }
 }

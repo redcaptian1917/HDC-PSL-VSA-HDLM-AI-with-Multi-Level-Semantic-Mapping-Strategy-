@@ -250,12 +250,36 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               letterSpacing: '0.08em', textTransform: 'uppercase', color: C.text,
             }}>Admin Console</h2>
           </div>
-          <button onClick={onClose} aria-label='Close admin'
-            style={{
-              background: 'transparent', border: 'none', color: C.textMuted,
-              fontSize: '22px', cursor: 'pointer', padding: '4px 10px',
-            }}>{'\u2715'}</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
+            {/* c2-258 / #120: manual refresh for the active tab. Spins the
+                icon while a load is in-flight so the user sees progress.
+                Covers every tab via the shared loadTab dispatcher. */}
+            <button onClick={() => loadTab(tab)} aria-label={`Refresh ${tab}`}
+              title={`Refresh ${tab} (auto-refreshes for some tabs)`}
+              disabled={loading === tab}
+              style={{
+                background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                color: C.textMuted, borderRadius: T.radii.sm,
+                cursor: loading === tab ? 'wait' : 'pointer',
+                padding: '4px 8px', display: 'flex', alignItems: 'center',
+                fontFamily: 'inherit', fontSize: T.typography.sizeXs,
+              }}>
+              <svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor'
+                strokeWidth='2.2' strokeLinecap='round' strokeLinejoin='round'
+                style={loading === tab ? { animation: 'scc-admin-spin 0.8s linear infinite' } : undefined}>
+                <polyline points='23 4 23 10 17 10' />
+                <polyline points='1 20 1 14 7 14' />
+                <path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15' />
+              </svg>
+            </button>
+            <button onClick={onClose} aria-label='Close admin'
+              style={{
+                background: 'transparent', border: 'none', color: C.textMuted,
+                fontSize: '22px', cursor: 'pointer', padding: '4px 10px',
+              }}>{'\u2715'}</button>
+          </div>
         </div>
+        <style>{`@keyframes scc-admin-spin { to { transform: rotate(360deg); } }`}</style>
 
         {/* Tab bar — WAI-ARIA tablist with arrow-key navigation. */}
         <div role='tablist' aria-label='Admin sections'
