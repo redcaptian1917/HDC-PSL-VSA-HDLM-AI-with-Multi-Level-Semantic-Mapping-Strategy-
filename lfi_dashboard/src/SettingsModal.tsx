@@ -95,7 +95,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button key={t.id} onClick={() => onTabChange(t.id)}
             role='tab' aria-selected={tab === t.id}
             style={{
-              padding: '8px 12px', fontSize: '12px', fontWeight: 700,
+              padding: '8px 12px', fontSize: T.typography.sizeSm, fontWeight: 700,
               background: 'transparent', border: 'none', cursor: 'pointer',
               color: tab === t.id ? C.accent : C.textMuted,
               borderBottom: `2px solid ${tab === t.id ? C.accent : 'transparent'}`,
@@ -107,19 +107,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       {/* ===== Profile tab ===== */}
       {tab === 'profile' && (
         <div role='tabpanel' aria-label='Profile'>
-          <label style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Display Name</label>
+          <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Display Name</label>
           <input type='text' value={settings.displayName}
             onChange={(e) => setSettings(s => ({ ...s, displayName: e.target.value.slice(0, 40) }))}
             placeholder='Your name'
             autoComplete='name' aria-label='Display name' maxLength={40}
             style={{
               width: '100%', marginTop: '6px', padding: '10px 12px',
-              background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: '8px',
+              background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: T.radii.lg,
               color: C.text, fontFamily: 'inherit', fontSize: '14px', boxSizing: 'border-box',
             }} />
 
           <div style={{ marginTop: '18px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Avatar</label>
+            <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Avatar</label>
             <div style={{ display: 'flex', gap: '14px', alignItems: 'center', marginTop: '10px' }}>
               <div style={{
                 width: '72px', height: '72px', borderRadius: '50%',
@@ -133,9 +133,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
               <div style={{ flex: 1 }}>
                 <label style={{
-                  display: 'inline-block', padding: '8px 14px', fontSize: '12px', fontWeight: 700,
+                  display: 'inline-block', padding: '8px 14px', fontSize: T.typography.sizeSm, fontWeight: 700,
                   background: C.accentBg, border: `1px solid ${C.accentBorder}`,
-                  color: C.accent, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
+                  color: C.accent, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
                   textTransform: 'uppercase', letterSpacing: '0.05em',
                 }}>
                   Upload photo
@@ -155,20 +155,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {settings.avatarDataUrl && (
                   <button onClick={() => setSettings(s => ({ ...s, avatarDataUrl: '' }))}
                     style={{
-                      marginLeft: '8px', padding: '8px 14px', fontSize: '12px', fontWeight: 700,
+                      marginLeft: '8px', padding: '8px 14px', fontSize: T.typography.sizeSm, fontWeight: 700,
                       background: 'transparent', border: `1px solid ${C.border}`,
-                      color: C.textMuted, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
+                      color: C.textMuted, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
                       textTransform: 'uppercase', letterSpacing: '0.05em',
                     }}>Remove</button>
                 )}
-                <div style={{ fontSize: '11px', color: C.textDim, marginTop: '6px' }}>
+                <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, marginTop: '6px' }}>
                   PNG / JPG / SVG up to 500 KB. Or pick a preset below.
                 </div>
               </div>
             </div>
 
             <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px',
+              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: T.spacing.md,
               marginTop: '14px',
             }}>
               {AVATAR_PRESETS.map((g, i) => {
@@ -201,27 +201,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               query dynamically, so flipping the OS between dark/light updates
               the dashboard in real time without a setting change. */}
           <label style={{
-            display: 'flex', alignItems: 'center', gap: '10px',
+            display: 'flex', alignItems: 'center', gap: T.spacing.md,
             padding: '10px 12px', marginBottom: '12px',
             background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
-            borderRadius: '8px', cursor: 'pointer',
+            borderRadius: T.radii.lg, cursor: 'pointer',
           }}>
             <input type='checkbox'
               checked={!!settings.autoTheme}
               onChange={(e) => setSettings(s => ({ ...s, autoTheme: e.target.checked }))}
               style={{ accentColor: C.accent, width: '16px', height: '16px' }} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: C.text }}>Auto theme</div>
-              <div style={{ fontSize: '11px', color: C.textMuted, marginTop: '2px' }}>
+              <div style={{ fontSize: T.typography.sizeMd, fontWeight: 700, color: C.text }}>Auto theme</div>
+              <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, marginTop: '2px' }}>
                 Follow the system dark/light preference. Overrides the theme picker below.
               </div>
             </div>
           </label>
-          <label style={{ fontSize: '11px', fontWeight: 700, color: settings.autoTheme ? C.textDim : C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: settings.autoTheme ? C.textDim : C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
             Theme {settings.autoTheme && '(auto mode active)'}
           </label>
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginTop: '10px',
+            display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: T.spacing.md, marginTop: '10px',
             opacity: settings.autoTheme ? 0.55 : 1, pointerEvents: settings.autoTheme ? 'none' : 'auto',
           }}>
             {([
@@ -251,7 +251,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     // obvious on the flat-no-neon palette.
                     boxShadow: picked ? `0 0 0 3px ${C.accentBg}` : 'none',
                   }}>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: preview.text }}>{t.name}</div>
+                  <div style={{ fontSize: T.typography.sizeMd, fontWeight: 700, color: preview.text }}>{t.name}</div>
                   <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
                     <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: preview.accent }} />
                     <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: preview.green }} />
@@ -267,28 +267,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           <div style={{ marginTop: '18px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Font Size</label>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Font Size</label>
+            <div style={{ display: 'flex', gap: T.spacing.sm, marginTop: '8px' }}>
               {(['small', 'medium', 'large'] as const).map(sz => (
                 <button key={sz} onClick={() => setSettings(s => ({ ...s, fontSize: sz }))}
                   style={{
-                    flex: 1, padding: '10px',
+                    flex: 1, padding: T.spacing.md,
                     background: settings.fontSize === sz ? C.accentBg : 'transparent',
                     border: `1px solid ${settings.fontSize === sz ? C.accentBorder : C.border}`,
                     color: settings.fontSize === sz ? C.accent : C.textMuted,
-                    borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-                    textTransform: 'uppercase', fontSize: '12px', fontWeight: 700,
+                    borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+                    textTransform: 'uppercase', fontSize: T.typography.sizeSm, fontWeight: 700,
                   }}>{sz}</button>
               ))}
             </div>
           </div>
 
           <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Custom Colors</label>
-            <div style={{ fontSize: '11px', color: C.textDim, marginTop: '4px', marginBottom: '10px' }}>
+            <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Custom Colors</label>
+            <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, marginTop: '4px', marginBottom: '10px' }}>
               Override the active theme's key colors. Set any to change the look instantly.
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: T.spacing.md }}>
               {([
                 { key: 'bg', label: 'Background' },
                 { key: 'accent', label: 'Accent' },
@@ -296,7 +296,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 { key: 'green', label: 'Success' },
                 { key: 'red', label: 'Error' },
               ] as const).map(({ key, label }) => (
-                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
                   <input type='color'
                     value={settings.customTheme?.[key] || (C as any)[key] || '#000000'}
                     onChange={(e) => setSettings(s => ({
@@ -304,14 +304,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       customTheme: { ...(s.customTheme || { bg: C.bg, accent: C.accent, text: C.text, green: C.green, red: C.red }), [key]: e.target.value },
                     }))}
                     style={{ width: '32px', height: '32px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: 'transparent' }} />
-                  <span style={{ fontSize: '12px', color: C.textSecondary }}>{label}</span>
+                  <span style={{ fontSize: T.typography.sizeSm, color: C.textSecondary }}>{label}</span>
                 </label>
               ))}
             </div>
             {settings.customTheme && (
               <button onClick={() => setSettings(s => ({ ...s, customTheme: null }))}
                 style={{
-                  marginTop: '10px', padding: '6px 14px', fontSize: '11px',
+                  marginTop: '10px', padding: '6px 14px', fontSize: T.typography.sizeXs,
                   background: 'transparent', border: `1px solid ${C.border}`,
                   color: C.textMuted, borderRadius: '6px', cursor: 'pointer', fontFamily: 'inherit',
                 }}>Reset custom colors</button>
@@ -319,21 +319,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           <div style={{ marginTop: '18px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Dev Tools (Eruda)</label>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Dev Tools (Eruda)</label>
+            <div style={{ display: 'flex', gap: T.spacing.sm, marginTop: '8px' }}>
               {(['auto', 'on', 'off'] as const).map(m => (
                 <button key={m} onClick={() => setSettings(s => ({ ...s, erudaMode: m }))}
                   style={{
-                    flex: 1, padding: '10px',
+                    flex: 1, padding: T.spacing.md,
                     background: settings.erudaMode === m ? C.purpleBg : 'transparent',
                     border: `1px solid ${settings.erudaMode === m ? C.purpleBorder : C.border}`,
                     color: settings.erudaMode === m ? C.purple : C.textMuted,
-                    borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-                    textTransform: 'uppercase', fontSize: '12px', fontWeight: 700,
+                    borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+                    textTransform: 'uppercase', fontSize: T.typography.sizeSm, fontWeight: 700,
                   }}>{m === 'auto' ? 'Auto (mobile)' : m === 'on' ? 'Always on' : 'Off'}</button>
               ))}
             </div>
-            <div style={{ fontSize: '11px', color: C.textDim, marginTop: '6px' }}>
+            <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, marginTop: '6px' }}>
               Floating devtools overlay. Auto only shows on phones/tablets.
             </div>
           </div>
@@ -357,8 +357,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               cursor: 'pointer', gap: '12px',
             }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>{row.label}</div>
-                <div style={{ fontSize: '11px', color: C.textDim, marginTop: '2px' }}>{row.sub}</div>
+                <div style={{ fontSize: T.typography.sizeMd, fontWeight: 600, color: C.text }}>{row.label}</div>
+                <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, marginTop: '2px' }}>{row.sub}</div>
               </div>
               <input type='checkbox' checked={!!settings[row.key]}
                 onChange={async (e) => {
@@ -376,8 +376,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           ))}
 
           <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Default Model</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginTop: '8px' }}>
+            <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Default Model</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: T.spacing.sm, marginTop: '8px' }}>
               {(['Pulse','Bridge','BigBrain'] as const).map(tier => {
                 const picked = settings.defaultTier === tier;
                 return (
@@ -387,14 +387,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onTierSelect(tier);
                     }}
                     style={{
-                      padding: '12px 10px', borderRadius: '8px',
+                      padding: '12px 10px', borderRadius: T.radii.lg,
                       background: picked ? C.accentBg : 'transparent',
                       border: `1px solid ${picked ? C.accentBorder : C.border}`,
                       color: picked ? C.accent : C.textMuted,
                       cursor: 'pointer', fontFamily: 'inherit',
                       textAlign: 'center',
                     }}>
-                    <div style={{ fontSize: '13px', fontWeight: 700 }}>{tier}</div>
+                    <div style={{ fontSize: T.typography.sizeMd, fontWeight: 700 }}>{tier}</div>
                     <div style={{ fontSize: '10.5px', color: C.textDim, marginTop: '4px' }}>
                       {tier === 'Pulse' ? 'Fast' : tier === 'Bridge' ? 'Balanced' : 'Deepest'}
                     </div>
@@ -402,23 +402,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 );
               })}
             </div>
-            <div style={{ fontSize: '11px', color: C.textDim, marginTop: '6px' }}>
+            <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, marginTop: '6px' }}>
               Locks your chosen model across sessions and server restarts. Currently active: <strong style={{ color: C.text }}>{currentTier}</strong>.
             </div>
           </div>
 
           <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Backend Host</label>
+            <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Backend Host</label>
             <input type='text' value={settings.apiHost}
               onChange={(e) => setSettings(s => ({ ...s, apiHost: e.target.value }))}
               autoComplete='off' spellCheck={false} aria-label='Backend host'
               placeholder='Empty = auto-detect'
               style={{
                 width: '100%', marginTop: '6px', padding: '10px 12px',
-                background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: '8px',
-                color: C.text, fontFamily: 'inherit', fontSize: '13px', boxSizing: 'border-box',
+                background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: T.radii.lg,
+                color: C.text, fontFamily: 'inherit', fontSize: T.typography.sizeMd, boxSizing: 'border-box',
               }} />
-            <div style={{ fontSize: '11px', color: C.textDim, marginTop: '4px' }}>
+            <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, marginTop: '4px' }}>
               Override when serving the UI from a different host than the API.
             </div>
           </div>
@@ -428,32 +428,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       {/* ===== Data tab ===== */}
       {tab === 'data' && (
         <div role='tabpanel' aria-label='Data'>
-          <div style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>Export</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>Export</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: T.spacing.sm }}>
             <button onClick={onExportEvents}
               style={{
-                padding: '10px', background: C.accentBg, border: `1px solid ${C.accentBorder}`,
-                color: C.accent, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+                padding: T.spacing.md, background: C.accentBg, border: `1px solid ${C.accentBorder}`,
+                color: C.accent, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: T.typography.sizeXs, fontWeight: 700, textTransform: 'uppercase',
               }}>Event log</button>
             <button onClick={onExportConversations}
               style={{
-                padding: '10px', background: C.purpleBg, border: `1px solid ${C.purpleBorder}`,
-                color: C.purple, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+                padding: T.spacing.md, background: C.purpleBg, border: `1px solid ${C.purpleBorder}`,
+                color: C.purple, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: T.typography.sizeXs, fontWeight: 700, textTransform: 'uppercase',
               }}>Conversations</button>
           </div>
-          <div style={{ marginTop: '8px', fontSize: '10px', color: C.textDim }}>
+          <div style={{ marginTop: '8px', fontSize: T.typography.sizeXs, color: C.textDim }}>
             {messageCount} messages across {conversationCount} conversation{conversationCount === 1 ? '' : 's'}.
           </div>
           <button onClick={onExportAllJson}
             style={{
-              width: '100%', marginTop: '12px', padding: '10px',
+              width: '100%', marginTop: '12px', padding: T.spacing.md,
               background: C.greenBg, border: `1px solid ${C.greenBorder}`,
-              color: C.green, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+              color: C.green, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: T.typography.sizeXs, fontWeight: 700, textTransform: 'uppercase',
             }}>Full backup (JSON)</button>
-          <div style={{ marginTop: '6px', fontSize: '10px', color: C.textDim }}>
+          <div style={{ marginTop: '6px', fontSize: T.typography.sizeXs, color: C.textDim }}>
             Includes all conversations + settings. Schema v1.
           </div>
           {/* c2-241 / #102: import inverse of Full backup. Hidden file input
@@ -461,10 +461,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               a visible <input type=file>. Parent handles schema + merge. */}
           <label htmlFor='lfi-import-backup'
             style={{
-              display: 'block', width: '100%', marginTop: '8px', padding: '10px',
+              display: 'block', width: '100%', marginTop: '8px', padding: T.spacing.md,
               background: C.accentBg, border: `1px solid ${C.accentBorder}`,
-              color: C.accent, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+              color: C.accent, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: T.typography.sizeXs, fontWeight: 700, textTransform: 'uppercase',
               textAlign: 'center', boxSizing: 'border-box',
             }}>Import backup…</label>
           <input id='lfi-import-backup' type='file' accept='application/json,.json'
@@ -474,43 +474,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               if (file) onImportBackup(file);
               e.target.value = ''; // allow re-selecting the same file
             }} />
-          <div style={{ marginTop: '6px', fontSize: '10px', color: C.textDim }}>
+          <div style={{ marginTop: '6px', fontSize: T.typography.sizeXs, color: C.textDim }}>
             Merges conversations (by id); settings replaced after confirmation.
           </div>
 
           <div style={{ marginTop: '22px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: C.red, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>Danger zone</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.red, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>Danger zone</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: T.spacing.sm }}>
               <button onClick={onClearHistory}
                 style={{
-                  padding: '10px', background: C.redBg, border: `1px solid ${C.redBorder}`,
-                  color: C.red, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+                  padding: T.spacing.md, background: C.redBg, border: `1px solid ${C.redBorder}`,
+                  color: C.red, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: T.typography.sizeXs, fontWeight: 700, textTransform: 'uppercase',
                 }}>Clear history</button>
               <button onClick={onResetSettings}
                 style={{
-                  padding: '10px', background: 'transparent', border: `1px solid ${C.border}`,
-                  color: C.textMuted, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+                  padding: T.spacing.md, background: 'transparent', border: `1px solid ${C.border}`,
+                  color: C.textMuted, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: T.typography.sizeXs, fontWeight: 700, textTransform: 'uppercase',
                 }}>Reset settings</button>
             </div>
             <button onClick={onDeleteAccount}
               style={{
                 width: '100%', marginTop: '10px', padding: '12px',
                 background: 'transparent', border: `1px solid ${C.redBorder}`,
-                color: C.red, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
+                color: C.red, borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: T.typography.sizeXs, fontWeight: 700, textTransform: 'uppercase',
               }}>Delete account &amp; all data</button>
           </div>
         </div>
       )}
 
-      <div style={{ marginTop: '16px', fontSize: '11px', color: C.textDim, textAlign: 'center' }}>
+      <div style={{ marginTop: '16px', fontSize: T.typography.sizeXs, color: C.textDim, textAlign: 'center' }}>
         Settings save automatically to this browser.
         {/* c2-271: app version footer. Hardcoded from package.json — Vite
             define would be better but the extra config isn't worth it for a
             single string. Bump alongside package.json on release. */}
-        <div style={{ marginTop: '4px', fontSize: '10px', fontFamily: 'ui-monospace, monospace', opacity: 0.7 }}>
+        <div style={{ marginTop: '4px', fontSize: T.typography.sizeXs, fontFamily: 'ui-monospace, monospace', opacity: 0.7 }}>
           PlausiDen v1.0.0
         </div>
       </div>
