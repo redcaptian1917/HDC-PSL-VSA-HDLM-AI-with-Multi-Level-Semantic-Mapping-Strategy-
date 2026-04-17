@@ -3,6 +3,8 @@ import { T } from './tokens';
 // c2-343: 18/22/26px heading sizes need the design-system scale since
 // T.typography caps at 22; sourced cross-platform so desktop/Android match.
 import { typography as dsType } from './design-system';
+// c2-346 / task 24: shared uppercase meta-label component.
+import { Label } from './components/Label';
 import { compactNum, formatRelative } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
@@ -321,9 +323,9 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
               </div>
             )}
             <div style={{ textAlign: 'center', marginBottom: T.spacing.xl, display: loading && !data ? 'none' : 'block' }}>
-              <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+              <Label color={C.textMuted}>
                 Accuracy grade
-              </div>
+              </Label>
               <div style={{
                 fontSize: isDesktop ? '128px' : '96px', fontWeight: T.typography.weightBlack,
                 color: gradeColor(C, data?.score?.grade),
@@ -341,9 +343,9 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                 maxWidth: '640px', margin: '0 auto', padding: T.spacing.lg,
                 background: C.bgCard, border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.lg,
               }}>
-                <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
+                <Label color={C.textMuted} mb={T.spacing.md}>
                   Strengths &amp; weaknesses
-                </div>
+                </Label>
                 {(['quality', 'adversarial', 'coverage', 'training'] as const).map(k => {
                   const v = data.score?.breakdown?.[k];
                   if (typeof v !== 'number') return null;
@@ -439,9 +441,9 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
             </div>
             {sortedDomains.length > 0 && (
               <div>
-                <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
+                <Label color={C.textMuted} mb={T.spacing.md}>
                   Coverage by domain
-                </div>
+                </Label>
                 <DomainBars C={C} rows={sortedDomains.slice(0, 15)} historyByDomain={historyByDomain} />
               </div>
             )}
@@ -484,7 +486,7 @@ const Stat: React.FC<{ C: any; label: string; value: string; color: string }> = 
     padding: '16px 18px', borderRadius: T.radii.lg,
     background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
   }}>
-    <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{label}</div>
+    <Label color={C.textMuted}>{label}</Label>
     <div style={{ fontSize: dsType.sizes['2xl'], fontWeight: T.typography.weightBlack, color, marginTop: '4px', fontFamily: T.typography.fontMono }}>{value}</div>
   </div>
 );
@@ -743,9 +745,9 @@ const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | nul
       {history.length > 0 && (
         <div style={{ marginTop: T.spacing.xl }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: T.spacing.md }}>
-            <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+            <Label color={C.textMuted}>
               History ({history.length})
-            </div>
+            </Label>
             <button onClick={clearHistory}
               style={{
                 padding: '4px 10px', fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
@@ -825,9 +827,9 @@ const LessonsTab: React.FC<{
       </div>
       {files.length > 0 && (
         <div>
-          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
+          <Label color={C.textMuted} mb={T.spacing.md}>
             Active roster (by pairs)
-          </div>
+          </Label>
           <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeSm }}>
               <thead>
@@ -875,11 +877,11 @@ const OfficeHoursTab: React.FC<{ C: any; events: Array<{ t: number; kind: string
       </p>
       <div style={{ display: 'flex', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
         <div style={{ flex: 1, padding: T.spacing.md, background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: T.radii.md }}>
-          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.green, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Positive</div>
+          <Label color={C.green}>Positive</Label>
           <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: C.green, fontFamily: T.typography.fontMono }}>{posCount}</div>
         </div>
         <div style={{ flex: 1, padding: T.spacing.md, background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
-          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.red, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>Negative</div>
+          <Label color={C.red}>Negative</Label>
           <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: C.red, fontFamily: T.typography.fontMono }}>{negCount}</div>
         </div>
       </div>
@@ -985,9 +987,9 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
       />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: T.spacing.lg }}>
         <div>
-          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
+          <Label color={C.textMuted} mb={T.spacing.md}>
             Domains ({matchedDomains.length})
-          </div>
+          </Label>
           {matchedDomains.length === 0 ? (
             <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.lg, textAlign: 'center' }}>No domains match.</div>
           ) : (
@@ -1006,9 +1008,9 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
           )}
         </div>
         <div>
-          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
+          <Label color={C.textMuted} mb={T.spacing.md}>
             Training files ({matchedFiles.length})
-          </div>
+          </Label>
           {matchedFiles.length === 0 ? (
             <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.lg, textAlign: 'center' }}>No files match.</div>
           ) : (
@@ -1030,9 +1032,9 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
             resolves — loading and error states are explicit so users know
             whether the backend has the endpoint up. */}
         <div>
-          <div style={{ fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.md }}>
+          <Label color={C.textMuted} mb={T.spacing.md}>
             Sources ({sources ? matchedSources.length : '…'})
-          </div>
+          </Label>
           {sourcesErr ? (
             <div style={{ fontSize: T.typography.sizeSm, color: C.red, padding: '10px 12px', background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
               Sources unavailable: {sourcesErr}
