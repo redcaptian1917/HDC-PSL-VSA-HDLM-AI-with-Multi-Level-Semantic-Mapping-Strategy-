@@ -1867,9 +1867,18 @@ ${cmdList}
             </label>
             <textarea value={negFeedbackText}
               onChange={(e) => setNegFeedbackText(e.target.value)}
+              onKeyDown={(e) => {
+                // Keyboard submit: Cmd/Ctrl+Enter or Shift+Enter commits the
+                // negative feedback without needing to reach the Send button.
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || e.shiftKey)) {
+                  e.preventDefault();
+                  const submitBtn = (e.currentTarget.closest('[role="dialog"]')?.querySelector('button[data-role="submit-feedback"]')) as HTMLButtonElement | null;
+                  submitBtn?.click();
+                }
+              }}
               aria-label='Detailed feedback'
               autoComplete='off' spellCheck={true}
-              placeholder='What should the AI have said?'
+              placeholder='What should the AI have said? (Cmd+Enter to send)'
               maxLength={2000}
               style={{
                 width: '100%', marginTop: '6px', minHeight: '88px',
@@ -1886,7 +1895,8 @@ ${cmdList}
                   borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
                   fontSize: T.typography.sizeMd,
                 }}>Cancel</button>
-              <button onClick={() => {
+              <button data-role='submit-feedback'
+                onClick={() => {
                 const target = negFeedbackFor!;
                 const body = JSON.stringify({
                   message_id: target.msgId,
@@ -3363,6 +3373,12 @@ ${cmdList}
                       }, 0);
                       return;
                     }
+                  }
+                  // Cmd/Ctrl+Enter always sends, regardless of the sendOnEnter
+                  // setting — gives power users a consistent shortcut even
+                  // when they've turned off plain-Enter send.
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault(); handleSend(); return;
                   }
                   if (!settings.sendOnEnter) return;
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }

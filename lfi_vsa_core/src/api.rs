@@ -2439,6 +2439,45 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }
     }
 
+    /// GET /api/library/sources — list ALL data sources with counts, quality, vetted status
+    async fn library_sources_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let conn = match state.db.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return axum::Json(json!({"error": "db lock"})),
+        };
+
+        let mut stmt = match conn.prepare(
+            "SELECT source, COUNT(*) as cnt, ROUND(AVG(COALESCE(quality_score,0.5)),3) as avg_q, \
+             domain, MIN(COALESCE(vetted,0)) as vetted \
+             FROM facts GROUP BY source ORDER BY cnt DESC"
+        ) {
+            Ok(s) => s,
+            Err(_) => return axum::Json(json!({"sources": [], "error": "query failed"})),
+        };
+
+        let sources: Vec<serde_json::Value> = stmt.query_map([], |row| {
+            Ok(json!({
+                "source": row.get::<_,String>(0).unwrap_or_default(),
+                "fact_count": row.get::<_,i64>(1).unwrap_or(0),
+                "avg_quality": row.get::<_,f64>(2).unwrap_or(0.0),
+                "domain": row.get::<_,Option<String>>(3).unwrap_or(None),
+                "vetted": row.get::<_,i64>(4).unwrap_or(0) == 1,
+            }))
+        }).map(|iter| iter.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+
+        let total_sources = sources.len();
+        let vetted_count = sources.iter().filter(|s| s["vetted"].as_bool().unwrap_or(false)).count();
+
+        axum::Json(json!({
+            "sources": sources,
+            "total_sources": total_sources,
+            "vetted_sources": vetted_count,
+            "unvetted_sources": total_sources - vetted_count,
+        }))
+    }
+
     // Admin logs endpoint — real-time log access for the UI
     async fn admin_logs_handler(
         State(state): State<Arc<AppState>>,
@@ -2559,6 +2598,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/admin/training/domains", get(admin_training_domains_handler))
         .route("/api/admin/training/accuracy", get(admin_training_accuracy_handler))
         .route("/api/admin/dashboard", get(admin_dashboard_handler))
+        .route("/api/library/sources", get(library_sources_handler))
         .route("/api/admin/training/:action", post(admin_training_control_handler))
         .route("/api/admin/logs", get(admin_logs_handler))
         .layer(cors)
