@@ -3383,8 +3383,13 @@ ${cmdList}
                 {input.length > 70000 && (() => {
                   const pct = input.length / 100000;
                   const color = pct > 0.95 ? C.red : C.yellow;
+                  // Rough token estimate — GPT-style tokenizers average ~4
+                  // chars / token for English. Good enough for "am I close
+                  // to the context window?" without bundling a tokenizer.
+                  const tokens = Math.ceil(input.length / 4);
                   return (
                     <div aria-live='polite'
+                      title={`Approx ${tokens.toLocaleString()} tokens (≈4 chars/token)`}
                       style={{
                         position: 'absolute', top: '6px', right: '14px',
                         fontSize: '10px', fontWeight: 700,
@@ -3393,7 +3398,7 @@ ${cmdList}
                         padding: '2px 6px', borderRadius: '4px',
                         pointerEvents: 'none',
                       }}>
-                      {input.length.toLocaleString()} / 100,000
+                      {input.length.toLocaleString()} / 100,000 · ~{tokens.toLocaleString()}tok
                     </div>
                   );
                 })()}
