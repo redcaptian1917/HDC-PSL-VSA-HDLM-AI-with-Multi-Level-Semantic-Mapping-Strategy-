@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { THEMES } from './themes';
 import { AVATAR_PRESETS } from './catalogs';
+import { useModalFocus } from './useModalFocus';
 
 export type SettingsTab = 'profile' | 'appearance' | 'behavior' | 'data';
 
@@ -47,7 +48,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentTier, onTierSelect,
   onExportEvents, onExportConversations, onClearHistory, onResetSettings, onDeleteAccount,
   conversationCount, messageCount,
-}) => (
+}) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, dialogRef);
+  return (
   <div onClick={onClose}
     style={{
       position: 'fixed', inset: 0, zIndex: 200,
@@ -55,7 +59,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '16px',
     }}>
-    <div role='dialog' aria-modal='true' aria-label='Settings'
+    <div ref={dialogRef} role='dialog' aria-modal='true' aria-label='Settings'
       onClick={(e) => e.stopPropagation()}
       style={{
         width: '100%', maxWidth: '520px',
@@ -422,4 +426,5 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
     </div>
   </div>
-);
+  );
+};

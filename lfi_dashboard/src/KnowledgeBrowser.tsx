@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useModalFocus } from './useModalFocus';
 
 // Knowledge browser modal: facts, concepts, and the "due for review" list.
 // Pure presentational — parent owns the data and the fetchKnowledge trigger.
@@ -15,7 +16,10 @@ export interface KnowledgeBrowserProps {
   onClose: () => void;
 }
 
-export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, concepts, due, onClose }) => (
+export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, concepts, due, onClose }) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, dialogRef);
+  return (
   <div onClick={onClose}
     style={{
       position: 'fixed', inset: 0, zIndex: 230,
@@ -23,7 +27,7 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '16px',
     }}>
-    <div role='dialog' aria-modal='true' aria-label='Knowledge browser'
+    <div ref={dialogRef} role='dialog' aria-modal='true' aria-label='Knowledge browser'
       onClick={(e) => e.stopPropagation()}
       style={{
         width: '100%', maxWidth: '700px', height: '80vh',
@@ -136,4 +140,5 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
       </div>
     </div>
   </div>
-);
+  );
+};

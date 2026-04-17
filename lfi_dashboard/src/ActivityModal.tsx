@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useModalFocus } from './useModalFocus';
 
 // Activity & Logs modal: 3 tabs (server chat log, local UI events, system snapshot).
 // Kept as a pure render — parent owns all of the data + fetch triggers.
@@ -54,7 +55,10 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
   localEvents,
   isConnected, currentTier, thermalThrottled, ramLabel, cpuTempC, factsLabel, conceptsLabel, logicDensity,
   qosReport, onRefreshQos, onRefreshFacts,
-}) => (
+}) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(true, dialogRef);
+  return (
   <div onClick={onClose}
     style={{
       position: 'fixed', inset: 0, zIndex: 220,
@@ -62,7 +66,7 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '16px',
     }}>
-    <div role='dialog' aria-modal='true' aria-label='Activity and logs'
+    <div ref={dialogRef} role='dialog' aria-modal='true' aria-label='Activity and logs'
       onClick={(e) => e.stopPropagation()}
       style={{
         width: '100%', maxWidth: '900px', height: '82vh',
@@ -226,4 +230,5 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
       </div>
     </div>
   </div>
-);
+  );
+};
