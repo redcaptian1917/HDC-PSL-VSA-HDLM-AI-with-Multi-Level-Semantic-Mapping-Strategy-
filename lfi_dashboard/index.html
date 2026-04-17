@@ -5,7 +5,14 @@
     <!-- Fonts: DM Sans + JetBrains Mono. Per Bible §4.3 (PSA): no Google
          CDN. Self-host when woff2 files are available locally; until then,
          the font stack falls through to system sans-serif. -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- c2-284: removed maximum-scale + user-scalable=no — WCAG 2.1 §1.4.4
+         requires users be able to zoom up to 200%. Low-vision users were
+         blocked from pinch-zoom, which failed accessibility audit. Keep
+         initial-scale=1 so the page still renders at normal size on first
+         load. viewport-fit=cover extends the canvas under the notch on
+         iPhones; the safe-area-inset paddings we already have protect
+         interactive regions. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>PlausiDen AI</title>
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />

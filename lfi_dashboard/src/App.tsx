@@ -4743,8 +4743,14 @@ ${cmdList}
              instant ones everyone expects even with reduced-motion. */
         }
         * { box-sizing: border-box; }
-        body { margin: 0; padding: 0; overflow: hidden; background: ${C.bg}; color: ${C.text}; }
-        html { background: ${C.bg}; }
+        /* c2-285: smooth the OS-driven autoTheme flip (dark <-> light at
+           sunset) so users don't get a harsh palette snap. 300ms is slow
+           enough to read as intentional, fast enough not to feel laggy. */
+        body { margin: 0; padding: 0; overflow: hidden; background: ${C.bg}; color: ${C.text}; transition: background-color 300ms ease, color 300ms ease; }
+        html { background: ${C.bg}; transition: background-color 300ms ease; }
+        @media (prefers-reduced-motion: reduce) {
+          body, html { transition: none; }
+        }
         input::placeholder, textarea::placeholder { color: ${C.textDim}; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
