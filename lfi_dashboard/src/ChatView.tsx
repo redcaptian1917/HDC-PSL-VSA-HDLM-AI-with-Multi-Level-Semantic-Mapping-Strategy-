@@ -45,10 +45,17 @@ export interface ChatViewProps<T extends { id: number | string }> {
   // c2-353 / task 58: theme palette needed for the thin scrollbar colors.
   // Optional so non-theme-aware callers still render.
   C?: any;
+  // c2-362 / task 78: predicate the caller can pass to collapse whitespace
+  // between adjacent messages that belong to the same author+time cluster.
+  // When (current, previous) returns true, the current wrapper uses
+  // `groupedMarginBottom` (default 8px) instead of the normal 28/18.
+  // Keeps ChatView generic: the caller defines what "same author" and
+  // "recent enough" mean for their message type.
+  isGroupedWithPrevious?: (current: T, previous: T) => boolean;
 }
 
 function ChatViewInner<T extends { id: number | string }>(
-  { messages, renderMessage, renderEmpty, renderFooter, chatMaxWidth, chatPadding, isDesktop, onAtBottomChange, onVisibleRangeChange, scrollBehavior = 'smooth', C }: ChatViewProps<T>,
+  { messages, renderMessage, renderEmpty, renderFooter, chatMaxWidth, chatPadding, isDesktop, onAtBottomChange, onVisibleRangeChange, scrollBehavior = 'smooth', C, isGroupedWithPrevious }: ChatViewProps<T>,
   ref: React.ForwardedRef<ChatViewHandle>,
 ) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -126,17 +133,27 @@ function ChatViewInner<T extends { id: number | string }>(
           </div>
         ),
       }}
-      itemContent={(index, msg) => (
-        <div style={{
-          maxWidth: chatMaxWidth, margin: '0 auto',
-          padding: `0 ${chatPadding.split(' ')[1] || '16px'}`,
-          // c0-020: generous whitespace between messages. Bumped from 20/14
-          // to 28/18 so bubbles breathe instead of stacking.
-          marginBottom: isDesktop ? '28px' : '18px',
-        }}>
-          {renderMessage(msg, index)}
-        </div>
-      )}
+      itemContent={(index, msg) => {
+        // c2-362 / task 78: when the caller supplies a grouping predicate and
+        // this message clusters with its predecessor, collapse the trailing
+        // whitespace from 28/18 px down to 8 px so rapid turns read as one
+        // block. Normal spacing returns whenever the role or timestamp gap
+        // breaks the cluster. Predicate called on every render, so it must
+        // stay cheap (role compare + timestamp subtract).
+        const prev = index > 0 ? messages[index - 1] : null;
+        const grouped = prev != null && isGroupedWithPrevious != null
+          && isGroupedWithPrevious(msg, prev);
+        const mb = grouped ? '8px' : (isDesktop ? '28px' : '18px');
+        return (
+          <div style={{
+            maxWidth: chatMaxWidth, margin: '0 auto',
+            padding: `0 ${chatPadding.split(' ')[1] || '16px'}`,
+            marginBottom: mb,
+          }}>
+            {renderMessage(msg, index)}
+          </div>
+        );
+      }}
     />
   );
 }

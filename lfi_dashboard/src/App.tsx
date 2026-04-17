@@ -4257,6 +4257,13 @@ ${cmdList}
             onAtBottomChange={setChatAtBottom}
             onVisibleRangeChange={(start) => setChatTopIndex(start)}
             C={C}
+            // c2-362 / task 78: cluster consecutive same-role messages within
+            // 60 seconds so rapid turns read as one block. Threshold held as
+            // a literal here (60_000 ms) since it is UX policy rather than a
+            // design token.
+            isGroupedWithPrevious={(curr, prev) =>
+              curr.role === prev.role && Math.abs(curr.timestamp - prev.timestamp) <= 60_000
+            }
             renderEmpty={() => {
               // Pick the most-recent non-empty conversation that isn't the
               // currently-active one (which is empty — that's why we're in
