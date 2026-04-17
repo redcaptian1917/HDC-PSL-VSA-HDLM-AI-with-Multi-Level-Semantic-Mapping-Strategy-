@@ -55,11 +55,11 @@ Instance: claude-2 (frontend/UI). Session start: 2026-04-16 ~23:05 EDT. Date rol
 4. Add an error boundary around the lazy modal `<Suspense>` so chunk-load failures are recoverable.
 5. Move remaining inline DOM helpers (`scrollToBottom`, `logEvent`) into util — low priority.
 
-## FILES (15 total in `lfi_dashboard/src/`, 6200+ LOC)
+## FILES (22 total in `lfi_dashboard/src/`, 6700+ LOC)
 
 | File | Lines | Purpose |
 |---|---|---|
-| App.tsx | 3458 | Main container, state, WS, routing |
+| App.tsx | 3280 | Main container, state, WS, routing |
 | MessageBubble.tsx | 436 | System/Web/Tool/User/Assistant message variants |
 | TrainingDashboard.tsx | 429 | Admin/training panel with live banner + heatmap |
 | SettingsModal.tsx | 422 | 4-tab settings (profile/appearance/behavior/data) |
@@ -69,14 +69,20 @@ Instance: claude-2 (frontend/UI). Session start: 2026-04-16 ~23:05 EDT. Date rol
 | CommandPalette.tsx | 143 | Cmd+K palette |
 | KnowledgeBrowser.tsx | 138 | Facts/concepts/due modal |
 | LoginScreen.tsx | 93 | Sovereign-key gate |
+| SubstrateTelemetry.tsx | 85 | Sidebar top panel (cards + staleness + alerts) |
+| QosPanel.tsx | 79 | /api/qos result + error/empty states |
+| SidebarStatus.tsx | 77 | 8-row sidebar status panel |
 | AppErrorBoundary.tsx | 74 | React error boundary |
 | TicTacToeModal.tsx | 70 | Easter-egg game |
 | WelcomeScreen.tsx | 62 | Empty-state + quick-starts |
 | catalogs.tsx | 56 | SKILLS + AVATAR_PRESETS |
-| util.ts | 36 | compactNum, formatRam, formatTime, copyToClipboard |
+| FactsPanel.tsx | 47 | /api/facts result + error/empty states |
+| AdminActions.tsx | 44 | Sidebar admin-button cluster |
+| util.ts | 48 | compactNum, formatRam, formatTime, copyToClipboard, diskPressure |
+| TelemetryCards.tsx | 32 | Single colored stat card |
 | main.tsx | 9 | Entry |
 
-App.tsx session delta: 4675 → 3458 (-1217, 26% reduction) despite adding >20 features.
+App.tsx session delta: 4675 → 3280 (-1395, 30% reduction) despite adding >20 features.
 
 ## CHECKPOINTS (`working-*` tags)
 
