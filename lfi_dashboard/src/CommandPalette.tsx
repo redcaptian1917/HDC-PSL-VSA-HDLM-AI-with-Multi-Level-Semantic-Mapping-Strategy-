@@ -1,0 +1,143 @@
+import React from 'react';
+
+// Cmd+K command palette. Parent builds the full items list (items capture lots
+// of closure state like tier handlers, conversations, skills) and passes it
+// in; component owns the filtering, keyboard navigation, and render.
+
+export interface CmdPaletteItem {
+  id: string;
+  label: string;
+  hint: string;
+  group: string;
+  onRun: () => void;
+}
+
+export interface CommandPaletteProps {
+  C: any;
+  isMobile: boolean;
+  items: CmdPaletteItem[];
+  query: string;
+  setQuery: (s: string) => void;
+  index: number;
+  setIndex: React.Dispatch<React.SetStateAction<number>>;
+  onClose: () => void;
+  onItemRun?: (id: string) => void;
+}
+
+export const CommandPalette: React.FC<CommandPaletteProps> = ({
+  C, isMobile, items, query, setQuery, index, setIndex, onClose, onItemRun,
+}) => {
+  const q = query.trim().toLowerCase();
+  const score = (t: string) => {
+    if (!q) return 1;
+    const lt = t.toLowerCase();
+    if (lt === q) return 1000;
+    if (lt.startsWith(q)) return 500;
+    if (lt.includes(q)) return 200;
+    // fuzzy subsequence
+    let j = 0;
+    for (let i = 0; i < lt.length && j < q.length; i++) if (lt[i] === q[j]) j++;
+    return j === q.length ? 50 : 0;
+  };
+  const filtered = items
+    .map(it => ({ it, s: score(it.label) + score(it.hint) * 0.4 }))
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 24)
+    .map(x => x.it);
+  const runSelected = () => {
+    const picked = filtered[index];
+    if (!picked) return;
+    picked.onRun();
+    onItemRun?.(picked.id);
+    onClose();
+  };
+
+  return (
+    <div onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 220,
+        background: 'rgba(0,0,0,0.55)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: isMobile ? '16px' : '10vh 16px',
+      }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: '560px',
+          background: C.bgCard, border: `1px solid ${C.border}`,
+          borderRadius: '12px', boxShadow: '0 24px 60px rgba(0,0,0,0.45)',
+          overflow: 'hidden', display: 'flex', flexDirection: 'column',
+        }}>
+        <input autoFocus
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setIndex(0); }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setIndex(i => Math.min(i + 1, filtered.length - 1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setIndex(i => Math.max(i - 1, 0)); }
+            else if (e.key === 'Enter') { e.preventDefault(); runSelected(); }
+          }}
+          placeholder='Type a command or search conversations...'
+          style={{
+            width: '100%', padding: '16px 18px', background: 'transparent',
+            border: 'none', borderBottom: `1px solid ${C.borderSubtle}`,
+            outline: 'none', color: C.text, fontFamily: 'inherit',
+            fontSize: '15px', boxSizing: 'border-box',
+          }} />
+        <div style={{ maxHeight: '60vh', overflowY: 'auto', padding: '6px' }}>
+          {filtered.length === 0 && (
+            <div style={{ padding: '20px', color: C.textMuted, fontSize: '13px', textAlign: 'center' }}>
+              No matches for "{query}"
+            </div>
+          )}
+          {filtered.map((it, i) => {
+            const picked = i === index;
+            const prev = i > 0 ? filtered[i - 1].group : null;
+            return (
+              <div key={it.id}>
+                {it.group !== prev && (
+                  <div style={{
+                    padding: '10px 12px 4px', fontSize: '10px', fontWeight: 700,
+                    color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em',
+                  }}>{it.group}</div>
+                )}
+                <button
+                  onClick={() => { setIndex(i); runSelected(); }}
+                  onMouseEnter={() => setIndex(i)}
+                  style={{
+                    width: '100%', textAlign: 'left', cursor: 'pointer',
+                    padding: '10px 12px', background: picked ? C.accentBg : 'transparent',
+                    border: 'none', borderRadius: '8px', fontFamily: 'inherit',
+                    color: C.text, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  }}>
+                  <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                    <div style={{ fontSize: '13.5px', fontWeight: 600, color: picked ? C.accent : C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {it.label}
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: C.textMuted, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {it.hint}
+                    </div>
+                  </div>
+                  {picked && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: '10px' }}>
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{
+          display: 'flex', gap: '14px', padding: '8px 14px',
+          borderTop: `1px solid ${C.borderSubtle}`,
+          fontSize: '11px', color: C.textDim,
+        }}>
+          <span>{'\u2191\u2193'} navigate</span>
+          <span>{'\u21B5'} select</span>
+          <span>esc close</span>
+          <span style={{ marginLeft: 'auto' }}>{filtered.length} of {items.length}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
