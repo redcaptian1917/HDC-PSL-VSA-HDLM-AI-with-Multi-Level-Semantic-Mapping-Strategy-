@@ -2076,6 +2076,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     async fn admin_training_domains_handler(
         State(state): State<Arc<AppState>>,
     ) -> impl IntoResponse {
+        info!("// ADMIN: Training domains endpoint accessed");
         let domains = {
             let conn = state.db.conn.lock().unwrap();
             let mut stmt = conn.prepare(
@@ -2098,6 +2099,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     async fn admin_training_accuracy_handler(
         State(state): State<Arc<AppState>>,
     ) -> impl IntoResponse {
+        info!("// ADMIN: Training accuracy endpoint accessed");
         let stats = {
             let conn = state.db.conn.lock().unwrap();
             let total: i64 = conn.query_row("SELECT count(*) FROM facts", [], |r| r.get(0)).unwrap_or(0);
@@ -2141,10 +2143,10 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     }
 
     // Training admin: start/stop training
-    // SECURITY: Auth guard should be applied via middleware — see lfi_api.rs require_auth
     async fn admin_training_control_handler(
         axum::extract::Path(action): axum::extract::Path<String>,
     ) -> impl IntoResponse {
+        info!("// ADMIN: Training control action: {}", action);
         match action.as_str() {
             "start" => {
                 let result = std::process::Command::new("bash")
