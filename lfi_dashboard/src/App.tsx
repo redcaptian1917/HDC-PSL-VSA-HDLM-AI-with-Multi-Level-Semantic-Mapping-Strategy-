@@ -267,7 +267,12 @@ const SovereignCommandConsole: React.FC = () => {
   const [settings, setSettings] = useState<Settings>(() => {
     try {
       const raw = localStorage.getItem('lfi_settings');
-      return raw ? { ...defaultSettings, ...JSON.parse(raw) } : defaultSettings;
+      if (raw) return { ...defaultSettings, ...JSON.parse(raw) };
+      // First visit — honor the OS-level color-scheme preference. Users can
+      // still switch themes in Settings; this only picks the initial default.
+      const prefersLight = typeof window !== 'undefined'
+        && window.matchMedia?.('(prefers-color-scheme: light)').matches;
+      return { ...defaultSettings, theme: prefersLight ? 'light' : 'dark' };
     } catch { return defaultSettings; }
   });
   useEffect(() => {
