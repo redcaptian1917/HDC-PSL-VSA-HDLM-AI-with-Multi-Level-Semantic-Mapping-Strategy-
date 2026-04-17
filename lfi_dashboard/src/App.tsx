@@ -58,6 +58,7 @@ import { useTicTacToe } from './useTicTacToe';
 import { useStatusPoll, useQualityPoll, useSysInfoPoll } from './usePolls';
 import { useAutoScroll } from './useAutoScroll';
 import { ChatView } from './ChatView';
+const ShortcutsModal = React.lazy(() => import('./ShortcutsModal').then(m => ({ default: m.ShortcutsModal })));
 
 const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
 const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
@@ -275,6 +276,7 @@ const SovereignCommandConsole: React.FC = () => {
     } catch {}
   }, [settings]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'profile' | 'appearance' | 'behavior' | 'data'>('profile');
 
   // Active skill/tool for the next message (like Perplexity Focus, Gemini Extensions,
@@ -867,6 +869,12 @@ ${cmdList}
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
 
+      // "?" opens the shortcuts cheatsheet. Skip when typing in inputs.
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
+        const target = e.target as HTMLElement | null;
+        const isEditable = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        if (!isEditable) { e.preventDefault(); setShowShortcuts(true); return; }
+      }
       if (mod && k === 'k') { e.preventDefault(); setShowCmdPalette(v => !v); setCmdQuery(''); setCmdIndex(0); }
       else if (mod && k === 'n') { e.preventDefault(); createNewConversation(); }
       else if (mod && k === 'd') { e.preventDefault(); setSettings(s => ({ ...s, developerMode: !s.developerMode })); }
@@ -877,7 +885,8 @@ ${cmdList}
       else if (mod && e.shiftKey && k === 'd') { e.preventDefault(); const themes: Array<typeof settings.theme> = ['dark','light','midnight','forest','sunset','rose','contrast']; const idx = themes.indexOf(settings.theme); setSettings(s => ({...s, theme: themes[(idx+1) % themes.length]})); }
       else if (mod && k === 'b') { e.preventDefault(); setShowConvoSidebar(v => !v); }
       else if (e.key === 'Escape') {
-        if (showCmdPalette) setShowCmdPalette(false);
+        if (showShortcuts) setShowShortcuts(false);
+        else if (showCmdPalette) setShowCmdPalette(false);
         else if (showSettings) setShowSettings(false);
         else if (showKnowledge) setShowKnowledge(false);
         else if (showActivity) setShowActivity(false);
@@ -1745,6 +1754,9 @@ ${cmdList}
           onRefreshFacts={fetchFacts}
         />
       )}
+
+      {/* ========== SHORTCUTS CHEATSHEET (opens with "?") ========== */}
+      {showShortcuts && <ShortcutsModal C={C} onClose={() => setShowShortcuts(false)} />}
 
       {/* ========== SETTINGS MODAL ========== */}
       {showSettings && (
