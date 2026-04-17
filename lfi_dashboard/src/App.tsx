@@ -28,7 +28,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 // hljsLazy.ts so each lives in its own Vite chunk; only the theme CSS
 // (required before any highlighted HTML renders) ships in the initial bundle.
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportAllAsJson, formatRelative, formatDayBucket, mod } from './util';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportAllAsJson, formatRelative, formatDayBucket, mod, stripMarkdown } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -856,8 +856,20 @@ ${cmdList}
             // Requires prior permission grant; silently no-op otherwise.
             if (settings.notifyOnReply && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
               try {
+                // c2-290: include a preview of the actual reply rather than
+                // a generic "Your response is ready." — read the last
+                // assistant message from the streaming convo, strip
+                // markdown, cap at 140 chars so OS notification boxes
+                // don't mangle long replies.
+                const streamingMessages = streamingConvoIdRef.current
+                  ? (conversations.find(c => c.id === streamingConvoIdRef.current)?.messages ?? messages)
+                  : messages;
+                const lastAssistant = [...streamingMessages].reverse().find(m => m.role === 'assistant');
+                const rawPreview = lastAssistant?.content || 'Your response is ready.';
+                const clean = stripMarkdown(rawPreview).replace(/\s+/g, ' ').trim();
+                const body = clean.length > 140 ? clean.slice(0, 137) + '\u2026' : clean;
                 const n = new Notification('PlausiDen AI replied', {
-                  body: 'Your response is ready.',
+                  body,
                   tag: 'plausiden-reply',   // coalesces repeated replies
                   silent: false,
                 });
