@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { T } from './tokens';
 import { stripMarkdown, formatRelative } from './util';
+// c2-359 / task 65: shared copy button with 2s checkmark flash.
+import { CopyButton } from './components';
 
 // Sub-components of the chat message list. Extracted from App.tsx in stages —
 // system + web first (zero-closure, trivial) so the pattern is proven before
@@ -168,23 +170,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           opacity: isMobile ? 1 : 0, transition: 'opacity 0.12s',
         }}>
         {onCopy && (
-          <button
-            onClick={(e) => { onCopy(e.shiftKey ? stripMarkdown(msg.content) : msg.content); }}
+          <CopyButton C={C} size={28}
             title='Copy (Shift-click: plain text)'
-            aria-label='Copy message'
-            style={{
-              width: '28px', height: '28px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'transparent', border: 'none',
-              color: C.textMuted, cursor: 'pointer', borderRadius: T.radii.md,
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-          </button>
+            onCopy={(e) => onCopy(e.shiftKey ? stripMarkdown(msg.content) : msg.content)} />
         )}
         <button onClick={onBeginEdit}
           title='Edit and resend'
@@ -355,28 +343,14 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
             opacity: isMobile ? 1 : 0,
             transition: 'opacity 0.15s',
           }}>
-          <button
-            onClick={(e) => {
-              // Shift-click → copy as plain text (strips markdown syntax).
-              // Default click → copy raw markdown source.
+          <CopyButton C={C} size={30}
+            title='Copy markdown (Shift-click: plain text)'
+            onCopy={(e) => {
+              // Shift-click -> copy as plain text (strips markdown syntax).
+              // Default click -> copy raw markdown source.
               const text = e.shiftKey ? stripMarkdown(msg.content) : msg.content;
               onCopy(text);
-            }}
-            title='Copy markdown (Shift-click: plain text)' aria-label='Copy message; Shift-click for plain text'
-            style={{
-              width: '30px', height: '30px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'transparent', border: 'none',
-              color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.text; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = C.textMuted; }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2"/>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-          </button>
+            }} />
           {isLast && (
             <button onClick={onRegenerate} title='Regenerate' aria-label='Regenerate last response'
               disabled={isThinking}

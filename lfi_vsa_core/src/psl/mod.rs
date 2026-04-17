@@ -17,3 +17,5 @@ pub use trust::TrustLevel;
 pub use coercion::CoercionAxiom;
 pub use probes::{OverflowProbe, EncryptionProbe};
 pub use feedback::{PslFeedbackLoop, AvoidanceCheck, RejectionRecord};
+#[cfg(test)]
+mod proptest_axioms;
