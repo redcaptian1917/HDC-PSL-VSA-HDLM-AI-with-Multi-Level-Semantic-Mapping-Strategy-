@@ -713,6 +713,26 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             key: h.key as keyof DomainRow,
                             dir: s.key === h.key && s.dir === 'desc' ? 'asc' : 'desc',
                           }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setDomainSort(s => ({
+                                key: h.key as keyof DomainRow,
+                                dir: s.key === h.key && s.dir === 'desc' ? 'asc' : 'desc',
+                              }));
+                            }
+                          }}
+                          role='button'
+                          tabIndex={0}
+                          aria-sort={
+                            /* c2-273: surface sort state to screen readers.
+                               WAI-ARIA sort token set: 'ascending' / 'descending' /
+                               'none' (or absent). */
+                            domainSort.key === h.key
+                              ? (domainSort.dir === 'asc' ? 'ascending' : 'descending')
+                              : 'none'
+                          }
+                          aria-label={`${h.label}, sortable${domainSort.key === h.key ? `, currently ${domainSort.dir === 'asc' ? 'ascending' : 'descending'}` : ''}`}
                           style={{
                             textAlign: h.align, padding: '10px 14px',
                             fontWeight: T.typography.weightBold, color: C.textSecondary,
