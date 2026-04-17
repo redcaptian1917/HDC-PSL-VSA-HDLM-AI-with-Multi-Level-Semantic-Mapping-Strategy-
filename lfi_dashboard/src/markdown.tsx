@@ -124,9 +124,19 @@ export const renderInlineMd = (raw: string, baseKey: string, ctx: MarkdownCtx): 
       );
       return;
     }
-    const tokens = seg.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
+    // c2-354 / task 70: ~~strikethrough~~ handled before bold/italic so the
+    // tilde pair doesn't get eaten by a stray emphasis run. Matches
+    // GitHub/CommonMark extended syntax exactly: 2+ tildes on both sides.
+    const tokens = seg.split(/(~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
     tokens.forEach((tok, j) => {
-      if (tok.startsWith('**') && tok.endsWith('**') && tok.length >= 4) {
+      if (tok.startsWith('~~') && tok.endsWith('~~') && tok.length >= 4) {
+        out.push(
+          <span key={`${baseKey}-s${i}-${j}`}
+            style={{ textDecoration: 'line-through', color: C.textMuted }}>
+            {tok.slice(2, -2)}
+          </span>
+        );
+      } else if (tok.startsWith('**') && tok.endsWith('**') && tok.length >= 4) {
         out.push(<strong key={`${baseKey}-b${i}-${j}`}>{tok.slice(2, -2)}</strong>);
       } else if (tok.startsWith('*') && tok.endsWith('*') && tok.length >= 2) {
         out.push(<em key={`${baseKey}-i${i}-${j}`}>{tok.slice(1, -1)}</em>);
@@ -240,6 +250,74 @@ export const renderMessageBody = (text: string, ctx: MarkdownCtx): React.ReactNo
           </div>
         );
         i = j;
+        continue;
+      }
+      // c2-354 / task 68: horizontal rule. Three or more dashes or asterisks
+      // on an otherwise-blank line. Must appear on its own line; inline '---'
+      // inside a paragraph is still emphasis text.
+      if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) {
+        flushList();
+        parts.push(
+          <hr key={`hr${key++}`} style={{
+            border: 'none', borderTop: `1px solid ${C.borderSubtle}`,
+            margin: `${T.spacing.lg} 0`,
+          }} />
+        );
+        i++;
+        continue;
+      }
+      // c2-354 / task 69: blockquote. Group consecutive lines starting with
+      // '> ' into a single <blockquote> so multi-line quotes render as one
+      // visual block. Nested quotes (>>) render as plain prefix text -- not
+      // supporting CommonMark's full nesting yet.
+      const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+      if (quoteMatch) {
+        flushList();
+        const quoteLines: string[] = [quoteMatch[1]];
+        let qj = i + 1;
+        while (qj < listLines.length) {
+          const qm = listLines[qj].match(/^\s*>\s?(.*)$/);
+          if (!qm) break;
+          quoteLines.push(qm[1]);
+          qj++;
+        }
+        parts.push(
+          <blockquote key={`bq${key++}`} style={{
+            borderLeft: `3px solid ${C.accent}`,
+            paddingLeft: T.spacing.lg,
+            margin: `${T.spacing.sm} 0`,
+            color: C.textSecondary, fontStyle: 'italic',
+          }}>
+            {quoteLines.map((ql, qi) => (
+              <div key={qi}>{renderInlineMd(ql, `bq${key}-${qi}`, ctx)}</div>
+            ))}
+          </blockquote>
+        );
+        i = qj;
+        continue;
+      }
+      // c2-354 / task 71: task list items. Detected before the generic
+      // bullet match so the checkbox replaces the bullet marker. Rendered
+      // disabled -- these are readonly status indicators, not interactive.
+      const taskMatch = line.match(/^\s*[-*]\s+\[([ xX])\]\s+(.+)/);
+      if (taskMatch) {
+        flushList();  // task list items are standalone, not part of a ul group
+        const checked = taskMatch[1].toLowerCase() === 'x';
+        parts.push(
+          <div key={`task${key++}`} style={{
+            display: 'flex', alignItems: 'flex-start',
+            gap: T.spacing.sm, marginBottom: '4px',
+          }}>
+            <input type='checkbox' checked={checked} disabled readOnly
+              aria-label={checked ? 'completed task' : 'open task'}
+              style={{ marginTop: '3px', accentColor: C.accent, flexShrink: 0 }} />
+            <span style={{
+              color: checked ? C.textMuted : C.text,
+              textDecoration: checked ? 'line-through' : 'none',
+            }}>{renderInlineMd(taskMatch[2], `task${key}`, ctx)}</span>
+          </div>
+        );
+        i++;
         continue;
       }
       const bulletMatch = line.match(/^\s*[-*]\s+(.+)/);
