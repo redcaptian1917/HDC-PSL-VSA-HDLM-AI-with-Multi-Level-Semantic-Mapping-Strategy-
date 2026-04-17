@@ -54,3 +54,4 @@ pub use background::BackgroundLearner;
 pub use persistence::KnowledgeStore;
 pub use web_search::{WebSearchEngine, SearchResponse, SearchResult};
 pub use serial_streamer::SerialStreamer;
+pub mod camel_barrier;
