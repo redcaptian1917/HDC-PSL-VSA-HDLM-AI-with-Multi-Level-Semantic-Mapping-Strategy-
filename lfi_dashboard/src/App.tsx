@@ -55,6 +55,8 @@ const ClassroomView = React.lazy(() => import('./ClassroomView').then(m => ({ de
 const FleetView = React.lazy(() => import('./FleetView').then(m => ({ default: m.FleetView })));
 // c0-037 #3 / c2-329: dedicated Library page for the 365-source inventory.
 const LibraryView = React.lazy(() => import('./LibraryView').then(m => ({ default: m.LibraryView })));
+// c0-037 #12 / c2-331: Auditorium — AVP-2 audit state surface.
+const AuditoriumView = React.lazy(() => import('./AuditoriumView').then(m => ({ default: m.AuditoriumView })));
 import { TelemetryCard } from './TelemetryCards';
 import { SidebarStatus } from './SidebarStatus';
 import { SubstrateTelemetry } from './SubstrateTelemetry';
@@ -434,6 +436,8 @@ const SovereignCommandConsole: React.FC = () => {
       run: () => { setShowAdmin(false); setActiveView('fleet'); } },
     { cmd: '/library', label: 'Library', desc: 'Source inventory with quality + vetted status',
       run: () => { setShowAdmin(false); setActiveView('library'); } },
+    { cmd: '/auditorium', label: 'Auditorium', desc: 'AVP-2 audit state, pass history, findings',
+      run: () => { setShowAdmin(false); setActiveView('auditorium'); } },
     { cmd: '/help', label: 'Help & docs', desc: 'Commands, shortcuts, tips, and feedback guide',
       run: () => {
         const cmdList = slashCommands.filter(c => c.cmd !== '/help').map(c => `  ${c.cmd.padEnd(14)} ${c.desc}`).join('\n');
@@ -722,6 +726,7 @@ ${cmdList}
     else if (want === 'classroom') setSrAnnouncement('Classroom view active');
     else if (want === 'fleet') setSrAnnouncement('Fleet view active');
     else if (want === 'library') setSrAnnouncement('Library view active');
+    else if (want === 'auditorium') setSrAnnouncement('Auditorium view active');
     else setSrAnnouncement('Chat view active');
   }, [activeView, showAdmin]);
   useEffect(() => {
@@ -738,6 +743,9 @@ ${cmdList}
       } else if (h === 'library') {
         setShowAdmin(false);
         setActiveView('library');
+      } else if (h === 'auditorium') {
+        setShowAdmin(false);
+        setActiveView('auditorium');
       } else {
         setShowAdmin(false);
         setActiveView('chat');
@@ -1308,16 +1316,16 @@ ${cmdList}
       else if (mod && k === ',') { e.preventDefault(); setShowSettings(true); }
       else if (mod && k === 'e') { e.preventDefault(); inputRef.current?.focus(); }
       else if (mod && k === '/') { e.preventDefault(); inputRef.current?.focus(); }
-      // c0-020: top-level view shortcuts. c2-328 added ⌘4 (Fleet);
-      // c2-329 added ⌘5 (Library). Full map:
-      //   ⌘1 Chat, ⌘2 Classroom, ⌘3 Admin, ⌘4 Fleet, ⌘5 Library
-      else if (mod && !e.shiftKey && (k === '1' || k === '2' || k === '3' || k === '4' || k === '5')) {
+      // c0-020: top-level view shortcuts. Full map:
+      //   ⌘1 Chat, ⌘2 Classroom, ⌘3 Admin, ⌘4 Fleet, ⌘5 Library, ⌘6 Auditorium
+      else if (mod && !e.shiftKey && (k === '1' || k === '2' || k === '3' || k === '4' || k === '5' || k === '6')) {
         e.preventDefault();
         if (k === '1') { setActiveView('chat'); setShowAdmin(false); }
         else if (k === '2') { setActiveView('classroom'); setShowAdmin(false); }
         else if (k === '3') { setShowAdmin(true); }
         else if (k === '4') { setActiveView('fleet'); setShowAdmin(false); }
-        else { setActiveView('library'); setShowAdmin(false); }
+        else if (k === '5') { setActiveView('library'); setShowAdmin(false); }
+        else { setActiveView('auditorium'); setShowAdmin(false); }
       }
       else if (mod && e.shiftKey && k === 'k') { e.preventDefault(); setShowKnowledge(true); fetchKnowledge(); }
       else if (mod && e.shiftKey && k === 'd') {
@@ -1926,11 +1934,12 @@ ${cmdList}
   // but Chat and Classroom are true top-level views that replace each other.
   // Hash-route-aware: #chat / #classroom / #admin hydrate the view on mount
   // and forward/back history traversal updates the active view.
-  const [activeView, setActiveView] = useState<'chat' | 'classroom' | 'fleet' | 'library'>(() => {
+  const [activeView, setActiveView] = useState<'chat' | 'classroom' | 'fleet' | 'library' | 'auditorium'>(() => {
     const h = (typeof window !== 'undefined' && window.location.hash.replace('#', '')) || 'chat';
     if (h === 'classroom') return 'classroom';
     if (h === 'fleet') return 'fleet';
     if (h === 'library') return 'library';
+    if (h === 'auditorium') return 'auditorium';
     return 'chat';
   });
   const [convoSearch, setConvoSearch] = useState('');
@@ -3413,6 +3422,7 @@ ${cmdList}
             { id: 'admin', label: 'Admin', mod: '3', act: () => { setShowAdmin(true); } },
             { id: 'fleet', label: 'Fleet', mod: '4', act: () => { setActiveView('fleet'); setShowAdmin(false); } },
             { id: 'library', label: 'Library', mod: '5', act: () => { setActiveView('library'); setShowAdmin(false); } },
+            { id: 'auditorium', label: 'Auditorium', mod: '6', act: () => { setActiveView('auditorium'); setShowAdmin(false); } },
           ] as const).map(item => {
             const isActive = (item.id === 'admin' ? showAdmin : (activeView === item.id && !showAdmin));
             return (
@@ -4017,6 +4027,21 @@ ${cmdList}
           }>
             <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
               <LibraryView C={C} host={host} isDesktop={isDesktop} />
+            </AppErrorBoundary>
+          </React.Suspense>
+        )}
+        {/* c0-037 #12 / c2-331: Auditorium — AVP-2 state surface.
+            Hybrid live/reference: tries /api/avp/status then the admin
+            variant, falls through to the static 6-tier / 36-pass reference
+            view with an inline "live stats unavailable" notice. */}
+        {activeView === 'auditorium' && (
+          <React.Suspense fallback={
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMuted }}>
+              Loading auditorium…
+            </div>
+          }>
+            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
+              <AuditoriumView C={C} host={host} isDesktop={isDesktop} />
             </AppErrorBoundary>
           </React.Suspense>
         )}
