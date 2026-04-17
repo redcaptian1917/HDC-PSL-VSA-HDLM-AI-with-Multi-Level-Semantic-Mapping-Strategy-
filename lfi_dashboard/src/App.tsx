@@ -445,6 +445,20 @@ ${cmdList}
   const [localEvents, setLocalEvents] = useState<Array<{ t: number; kind: string; data?: any }>>([]);
 
   const fontScale = settings.compactMode ? 0.85 : (settings.fontSize === 'small' ? 0.88 : settings.fontSize === 'large' ? 1.15 : 1.0);
+
+  // Announce new assistant messages + tool completions to screen readers via a
+  // visually-hidden aria-live region. Tracks last assistant id so we only speak
+  // once per new message (not on every re-render).
+  const [srAnnouncement, setSrAnnouncement] = useState('');
+  const lastAnnouncedIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant' && !(m as any)._streaming);
+    if (lastAssistant && lastAssistant.id !== lastAnnouncedIdRef.current) {
+      lastAnnouncedIdRef.current = lastAssistant.id;
+      const preview = lastAssistant.content.slice(0, 80).replace(/\s+/g, ' ').trim();
+      setSrAnnouncement(`AI responded: ${preview}${lastAssistant.content.length > 80 ? '…' : ''}`);
+    }
+  }, [messages]);
   // Shadow the module-scope C with a theme-bound palette, plus any custom overrides.
   const baseTheme = THEMES[settings.theme] || DARK;
   const C = settings.customTheme ? { ...baseTheme, ...settings.customTheme } : baseTheme;
@@ -1460,6 +1474,11 @@ ${cmdList}
       }}>
       Skip to chat
     </a>
+    {/* Visually-hidden live region: screen readers speak new assistant responses. */}
+    <div aria-live='polite' aria-atomic='true' style={{
+      position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px',
+      overflow: 'hidden', clip: 'rect(0 0 0 0)', border: 0,
+    }}>{srAnnouncement}</div>
     <div style={{
       display: 'flex', flexDirection: 'column', height: '100vh', width: '100%',
       background: C.bg, color: C.text,
