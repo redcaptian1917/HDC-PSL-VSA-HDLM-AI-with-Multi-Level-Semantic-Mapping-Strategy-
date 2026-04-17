@@ -428,19 +428,29 @@ const SovereignCommandConsole: React.FC = () => {
     { cmd: '/help', label: 'Help & docs', desc: 'Commands, shortcuts, tips, and feedback guide',
       run: () => {
         const cmdList = slashCommands.filter(c => c.cmd !== '/help').map(c => `  ${c.cmd.padEnd(14)} ${c.desc}`).join('\n');
+        // c2-297: render shortcuts with the platform-correct modifier and
+        // cover the chords added in the sidebar/a11y cycles.
+        const m = mod();
         const help = `**PlausiDen AI — Quick Reference**
 
 **Slash commands** (type / in the input):
 ${cmdList}
 
 **Keyboard shortcuts:**
-  Ctrl+K          Command palette (search everything)
-  Ctrl+N          New conversation
-  Ctrl+D          Toggle developer mode
-  Ctrl+,          Open settings
-  Ctrl+E          Focus input
-  Ctrl+Shift+K    Knowledge browser
-  Esc             Close any modal
+  ${m}+K            Command palette
+  ${m}+N            New conversation
+  ${m}+B            Toggle sidebar
+  ${m}+1 / 2 / 3    Chat / Classroom / Admin
+  ${m}+F            Search in chat
+  ${m}+Shift+F      Search (overrides browser find)
+  ${m}+,            Settings
+  ${m}+D            Toggle developer mode
+  ${m}+Shift+D      Cycle themes
+  ${m}+Shift+K      Knowledge browser
+  ?                Keyboard cheatsheet
+  Esc              Close any modal
+
+**On a focused sidebar row:** ↑/↓ move, Enter open, P pin, S star, F2 rename, Del delete.
 
 **How to give feedback:**
   Thumbs up/down on any AI response — hover to see them on the right.
@@ -1430,7 +1440,18 @@ ${cmdList}
   // stopped saving. Ref ensures the toast fires at most once.
   const quotaWarnedRef = useRef(false);
   useEffect(() => {
-    if (!settings.persistConversations) return;
+    if (!settings.persistConversations) {
+      // c2-298: honour the setting fully — if the user just flipped it off,
+      // remove any previously-persisted convos from localStorage. Keeps the
+      // privacy contract honest: "don't persist" should mean "no trace left."
+      // LS_CURRENT_KEY points at an id that'd be dead weight without its
+      // data, so clear that too.
+      try {
+        localStorage.removeItem(LS_CONVERSATIONS_KEY);
+        localStorage.removeItem(LS_CURRENT_KEY);
+      } catch { /* quota or blocked — drop */ }
+      return;
+    }
     try {
       const saveable = conversations.filter(c => !c.incognito).slice(-100).map(c => ({
         ...c, messages: c.messages.slice(-500),
@@ -2857,22 +2878,36 @@ ${cmdList}
                 `Import ${incoming.length} conversation${incoming.length === 1 ? '' : 's'} + replace settings?\n\n` +
                 'Click OK to replace settings, Cancel to keep current settings (conversations still imported).'
               );
+              // c2-296: compute added/updated before setConversations so the
+              // summary toast can report both numbers. Previously the toast
+              // only had incoming.length (total) — users who just imported a
+              // backup to restore a few recent convos couldn't tell how many
+              // of their existing chats were overwritten.
+              const existingIds = new Set(conversations.map(c => c.id));
+              let added = 0, updated = 0;
+              for (const c of incoming) {
+                if (!c || typeof c.id !== 'string') continue;
+                if (existingIds.has(c.id)) updated++; else added++;
+              }
               setConversations(prev => {
                 const byId = new Map<string, Conversation>();
                 for (const c of prev) byId.set(c.id, c);
-                let added = 0, updated = 0;
                 for (const c of incoming) {
                   if (!c || typeof c.id !== 'string') continue;
-                  if (byId.has(c.id)) updated++; else added++;
                   byId.set(c.id, c);
                 }
-                logEvent('import_backup', { added, updated, settingsReplaced: mergeSettings });
                 return Array.from(byId.values());
               });
               if (mergeSettings) {
                 setSettings(payload.settings as any);
               }
-              showToast(`Imported ${incoming.length} conversation${incoming.length === 1 ? '' : 's'}`);
+              logEvent('import_backup', { added, updated, settingsReplaced: mergeSettings });
+              const parts: string[] = [];
+              if (added > 0) parts.push(`${added} new`);
+              if (updated > 0) parts.push(`${updated} updated`);
+              if (mergeSettings) parts.push('settings replaced');
+              const summary = parts.length > 0 ? parts.join(', ') : `${incoming.length} conversation${incoming.length === 1 ? '' : 's'}`;
+              showToast(`Imported: ${summary}`);
             } catch (e: any) {
               console.warn('[import-backup]', e);
               showToast(`Import failed: ${String(e?.message || e).slice(0, 80)}`);
@@ -4117,6 +4152,11 @@ ${cmdList}
                       setInput(trimmed);
                       setTimeout(() => handleSend(), 50);
                       logEvent('message_edited', { originalLen: msg.content.length, newLen: trimmed.length });
+                    }}
+                    onCopy={(text) => {
+                      copyToClipboard(text);
+                      showToast('Copied');
+                      logEvent('message_copied', { role: 'user', length: text.length });
                     }}
                     formatTime={formatTime}
                   />

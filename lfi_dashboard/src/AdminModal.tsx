@@ -1161,7 +1161,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             the type=search ✕ inconsistently in dark themes.
                             Esc in the input does the same thing. */}
                         {logFilter && (
-                          <button onClick={() => setLogFilter('')}
+                          <button onClick={(e) => {
+                            setLogFilter('');
+                            // c2-300: return focus to the filter input so the
+                            // user can keep typing without a tab/click
+                            // detour. Previous sibling walk avoids a new ref.
+                            const input = (e.currentTarget.previousElementSibling as HTMLInputElement | null);
+                            input?.focus?.();
+                          }}
                             aria-label='Clear filter'
                             title='Clear filter (Esc)'
                             style={{

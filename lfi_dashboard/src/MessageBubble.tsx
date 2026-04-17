@@ -132,36 +132,63 @@ export interface UserMessageProps {
   onCancelEdit: () => void;
   onCommitEdit: (trimmed: string) => void;
   formatTime: (ts: number) => string;
+  // c2-299: optional copy-to-clipboard hook. When provided, a copy button
+  // appears next to the edit button on hover / always on mobile. Parent
+  // owns the clipboard path so toast + permission handling stays in App.
+  onCopy?: (text: string) => void;
 }
 
 // User message bubble with inline edit flow. Parent owns the editing state
 // so cross-message coordination (only one editor open at a time) stays simple.
 export const UserMessage: React.FC<UserMessageProps> = ({
   msg, C, isMobile, maxWidth, editing, editText, setEditText,
-  onBeginEdit, onCancelEdit, onCommitEdit, formatTime,
+  onBeginEdit, onCancelEdit, onCommitEdit, formatTime, onCopy,
 }) => (
   <div
-    onMouseEnter={(e) => { const btn = e.currentTarget.querySelector('.user-edit-btn') as HTMLElement; if (btn) btn.style.opacity = '1'; }}
-    onMouseLeave={(e) => { const btn = e.currentTarget.querySelector('.user-edit-btn') as HTMLElement; if (btn) btn.style.opacity = '0'; }}
+    onMouseEnter={(e) => { const bar = e.currentTarget.querySelector('.user-msg-actions') as HTMLElement; if (bar) bar.style.opacity = '1'; }}
+    onMouseLeave={(e) => { const bar = e.currentTarget.querySelector('.user-msg-actions') as HTMLElement; if (bar) bar.style.opacity = '0'; }}
     style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', alignItems: 'flex-end' }}>
     {!editing && (
-      <button className='user-edit-btn'
-        onClick={onBeginEdit}
-        title='Edit and resend'
-        aria-label='Edit message and resend'
+      <div className='user-msg-actions'
         style={{
-          width: '28px', height: '28px', flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'transparent', border: 'none',
-          color: C.textMuted, cursor: 'pointer', borderRadius: '6px',
+          display: 'flex', gap: '2px', flexShrink: 0,
           opacity: isMobile ? 1 : 0, transition: 'opacity 0.12s',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-        </svg>
-      </button>
+        }}>
+        {onCopy && (
+          <button
+            onClick={(e) => { onCopy(e.shiftKey ? stripMarkdown(msg.content) : msg.content); }}
+            title='Copy (Shift-click: plain text)'
+            aria-label='Copy message'
+            style={{
+              width: '28px', height: '28px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'transparent', border: 'none',
+              color: C.textMuted, cursor: 'pointer', borderRadius: '6px',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+        )}
+        <button onClick={onBeginEdit}
+          title='Edit and resend'
+          aria-label='Edit message and resend'
+          style={{
+            width: '28px', height: '28px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'transparent', border: 'none',
+            color: C.textMuted, cursor: 'pointer', borderRadius: '6px',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+      </div>
     )}
     {editing ? (
       <div style={{
