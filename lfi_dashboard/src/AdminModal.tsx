@@ -107,7 +107,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [fleet, setFleet] = useState<FleetShape | null>(null);
   const [logs, setLogs] = useState<string[] | null>(null);
   const [err, setErr] = useState<Record<AdminTab, string | null>>({
-    dashboard: null, domains: null, training: null, quality: null, system: null, logs: null,
+    dashboard: null, inventory: null, domains: null, training: null, quality: null, system: null, fleet: null, logs: null,
   });
   const [loading, setLoading] = useState<AdminTab | null>(null);
 
@@ -497,6 +497,123 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   {' · auto-refreshes every 10s'}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ---------- Inventory (c2-234 / #66) ---------- */}
+          {/* A single-page "what's in the system" view. Pure render from the
+              shared /api/admin/dashboard payload so it doesn't double-fetch. */}
+          {tab === 'inventory' && (
+            <div>
+              <h3 style={{ margin: 0, marginBottom: T.spacing.md, fontSize: T.typography.sizeLg, fontWeight: T.typography.weightSemibold, color: C.text }}>
+                Data Inventory
+              </h3>
+              <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+                What the backend knows about. Sources, facts, training files and domain coverage in one glance.
+              </p>
+              {err.inventory && (
+                <div style={{ padding: T.spacing.md, borderRadius: T.radii.md, background: C.redBg, border: `1px solid ${C.redBorder}`, color: C.red, fontSize: '12px', marginBottom: T.spacing.md }}>
+                  {err.inventory}
+                </div>
+              )}
+              {/* ---- Big-number row ---- */}
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                gap: T.spacing.md, marginBottom: T.spacing.xl,
+              }}>
+                {(() => {
+                  const ov = dashboard?.overview || {};
+                  const cards: Array<{ label: string; value: string; color: string }> = [
+                    { label: 'Total facts',    value: compactNum(ov.total_facts ?? factsCount),  color: C.accent },
+                    { label: 'Sources',        value: compactNum(ov.total_sources ?? sourcesCount), color: C.green },
+                    { label: 'Training pairs', value: compactNum(ov.total_training_pairs ?? 0),  color: C.yellow },
+                    { label: 'CVE facts',      value: compactNum(ov.cve_facts ?? 0),             color: C.accent },
+                    { label: 'Adversarial',    value: compactNum(ov.adversarial_facts ?? 0),     color: C.red },
+                    { label: 'Domains',        value: compactNum(dashboard?.domains?.length ?? 0), color: C.green },
+                  ];
+                  return cards.map(c => (
+                    <div key={c.label} style={{
+                      padding: '14px 16px', borderRadius: T.radii.md,
+                      background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                    }}>
+                      <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>{c.label}</div>
+                      <div style={{ fontSize: '22px', fontWeight: T.typography.weightBlack, color: c.color, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>{c.value}</div>
+                    </div>
+                  ));
+                })()}
+              </div>
+              {/* ---- Training files table ---- */}
+              {(() => {
+                const files = dashboard?.training_files || [];
+                if (files.length === 0) {
+                  return (
+                    <div style={{ padding: T.spacing.lg, borderRadius: T.radii.md, background: C.bgInput, border: `1px dashed ${C.borderSubtle}`, color: C.textDim, fontSize: '12.5px', textAlign: 'center' }}>
+                      No training files reported. When /api/admin/dashboard returns training_files, they'll appear here.
+                    </div>
+                  );
+                }
+                const totalPairs = files.reduce((s, f) => s + (f.pairs || 0), 0);
+                const totalMb = files.reduce((s, f) => s + (f.size_mb || 0), 0);
+                const sorted = [...files].sort((a, b) => (b.pairs || 0) - (a.pairs || 0));
+                return (
+                  <div style={{ marginBottom: T.spacing.xl }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+                        Training files ({files.length})
+                      </div>
+                      <div style={{ fontSize: '11px', color: C.textDim, fontFamily: 'ui-monospace, monospace' }}>
+                        {compactNum(totalPairs)} pairs · {totalMb.toFixed(1)} MB
+                      </div>
+                    </div>
+                    <div style={{ maxHeight: '300px', overflowY: 'auto', border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.sm }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead style={{ position: 'sticky', top: 0, background: C.bgInput, zIndex: 1 }}>
+                          <tr>
+                            <th style={{ padding: '6px 10px', textAlign: 'left', fontWeight: T.typography.weightBold, color: C.textMuted, borderBottom: `1px solid ${C.borderSubtle}` }}>File</th>
+                            <th style={{ padding: '6px 10px', textAlign: 'right', fontWeight: T.typography.weightBold, color: C.textMuted, borderBottom: `1px solid ${C.borderSubtle}` }}>Pairs</th>
+                            <th style={{ padding: '6px 10px', textAlign: 'right', fontWeight: T.typography.weightBold, color: C.textMuted, borderBottom: `1px solid ${C.borderSubtle}` }}>Size (MB)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sorted.map((f, i) => (
+                            <tr key={f.file} style={{ background: i % 2 === 0 ? 'transparent' : C.bgHover }}>
+                              <td style={{ padding: '6px 10px', color: C.text, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '420px' }}>{f.file}</td>
+                              <td style={{ padding: '6px 10px', textAlign: 'right', color: C.text, fontFamily: 'ui-monospace, monospace' }}>{compactNum(f.pairs)}</td>
+                              <td style={{ padding: '6px 10px', textAlign: 'right', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{f.size_mb.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* ---- Top domains quick list ---- */}
+              {(() => {
+                const doms = dashboard?.domains || [];
+                if (doms.length === 0) return null;
+                const top = [...doms].sort((a, b) => b.count - a.count).slice(0, 10);
+                return (
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '6px' }}>
+                      Top 10 domains
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '6px 14px' }}>
+                      {top.map(d => (
+                        <div key={d.domain} style={{ display: 'flex', justifyContent: 'space-between', gap: T.spacing.sm, fontSize: '12px', fontFamily: 'ui-monospace, monospace', padding: '3px 0' }}>
+                          <span style={{ color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.domain}</span>
+                          <span style={{ color: countColor(d.count) }}>{d.count.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {doms.length > 10 && (
+                      <div style={{ marginTop: '6px', fontSize: '11px', color: C.textDim }}>
+                        +{doms.length - 10} more — see <button onClick={() => setTab('domains')} style={{ background: 'transparent', border: 'none', color: C.accent, cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: 'inherit' }}>Domains</button> for the full filterable table.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

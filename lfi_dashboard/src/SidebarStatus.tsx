@@ -1,5 +1,6 @@
 import React from 'react';
 import { compactNum, diskPressure } from './util';
+import { T } from './tokens';
 
 // The "Status" panel that sits below Substrate Telemetry in the sidebar.
 // Rows: Connection, Tier, Throttled, Logic Density, PSL Pass, Adversarial,
@@ -62,15 +63,22 @@ export const SidebarStatus: React.FC<SidebarStatusProps> = ({
   ];
 
   return (
-    <div style={{ padding: '20px', borderBottom: `1px solid ${C.borderSubtle}` }}>
-      <div style={{ fontSize: '11px', fontWeight: 800, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '14px' }}>
+    <div style={{ padding: T.spacing.xl, borderBottom: `1px solid ${C.borderSubtle}` }}>
+      <div style={{
+        fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBlack,
+        color: C.textMuted, textTransform: 'uppercase',
+        letterSpacing: T.typography.trackingCap,
+        marginBottom: T.spacing.lg,
+      }}>
         Status
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.sm }}>
         {rows.map(row => (
-          <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+          <div key={row.label} style={{
+            display: 'flex', justifyContent: 'space-between', fontSize: T.typography.sizeMd,
+          }}>
             <span style={{ color: C.textMuted }}>{row.label}</span>
-            <span style={{ color: row.color, fontWeight: 700 }}>{row.value}</span>
+            <span style={{ color: row.color, fontWeight: T.typography.weightBold }}>{row.value}</span>
           </div>
         ))}
       </div>

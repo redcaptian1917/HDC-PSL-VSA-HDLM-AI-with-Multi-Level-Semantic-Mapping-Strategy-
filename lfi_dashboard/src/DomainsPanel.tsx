@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { T } from './tokens';
 
 // Training Domains panel (c0-016 B3). Fetches /api/admin/training/domains on
 // mount + button-press and renders a sortable-by-count table. Color-coded by
@@ -45,54 +46,72 @@ export const DomainsPanel: React.FC<DomainsPanelProps> = ({ C, host }) => {
   // Lazy — first load triggered by button click, not mount. Admin panel is
   // already a heavy area; don't pay the cost until the user asks.
   const countColor = (n: number) => n > 10000 ? C.green : n > 1000 ? C.yellow : C.red;
+  const thStyle = {
+    textAlign: 'left' as const, padding: `${T.spacing.xs} ${T.spacing.sm}`,
+    fontWeight: T.typography.weightBold,
+    background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}`,
+  };
+  const tdStyle = {
+    padding: `${T.spacing.xs} ${T.spacing.sm}`, textAlign: 'right' as const,
+    fontFamily: 'ui-monospace, monospace',
+  };
   return (
-    <div style={{ marginTop: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-        <div style={{ fontSize: '11px', fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+    <div style={{ marginTop: T.spacing.md }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: T.spacing.sm }}>
+        <div style={{
+          fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+          color: C.textMuted, textTransform: 'uppercase',
+          letterSpacing: T.typography.trackingLoose,
+        }}>
           Training domains
         </div>
         <button onClick={load} disabled={loading}
           style={{
-            padding: '4px 10px', fontSize: '10px', fontWeight: 700,
+            padding: `${T.spacing.xs} ${T.spacing.sm}`,
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
             background: C.accentBg, border: `1px solid ${C.accentBorder}`,
-            color: C.accent, borderRadius: '6px', cursor: loading ? 'wait' : 'pointer',
+            color: C.accent, borderRadius: T.radii.md,
+            cursor: loading ? 'wait' : 'pointer',
             fontFamily: 'inherit', textTransform: 'uppercase',
           }}>{loading ? 'Loading…' : rows ? 'Refresh' : 'Load'}</button>
       </div>
       {error && (
         <div role='alert' style={{
-          fontSize: '11px', color: C.red, background: C.redBg,
-          border: `1px solid ${C.redBorder}`, borderRadius: '6px',
-          padding: '6px 8px', marginBottom: '6px',
+          fontSize: T.typography.sizeXs, color: C.red, background: C.redBg,
+          border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md,
+          padding: `${T.spacing.xs} ${T.spacing.sm}`, marginBottom: T.spacing.xs,
         }}>{error}</div>
       )}
       {rows && rows.length === 0 && !error && (
-        <div style={{ fontSize: '11px', color: C.textDim, padding: '10px', textAlign: 'center' }}>
+        <div style={{
+          fontSize: T.typography.sizeXs, color: C.textDim,
+          padding: T.spacing.sm, textAlign: 'center',
+        }}>
           No domain telemetry yet.
         </div>
       )}
       {rows && rows.length > 0 && (
-        <div style={{ overflowX: 'auto', border: `1px solid ${C.borderSubtle}`, borderRadius: '6px' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '11px', color: C.text }}>
+        <div style={{ overflowX: 'auto', border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: T.typography.sizeXs, color: C.text }}>
             <thead>
               <tr>
-                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 700, background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}` }}>Domain</th>
-                <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700, background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}` }}>Facts</th>
-                <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700, background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}` }}>Quality</th>
-                <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700, background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}` }}>Len</th>
+                <th style={thStyle}>Domain</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Facts</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Quality</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Len</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)' }}>
-                  <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.domain}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: countColor(r.facts), fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>
+                  <td style={{ ...tdStyle, textAlign: 'left', fontWeight: T.typography.weightSemibold, fontFamily: 'inherit' }}>{r.domain}</td>
+                  <td style={{ ...tdStyle, color: countColor(r.facts), fontWeight: T.typography.weightBold }}>
                     {r.facts.toLocaleString()}
                   </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                  <td style={{ ...tdStyle, color: C.textMuted }}>
                     {typeof r.avg_quality === 'number' ? r.avg_quality.toFixed(2) : '—'}
                   </td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+                  <td style={{ ...tdStyle, color: C.textMuted }}>
                     {typeof r.avg_length === 'number' ? r.avg_length.toFixed(0) : '—'}
                   </td>
                 </tr>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { T } from './tokens';
 
 // Shown in the chat area when there are no messages yet. Six quick-start
 // prompts, minimal copy. Parent owns the input textarea + ref; we pre-fill.
@@ -7,6 +8,7 @@ import React from 'react';
 // #93 contextual: when the user has a recent non-empty conversation,
 // surface a "Continue where you left off" card so returning visits feel
 // like a natural resumption rather than a blank slate.
+// c2-236 / #20: migrated hardcoded spacing/radii/typography to tokens.ts.
 export interface WelcomeScreenProps {
   C: any;
   isDesktop: boolean;
@@ -28,11 +30,19 @@ const QUICK_STARTS: { t: string; p: string }[] = [
 ];
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPickPrompt, recentContext }) => (
-  <div style={{ textAlign: 'center', padding: isDesktop ? '72px 24px 40px' : '40px 20px 24px' }}>
-    <h1 style={{ fontSize: isDesktop ? '28px' : '22px', fontWeight: 600, color: C.text, margin: '0 0 8px', letterSpacing: '-0.01em' }}>
+  <div style={{ textAlign: 'center', padding: isDesktop ? `72px ${T.spacing.xl} 40px` : `40px ${T.spacing.xl} ${T.spacing.xl}` }}>
+    <h1 style={{
+      fontSize: isDesktop ? '28px' : T.typography.size3xl,
+      fontWeight: T.typography.weightSemibold, color: C.text,
+      margin: `0 0 ${T.spacing.sm}`, letterSpacing: T.typography.trackingTight,
+    }}>
       PlausiDen <span style={{ color: C.accent }}>AI</span>
     </h1>
-    <p style={{ fontSize: '14px', color: C.textSecondary, margin: '0 0 28px', maxWidth: '440px', marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.55 }}>
+    <p style={{
+      fontSize: T.typography.sizeBody, color: C.textSecondary,
+      margin: `0 0 28px`, maxWidth: '440px', marginLeft: 'auto', marginRight: 'auto',
+      lineHeight: T.typography.lineNormal,
+    }}>
       Sovereign AI that runs on your hardware. Private by default, remembers across sessions.
     </p>
     {/* Contextual continuation card — shown only when a recent conversation
@@ -44,23 +54,33 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPi
         aria-label={`Continue conversation: ${recentContext.title}`}
         style={{
           display: 'block', textAlign: 'left',
-          maxWidth: '720px', width: '100%', margin: '0 auto 12px',
-          padding: '14px 18px', borderRadius: '6px',
+          maxWidth: '720px', width: '100%', margin: `0 auto ${T.spacing.md}`,
+          padding: `${T.spacing.lg} 18px`, borderRadius: T.radii.md,
           background: C.accentBg, border: `1px solid ${C.accentBorder}`, cursor: 'pointer',
           fontFamily: 'inherit', color: C.text,
-          transition: 'border-color 0.12s',
+          transition: `border-color ${T.motion.fast}`,
         }}
         onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; }}
         onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.accentBorder; }}
       >
-        <div style={{ fontSize: '11px', color: C.accent, fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        <div style={{
+          fontSize: T.typography.sizeXs, color: C.accent,
+          fontWeight: T.typography.weightSemibold,
+          marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em',
+        }}>
           Continue where you left off
         </div>
-        <div style={{ fontSize: '13.5px', color: C.text, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{
+          fontSize: '13.5px', color: C.text, fontWeight: T.typography.weightMedium,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
           {recentContext.title}
         </div>
         {recentContext.lastUserMsg && (
-          <div style={{ fontSize: '12px', color: C.textSecondary, marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{
+            fontSize: T.typography.sizeSm, color: C.textSecondary, marginTop: T.spacing.xs,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
             Last: “{recentContext.lastUserMsg}”
           </div>
         )}
@@ -76,16 +96,21 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPi
           onClick={() => onPickPrompt(s.p)}
           aria-label={`${s.t}: ${s.p}`}
           style={{
-            textAlign: 'left', padding: '14px 16px', borderRadius: '6px',
+            textAlign: 'left', padding: `${T.spacing.lg} ${T.spacing.lg}`, borderRadius: T.radii.md,
             background: C.bgCard, border: `1px solid ${C.border}`, cursor: 'pointer',
             fontFamily: 'inherit', color: C.text,
-            transition: 'border-color 0.12s, background 0.12s',
+            transition: `border-color ${T.motion.fast}, background ${T.motion.fast}`,
           }}
           onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.background = C.bgHover; }}
           onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bgCard; }}
         >
-          <div style={{ fontSize: '11px', color: C.accent, fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{s.t}</div>
-          <div style={{ fontSize: '13px', color: C.textSecondary, lineHeight: 1.5 }}>{s.p}</div>
+          <div style={{
+            fontSize: T.typography.sizeXs, color: C.accent, fontWeight: T.typography.weightSemibold,
+            marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>{s.t}</div>
+          <div style={{
+            fontSize: T.typography.sizeMd, color: C.textSecondary, lineHeight: 1.5,
+          }}>{s.p}</div>
         </button>
       ))}
     </div>
