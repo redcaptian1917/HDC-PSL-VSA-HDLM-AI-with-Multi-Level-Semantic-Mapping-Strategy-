@@ -1184,7 +1184,19 @@ ${cmdList}
 
   const clearChat = () => {
     console.debug("// SCC: Clearing chat");
+    // c2-292: capture the pre-clear list in the toast closure so the Undo
+    // button restores it. Matches the soft-delete pattern used for
+    // deleteConversation. Skip the undo toast when there was nothing to
+    // clear — no-op paths shouldn't spam.
+    const previous = messages;
     setMessages([]);
+    if (previous.length > 0) {
+      logEvent('clear_chat', { messages: previous.length });
+      showToast(`Cleared ${previous.length} message${previous.length === 1 ? '' : 's'}`, () => {
+        setMessages(previous);
+        logEvent('clear_chat_undo', { messages: previous.length });
+      });
+    }
   };
 
   // Passwordless mode: auto-authenticate + push the user's preferred default
@@ -3826,7 +3838,10 @@ ${cmdList}
             <div role='search' style={{
               padding: T.spacing.sm + ' ' + T.spacing.lg,
               background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`,
-              display: 'flex', alignItems: 'center', gap: T.spacing.sm,
+              // c2-293: flex-wrap so prev/next/mode/close don't clip on narrow
+              // mobile widths. row-gap keeps wrapped controls from touching.
+              display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+              gap: T.spacing.sm, rowGap: T.spacing.xs,
             }}>
               <input
                 ref={chatSearchInputRef}

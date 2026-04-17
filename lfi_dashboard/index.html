@@ -27,13 +27,19 @@
          href at runtime to badge an unread-reply dot. No CDN per PSA §4.3. -->
     <link id="favicon" rel="icon" type="image/svg+xml"
       href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%238b7bf7%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2245%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%22%20font-size%3D%2240%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%3EP%3C%2Ftext%3E%3C%2Fsvg%3E" />
-    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <!-- c2-294: apple-touch-icon reuses the same SVG. iOS Safari honours it
+         when users Add to Home Screen. application-name feeds into
+         Microsoft tile + desktop PWA manifests as the short display name. -->
+    <link rel="apple-touch-icon" type="image/svg+xml"
+      href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2212%22%20fill%3D%22%238b7bf7%22%2F%3E%3Ctext%20x%3D%2232%22%20y%3D%2245%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%22%20font-size%3D%2240%22%20font-weight%3D%22700%22%20fill%3D%22%23fff%22%3EP%3C%2Ftext%3E%3C%2Fsvg%3E" />
+    <meta name="application-name" content="PlausiDen AI" />
+    <meta name="apple-mobile-web-app-title" content="PlausiDen" />
+    <!-- c2-295: Eruda CDN load is now gated by the user's erudaMode setting.
+         Unconditional inclusion cost every user ~36KB network + CDN call on
+         every load — violates PSA §4.3 no-CDN policy for non-dev users.
+         When the setting says "show Eruda for this session", we inject the
+         script tag dynamically; otherwise the CDN is never hit. -->
     <script>
-      // Eruda policy:
-      //   settings.erudaMode = 'auto' (default): mobile only
-      //                      = 'on'            : always show
-      //                      = 'off'           : never show
-      // Loaded from lfi_settings in localStorage so the choice persists.
       (function () {
         try {
           var raw = localStorage.getItem('lfi_settings');
@@ -43,9 +49,13 @@
             if (s && typeof s.erudaMode === 'string') mode = s.erudaMode;
           }
           var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-          var shouldShow =
-            mode === 'on' || (mode === 'auto' && isMobile);
-          if (shouldShow && window.eruda) { eruda.init(); }
+          var shouldShow = mode === 'on' || (mode === 'auto' && isMobile);
+          if (!shouldShow) return;
+          var tag = document.createElement('script');
+          tag.src = 'https://cdn.jsdelivr.net/npm/eruda';
+          tag.onload = function () { try { window.eruda && window.eruda.init(); } catch (_) { /* non-fatal */ } };
+          tag.onerror = function () { /* offline or blocked — user just won't have Eruda */ };
+          document.head.appendChild(tag);
         } catch (e) { /* non-fatal */ }
       })();
     </script>
