@@ -49,6 +49,9 @@ export interface AdminModalProps {
   factsCount: number;
   sourcesCount: number;
   initialTab?: AdminTab;
+  // Optional client-side event log. Used as a fallback source in the Logs
+  // tab when /api/admin/logs is unavailable, so users still see something.
+  localEvents?: Array<{ t: number; kind: string; data?: any }>;
 }
 
 const fmtBytes = (n?: number): string => {
@@ -70,7 +73,7 @@ const pctNorm = (raw: number | undefined): number | null => {
 };
 
 export const AdminModal: React.FC<AdminModalProps> = ({
-  C, host, onClose, factsCount, sourcesCount, initialTab = 'dashboard',
+  C, host, onClose, factsCount, sourcesCount, initialTab = 'dashboard', localEvents = [],
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
@@ -674,24 +677,61 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {tab === 'logs' && (
             <div>
               {err.logs && <AdminErr C={C} msg={err.logs} />}
-              {logs === null && !err.logs && (
-                <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted }}>
-                  {loading === 'logs' ? 'Loading…' : 'Logs endpoint not available yet.'}
-                </div>
-              )}
-              {logs && logs.length === 0 && !err.logs && (
-                <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted }}>
-                  Log endpoint exists but returned no lines.
-                </div>
-              )}
+              {/* Server logs (primary) */}
               {logs && logs.length > 0 && (
-                <pre style={{
-                  margin: 0, padding: '16px', background: C.bgInput,
-                  border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
-                  fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: T.typography.sizeMd,
-                  color: C.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  maxHeight: '60vh', overflowY: 'auto',
-                }}>{logs.slice(-500).join('\n')}</pre>
+                <div style={{ marginBottom: T.spacing.lg }}>
+                  <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '6px' }}>
+                    Server log ({logs.length} lines)
+                  </div>
+                  <pre style={{
+                    margin: 0, padding: '16px', background: C.bgInput,
+                    border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
+                    fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: T.typography.sizeMd,
+                    color: C.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    maxHeight: '45vh', overflowY: 'auto',
+                  }}>{logs.slice(-500).join('\n')}</pre>
+                </div>
+              )}
+              {(logs === null || logs.length === 0) && !err.logs && (
+                <div style={{
+                  padding: '16px', marginBottom: T.spacing.lg,
+                  background: C.bgInput, border: `1px dashed ${C.borderSubtle}`,
+                  borderRadius: T.radii.md, color: C.textMuted, fontSize: '13px', textAlign: 'center',
+                }}>
+                  {loading === 'logs' ? 'Loading server log…' : 'Server /api/admin/logs endpoint not available yet — showing client events only.'}
+                </div>
+              )}
+              {/* Client-side event log (fallback / supplement) */}
+              {localEvents && localEvents.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '6px' }}>
+                    Client events ({localEvents.length}, this session)
+                  </div>
+                  <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden', maxHeight: '45vh', overflowY: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Time</th>
+                          <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Kind</th>
+                          <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}`, position: 'sticky', top: 0 }}>Data</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...localEvents].reverse().slice(0, 200).map((e, i) => (
+                          <tr key={i}>
+                            <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                              {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </td>
+                            <td style={{ padding: '6px 12px', color: C.accent, fontFamily: 'ui-monospace, monospace' }}>{e.kind}</td>
+                            <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {e.data ? JSON.stringify(e.data) : ''}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
             </div>
           )}

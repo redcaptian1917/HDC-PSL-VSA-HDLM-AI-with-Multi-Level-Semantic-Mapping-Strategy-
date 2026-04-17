@@ -2236,6 +2236,7 @@ ${cmdList}
           host={host}
           factsCount={kg.facts}
           sourcesCount={kg.sources}
+          localEvents={localEvents}
           onClose={() => setShowAdmin(false)}
         />
       )}
