@@ -144,6 +144,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       <button className='user-edit-btn'
         onClick={onBeginEdit}
         title='Edit and resend'
+        aria-label='Edit message and resend'
         style={{
           width: '28px', height: '28px', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -297,7 +298,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
             opacity: isMobile ? 1 : 0,
             transition: 'opacity 0.15s',
           }}>
-          <button onClick={() => onCopy(msg.content)} title='Copy message'
+          <button onClick={() => onCopy(msg.content)} title='Copy message' aria-label='Copy message'
             style={{
               width: '30px', height: '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -313,7 +314,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
             </svg>
           </button>
           {isLast && (
-            <button onClick={onRegenerate} title='Regenerate'
+            <button onClick={onRegenerate} title='Regenerate' aria-label='Regenerate last response'
               disabled={isThinking}
               style={{
                 width: '30px', height: '30px',
@@ -330,7 +331,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               </svg>
             </button>
           )}
-          <button onClick={onFeedbackPositive} title='Good response'
+          <button onClick={onFeedbackPositive} title='Good response' aria-label='Mark as good response'
             style={{
               width: '30px', height: '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -345,6 +346,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           </button>
           <button onClick={onFeedbackNegative}
             title='Bad response — tell us what it should have said'
+            aria-label='Mark as bad response'
             style={{
               width: '30px', height: '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
