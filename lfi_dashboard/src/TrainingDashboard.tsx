@@ -45,8 +45,10 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
   const [errors, setErrors] = React.useState<{ accuracy?: string; domains?: string; sessions?: string }>({});
   const [lastUpdated, setLastUpdated] = React.useState<number | null>(null);
   const [control, setControl] = React.useState<{ busy: 'start' | 'stop' | null; msg: string | null; ok: boolean }>({ busy: null, msg: null, ok: true });
+  const [refreshing, setRefreshing] = React.useState(false);
 
   const refetch = React.useCallback(async () => {
+    setRefreshing(true);
     const mk = (path: string, timeoutMs = 15000) => async () => {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -67,6 +69,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
     if (s.status === 'fulfilled') setSessions(s.value); else nextErrors.sessions = String((s.reason as any)?.message || s.reason);
     setErrors(nextErrors);
     setLastUpdated(Date.now());
+    setRefreshing(false);
   }, [host]);
 
   const controlTrainer = React.useCallback(async (action: 'start' | 'stop') => {
@@ -414,11 +417,12 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
           {lastUpdated ? `Updated ${new Date(lastUpdated).toLocaleTimeString()}` : ''}
           {(errors.accuracy || errors.domains || errors.sessions) ? ` \u00B7 partial (${Object.keys(errors).join(', ')} failed)` : ''}
         </span>
-        <button onClick={refetch} style={{
+        <button onClick={refetch} disabled={refreshing} style={{
           padding: '4px 10px', background: 'transparent',
           border: `1px solid ${C.borderSubtle}`, borderRadius: '6px', color: C.textMuted,
-          fontSize: '10px', cursor: 'pointer',
-        }}>Refresh</button>
+          fontSize: '10px', cursor: refreshing ? 'wait' : 'pointer',
+          opacity: refreshing ? 0.5 : 1,
+        }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
       </div>
     </div>
   );
