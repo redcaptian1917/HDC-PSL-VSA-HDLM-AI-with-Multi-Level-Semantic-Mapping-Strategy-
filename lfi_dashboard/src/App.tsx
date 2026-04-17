@@ -1326,6 +1326,16 @@ ${cmdList}
         else if (showActivity) setShowActivity(false);
         else if (showAdmin) setShowAdmin(false);
         else if (showGame) setShowGame(null);
+        // c2-310: Training Dashboard was reachable via /training slash but
+        // Escape only closed it via click-outside or the X button. Added
+        // here so the global Esc affordance is uniform across modals.
+        else if (showTraining) setShowTraining(false);
+        // c2-311: negative-feedback modal + tool-approval dialog. For the
+        // approval dialog Esc is semantically Cancel (safer default matches
+        // autoFocus choice in c2-308). Feedback modal Esc closes without
+        // sending — discarded text is fine since the user hit Escape.
+        else if (negFeedbackFor) setNegFeedbackFor(null);
+        else if (pendingConfirm) { setPendingConfirm(null); setIsThinking(false); }
         else if (showChatSearch) { setShowChatSearch(false); setChatSearch(''); }
         // Last-resort Esc binding: cancel an in-flight request when no modal
         // is open. Mirrors the on-screen Stop button so power users can abort
@@ -1341,7 +1351,7 @@ ${cmdList}
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showCmdPalette, showSettings, showKnowledge, showActivity, showGame]);
+  }, [showCmdPalette, showSettings, showKnowledge, showActivity, showGame, showTraining, negFeedbackFor, pendingConfirm]);
 
   // Three polling hooks — see ./usePolls.ts for the fetch logic. Each manages
   // its own interval + abort handling; parent just reads the state they return.
@@ -2345,7 +2355,8 @@ ${cmdList}
             <label style={{ fontSize: T.typography.sizeSm, fontWeight: T.typography.weightSemibold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
               Details (optional)
             </label>
-            <textarea value={negFeedbackText}
+            <textarea autoFocus
+              value={negFeedbackText}
               onChange={(e) => setNegFeedbackText(e.target.value)}
               onKeyDown={(e) => {
                 // Keyboard submit: Cmd/Ctrl+Enter or Shift+Enter commits the
@@ -2501,7 +2512,11 @@ ${cmdList}
               {pendingConfirm.desc}
             </p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={() => { setPendingConfirm(null); setIsThinking(false); }}
+              {/* c2-308: Cancel gets autoFocus — safety-gated prompts
+                  ("web search requires approval") should default to the
+                  refusal so a reflexive Enter doesn't grant access. */}
+              <button autoFocus
+                onClick={() => { setPendingConfirm(null); setIsThinking(false); }}
                 style={{
                   padding: '10px 18px', background: 'transparent', border: `1px solid ${C.border}`,
                   color: C.textMuted, borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
@@ -2555,7 +2570,11 @@ ${cmdList}
                 PlausiDen Technologies LLC &middot; <a href="https://plausiden.com" target="_blank" rel="noopener noreferrer" style={{ color: C.accent }}>plausiden.com</a>
               </p>
             </div>
-            <button onClick={() => {
+            {/* c2-306: autoFocus so the user can accept with Enter without
+                reaching for the mouse. Browser already fires click() on
+                Enter/Space for focused buttons — no extra keydown handler
+                needed. */}
+            <button autoFocus onClick={() => {
               setTosAccepted(true);
               try { localStorage.setItem('lfi_tos_accepted', 'true'); } catch {}
               logEvent('tos_accepted', { version: '1.0' });
@@ -2605,7 +2624,8 @@ ${cmdList}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '24px', textAlign: 'left' }}>
               {[
-                { icon: '\u2328', title: 'Ctrl+K', desc: 'Command palette — search everything' },
+                // c2-307: render mac ⌘ vs non-mac Ctrl for the palette hint.
+                { icon: '\u2328', title: `${mod()}+K`, desc: 'Command palette — search everything' },
                 { icon: '/', title: '/commands', desc: 'Type / for slash commands' },
                 { icon: '+', title: 'Tools', desc: 'Web search, code, analyze, OPSEC' },
                 { icon: '\u{1F512}', title: 'Private', desc: 'Data stays on your machine' },
@@ -2626,7 +2646,7 @@ ${cmdList}
               ))}
             </div>
 
-            <button onClick={dismissWelcome}
+            <button autoFocus onClick={dismissWelcome}
               style={{
                 width: '100%', padding: '14px',
                 background: C.accent, border: 'none',
@@ -4523,13 +4543,31 @@ ${cmdList}
                     onChange={(e) => {
                       const files = Array.from(e.target.files || []);
                       if (files.length === 0) return;
-                      const names = files.map(f => f.name).join(', ');
+                      // c2-305: cap per-file size to prevent users dragging
+                      // 500MB binaries into a UI that can't do anything with
+                      // them yet. 25MB matches typical ChatGPT/Claude limits
+                      // so the ceiling won't surprise power users.
+                      const MAX_BYTES = 25 * 1024 * 1024;
+                      const accepted = files.filter(f => f.size <= MAX_BYTES);
+                      const rejected = files.filter(f => f.size > MAX_BYTES);
+                      if (rejected.length > 0) {
+                        const names = rejected.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB)`).join(', ');
+                        setMessages(prev => [...prev, {
+                          id: msgId(), role: 'system',
+                          content: `Skipped oversize: ${names}. Max 25MB per file.`,
+                          timestamp: Date.now(),
+                        }]);
+                      }
+                      if (accepted.length === 0) { e.target.value = ''; return; }
+                      const names = accepted.map(f => f.name).join(', ');
+                      const totalBytes = accepted.reduce((s, f) => s + f.size, 0);
+                      const totalKb = (totalBytes / 1024).toFixed(0);
                       setMessages(prev => [...prev, {
                         id: msgId(), role: 'system',
-                        content: `Attached: ${names} (${files.length} file${files.length === 1 ? '' : 's'}). Upload backend is not yet wired \u2014 names logged for now.`,
+                        content: `Attached: ${names} (${accepted.length} file${accepted.length === 1 ? '' : 's'}, ${totalKb} KB). Upload backend is not yet wired \u2014 names logged for now.`,
                         timestamp: Date.now(),
                       }]);
-                      logEvent('file_attached', { count: files.length, names });
+                      logEvent('file_attached', { count: accepted.length, totalBytes, names, rejected: rejected.length });
                       e.target.value = '';
                     }} />
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
