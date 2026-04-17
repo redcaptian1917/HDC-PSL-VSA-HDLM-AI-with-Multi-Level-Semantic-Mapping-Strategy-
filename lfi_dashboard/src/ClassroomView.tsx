@@ -467,7 +467,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
 
         {/* --- Library --- */}
         {sub === 'library' && (
-          <LibraryTab C={C} domains={sortedDomains} files={data?.training_files || []} />
+          <LibraryTab C={C} host={host} domains={sortedDomains} files={data?.training_files || []} />
         )}
       </div>
     </div>
@@ -921,23 +921,57 @@ const OfficeHoursTab: React.FC<{ C: any; events: Array<{ t: number; kind: string
   );
 };
 
-const LibraryTab: React.FC<{ C: any; domains: Array<{ domain: string; count: number }>; files: Array<{ file: string; pairs: number; size_mb: number }> }> = ({ C, domains, files }) => {
+// c2-323 / c0-035 #3: sources row in Library pulls /api/library/sources
+// (reports Claude 0's 360 sources). Prefer :3002 (analytics split service)
+// with :3000 fallback. Cached per-mount since sources rarely change — no
+// auto-refresh.
+interface SourceRow { url?: string; name?: string; domain?: string; trust?: number; facts?: number }
+
+const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: string; count: number }>; files: Array<{ file: string; pairs: number; size_mb: number }> }> = ({ C, host, domains, files }) => {
   const [q, setQ] = React.useState('');
+  const [sources, setSources] = React.useState<SourceRow[] | null>(null);
+  const [sourcesErr, setSourcesErr] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 6000);
+    const tryFetch = async (port: number) => {
+      const r = await fetch(`http://${host}:${port}/api/library/sources`, { signal: ctrl.signal });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    };
+    (async () => {
+      try {
+        let data: any;
+        try { data = await tryFetch(3002); }
+        catch { data = await tryFetch(3000); }
+        const arr: SourceRow[] = Array.isArray(data?.sources) ? data.sources : Array.isArray(data) ? data : [];
+        setSources(arr);
+      } catch (e: any) {
+        setSourcesErr(String(e?.message || e || 'fetch failed'));
+      } finally { clearTimeout(to); }
+    })();
+    return () => { clearTimeout(to); ctrl.abort(); };
+  }, [host]);
   const normQ = q.trim().toLowerCase();
   const matchedDomains = normQ ? domains.filter(d => d.domain.toLowerCase().includes(normQ)) : domains;
   const matchedFiles = normQ ? files.filter(f => f.file.toLowerCase().includes(normQ)) : files;
+  const matchedSources = !sources ? [] : (normQ
+    ? sources.filter(s =>
+        (s.url || '').toLowerCase().includes(normQ) ||
+        (s.name || '').toLowerCase().includes(normQ) ||
+        (s.domain || '').toLowerCase().includes(normQ))
+    : sources);
   return (
     <div>
       <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Library</h2>
       <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
-        Browse what the AI has learned. Full-text search will land when /api/classroom/library supports it; for now you can filter
-        domains and training files.
+        Browse what the AI has learned — sources the knowledge was drawn from, the domains they map to, and the training files generated.
       </p>
       <input
         type='search' value={q} onChange={e => setQ(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.preventDefault(); setQ(''); } }}
         autoComplete='off' spellCheck={false}
-        placeholder={`Filter ${domains.length} domains / ${files.length} files…`}
+        placeholder={`Filter ${domains.length} domains / ${files.length} files${sources ? ` / ${sources.length} sources` : ''}…`}
         aria-label='Library search'
         style={{
           width: '100%', padding: '10px 12px', marginBottom: T.spacing.lg,
@@ -986,6 +1020,43 @@ const LibraryTab: React.FC<{ C: any; domains: Array<{ domain: string; count: num
                   <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>{f.pairs.toLocaleString()} pairs</span>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+        {/* c2-323 / c0-035 #3: sources inventory. Renders once the fetch
+            resolves — loading and error states are explicit so users know
+            whether the backend has the endpoint up. */}
+        <div>
+          <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+            Sources ({sources ? matchedSources.length : '…'})
+          </div>
+          {sourcesErr ? (
+            <div style={{ fontSize: '12px', color: C.red, padding: '10px 12px', background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
+              Sources unavailable: {sourcesErr}
+            </div>
+          ) : !sources ? (
+            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }} aria-busy='true'>Loading sources…</div>
+          ) : matchedSources.length === 0 ? (
+            <div style={{ fontSize: '13px', color: C.textDim, padding: '16px', textAlign: 'center' }}>No sources match.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '420px', overflowY: 'auto' }}>
+              {matchedSources.slice(0, 400).map((s, i) => {
+                const label = s.name || s.url || s.domain || `(source ${i + 1})`;
+                const tail = typeof s.facts === 'number' ? `${s.facts.toLocaleString()} facts`
+                  : typeof s.trust === 'number' ? `trust ${(s.trust * 100).toFixed(0)}%`
+                  : '';
+                return (
+                  <div key={`${label}-${i}`} style={{
+                    display: 'flex', justifyContent: 'space-between', gap: '8px',
+                    padding: '8px 10px', borderBottom: `1px solid ${C.borderSubtle}`,
+                    fontSize: '12px',
+                  }}>
+                    <span style={{ color: C.text, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}
+                      title={s.url || label}>{label}</span>
+                    {tail && <span style={{ color: C.textMuted, fontFamily: 'ui-monospace, monospace', flexShrink: 0 }}>{tail}</span>}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

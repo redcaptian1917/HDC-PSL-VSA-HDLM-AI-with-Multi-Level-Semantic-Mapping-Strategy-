@@ -4983,8 +4983,13 @@ ${cmdList}
         input::placeholder, textarea::placeholder { color: ${C.textDim}; }
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: ${settings.theme === 'light' ? 'rgba(20,30,60,0.15)' : 'rgba(255,255,255,0.10)'}; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: ${settings.theme === 'light' ? 'rgba(20,30,60,0.28)' : 'rgba(255,255,255,0.18)'}; }
+        /* c2-324 / c0-035 #4: drive scrollbar thumb from the theme-resolved
+           border tokens so midnight/forest/sunset/rose/contrast themes all
+           get palette-appropriate scrollbars — previously anything !== 'light'
+           fell through to the dark default rgba, which looked wrong on
+           non-canonical themes. */
+        ::-webkit-scrollbar-thumb { background: ${C.borderSubtle}; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: ${C.border}; }
         .scc-send-btn:hover:not(:disabled) { background: ${C.accentBg} !important; filter: brightness(1.15); border-color: ${C.accentBorder} !important; }
         select option { background: ${C.bgInput}; color: ${C.purple}; }
         button:active { transform: scale(0.97); }
