@@ -122,11 +122,53 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
   const load = async () => {
     setLoading(true);
     setErr(null);
+    // c2-321 / c0-035 #1: prefer the analytics service on :3002 — it
+    // returns /analytics/overview + /analytics/domains in ~0.4s vs the
+    // 60s timeout path that hits /api/admin/dashboard on :3000. Parallel
+    // two-endpoint fetch is merged into the same DashboardShape the rest of
+    // the component already consumes. If :3002 isn't up (older deployments
+    // during rollout), fall back to the original consolidated endpoint.
     try {
       const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), 10000);
-      const res = await fetch(`http://${host}:3000/api/admin/dashboard`, { signal: ctrl.signal });
+      const to = setTimeout(() => ctrl.abort(), 4000);
+      const [ovRes, domRes] = await Promise.all([
+        fetch(`http://${host}:3002/analytics/overview`, { signal: ctrl.signal }),
+        fetch(`http://${host}:3002/analytics/domains`, { signal: ctrl.signal }),
+      ]);
       clearTimeout(to);
+      if (!ovRes.ok || !domRes.ok) throw new Error(`HTTP overview=${ovRes.status} domains=${domRes.status}`);
+      const overview: any = await ovRes.json();
+      const domainsPayload: any = await domRes.json();
+      const domainsArr: Array<{ domain: string; count: number }> =
+        Array.isArray(domainsPayload?.domains) ? domainsPayload.domains
+        : Array.isArray(domainsPayload) ? domainsPayload
+        : [];
+      // The analytics service keeps its own shape; project into the existing
+      // DashboardShape the UI already knows how to render so no downstream
+      // tab had to change.
+      const shaped: DashboardShape = {
+        overview: overview?.overview ?? overview,
+        quality: overview?.quality,
+        training: overview?.training,
+        score: overview?.score,
+        domains: domainsArr,
+        training_files: overview?.training_files,
+        system: overview?.system,
+      };
+      setData(shaped);
+      setLastUpdated(Date.now());
+      setLoading(false);
+      return;
+    } catch (e: any) {
+      // Fall through to the legacy endpoint on :3000 — keeps the page
+      // working during rollout or when the analytics service is down.
+      console.debug('// SCC: classroom analytics(:3002) unreachable, falling back to /api/admin/dashboard:', e?.message || e);
+    }
+    try {
+      const ctrl2 = new AbortController();
+      const to2 = setTimeout(() => ctrl2.abort(), 10000);
+      const res = await fetch(`http://${host}:3000/api/admin/dashboard`, { signal: ctrl2.signal });
+      clearTimeout(to2);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
       setLastUpdated(Date.now());
