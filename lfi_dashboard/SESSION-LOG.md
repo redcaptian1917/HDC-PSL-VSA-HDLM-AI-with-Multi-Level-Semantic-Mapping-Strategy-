@@ -61,8 +61,9 @@ Instance: claude-2 (frontend/UI). Session start: 2026-04-16 ~23:05 EDT. Date rol
 |---|---|---|
 | App.tsx | 2987 | Main container, state, WS, routing |
 | public/sw.js | (ext) | Cache-first service worker for fonts/js/css (prod-only) |
+| ChatView.tsx | 59 | Virtuoso-wrapped message list with render-prop API |
 | useAutoScroll.ts | 23 | Auto-scroll hook: scroll to ref when tracked count grows |
-| useModalFocus.ts | 31 | Initial + restore focus for dialogs |
+| useModalFocus.ts | 59 | Initial + Tab-cycle trap + restore focus for dialogs |
 | usePolls.ts | 119 | useStatusPoll / useQualityPoll / useSysInfoPoll |
 | useTicTacToe.ts | 63 | Game state hook |
 | markdown.tsx | 145 | renderInlineMd + renderMessageBody |
@@ -103,7 +104,7 @@ Beyond-c0-078 work:
 - Phase 2 #1 partial: react-virtuoso installed; wiring pending a ChatView extraction.
 - react-virtuoso@4.18 added to package.json.
 - A11y pass: role=dialog + aria-modal + aria-label on 4 modals; role=tablist/tab/tabpanel + aria-selected on Settings + Activity tabs; aria-label on icon-only close buttons + chat textarea; role=status + aria-live=polite on thinking indicator.
-- Focus management: useModalFocus hook wired into 3 modals (initial focus + restore).
+- Focus management: useModalFocus hook wired into all 4 modals (initial focus + Tab/Shift-Tab cycle trap + restore on close).
 - React.memo on SystemMessage + WebMessage leaf components.
 - First-visit theme defaults to OS `prefers-color-scheme`.
 - Browser tab title tracks active conversation.
