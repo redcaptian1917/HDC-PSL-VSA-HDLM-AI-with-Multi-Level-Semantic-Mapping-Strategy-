@@ -98,7 +98,21 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
-  const [tab, setTab] = useState<AdminTab>(initialTab);
+  // c2-260 / #122: persist the active tab so a reopen lands the user where
+  // they left off. Explicit initialTab prop (e.g. /logs slash command) wins
+  // over the stored preference so jump-links still work.
+  const [tab, setTab] = useState<AdminTab>(() => {
+    if (initialTab !== 'dashboard') return initialTab;
+    try {
+      const stored = localStorage.getItem('lfi_admin_tab') as AdminTab | null;
+      const valid: AdminTab[] = ['dashboard', 'inventory', 'domains', 'training', 'quality', 'system', 'fleet', 'logs'];
+      if (stored && valid.includes(stored)) return stored;
+    } catch { /* storage blocked */ }
+    return initialTab;
+  });
+  useEffect(() => {
+    try { localStorage.setItem('lfi_admin_tab', tab); } catch { /* quota */ }
+  }, [tab]);
   const [dashboard, setDashboard] = useState<DashboardShape | null>(null);
   const [domains, setDomains] = useState<DomainRow[] | null>(null);
   const [accuracy, setAccuracy] = useState<AccuracyShape | null>(null);

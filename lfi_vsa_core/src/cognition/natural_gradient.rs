@@ -140,4 +140,56 @@ mod tests {
         assert!(ratio > 1.0, "Condition ratio should be > 1 for varied Fisher");
         assert!(ratio.is_finite());
     }
+
+    /// Effective learning rate is always positive and finite
+    #[test]
+    fn test_effective_lr_positive_finite() {
+        let mut ng = NaturalGradient::new(5, 0.01);
+        ng.observe_gradient(&[0.0, 1.0, 100.0, 0.001, 50.0]);
+        for elr in ng.effective_lr() {
+            assert!(elr > 0.0 && elr.is_finite(),
+                "Effective LR must be positive finite: {}", elr);
+        }
+    }
+
+    /// Zero gradient observation doesn't break anything
+    #[test]
+    fn test_zero_gradient_safe() {
+        let mut ng = NaturalGradient::new(3, 0.1);
+        ng.observe_gradient(&[0.0, 0.0, 0.0]);
+        let step = ng.step(&[1.0, 1.0, 1.0]);
+        for s in &step {
+            assert!(s.is_finite(), "Step should be finite even with zero Fisher");
+        }
+    }
+
+    /// Dimension mismatch in observe_gradient is silently ignored
+    #[test]
+    fn test_dimension_mismatch_ignored() {
+        let mut ng = NaturalGradient::new(3, 0.1);
+        ng.observe_gradient(&[1.0, 2.0]); // wrong size — should not modify Fisher
+        assert!(!ng.initialized, "Should not initialize on mismatched gradient");
+    }
+
+    /// Multiple updates converge params toward zero with positive gradient
+    #[test]
+    fn test_convergence_direction() {
+        let mut ng = NaturalGradient::new(2, 0.5);
+        let mut params = vec![10.0, 10.0];
+        for _ in 0..10 {
+            ng.update(&mut params, &[1.0, 1.0]);
+        }
+        assert!(params[0] < 10.0 && params[1] < 10.0,
+            "Params should decrease with consistent positive gradient: {:?}", params);
+    }
+
+    /// Uniform Fisher gives uniform condition ratio of 1.0
+    #[test]
+    fn test_uniform_fisher_condition_one() {
+        let ng = NaturalGradient::new(5, 0.1);
+        // Uninitialized Fisher is all 1.0 → uniform
+        let ratio = ng.condition_ratio();
+        assert!((ratio - 1.0).abs() < 0.01,
+            "Uniform Fisher should have condition ratio ~1.0: {}", ratio);
+    }
 }

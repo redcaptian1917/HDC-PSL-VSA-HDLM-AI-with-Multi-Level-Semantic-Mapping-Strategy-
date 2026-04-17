@@ -47,6 +47,7 @@ import { AccuracyPanel } from './AccuracyPanel';
 // Full-screen admin console (c0-017). Lazy because it bundles 6 tabs of
 // panels that are only seen when the user clicks the Admin entry.
 const AdminModal = React.lazy(() => import('./AdminModal').then(m => ({ default: m.AdminModal })));
+import type { AdminTab } from './AdminModal';
 // Classroom full page (c0-027). Lazy — not visited until user switches view.
 const ClassroomView = React.lazy(() => import('./ClassroomView').then(m => ({ default: m.ClassroomView })));
 import { TelemetryCard } from './TelemetryCards';
@@ -531,7 +532,9 @@ ${cmdList}
   // Which AdminModal tab to open when the user triggers Admin via a
   // dedicated link (e.g., Activity menu → Logs). Reset to 'dashboard' on
   // close so normal Admin opens default to Dashboard.
-  const [adminInitialTab, setAdminInitialTab] = useState<'dashboard' | 'domains' | 'training' | 'quality' | 'system' | 'fleet' | 'logs'>('dashboard');
+  // c2-261: use AdminTab so this can't drift when new tabs are added
+  // (was previously a narrow inline union missing 'inventory').
+  const [adminInitialTab, setAdminInitialTab] = useState<AdminTab>('dashboard');
 
   const avatarPresets = AVATAR_PRESETS;
   const [showAccountMenu, setShowAccountMenu] = useState(false);

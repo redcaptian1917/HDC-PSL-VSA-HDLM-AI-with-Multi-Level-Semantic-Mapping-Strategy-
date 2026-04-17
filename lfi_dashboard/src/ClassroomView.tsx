@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { T } from './tokens';
-import { compactNum } from './util';
+import { compactNum, formatRelative } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
 // the AI is the student, training data is the curriculum, evaluation
@@ -93,11 +93,28 @@ const projectHistory = (snaps: GradebookSnapshot[]): Record<string, number[]> =>
   return out;
 };
 
+// c2-260 / #122: persist active sub-tab so a reopen lands where the user
+// left off. Validated against the known set to guard against stale strings.
+const CLASSROOM_SUB_KEY = 'lfi_classroom_sub';
+const CLASSROOM_SUBS: readonly Sub[] = ['profile','curriculum','gradebook','lessons','tests','reports','office','library'];
+
 export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop, localEvents = [] }) => {
-  const [sub, setSub] = useState<Sub>('profile');
+  const [sub, setSub] = useState<Sub>(() => {
+    try {
+      const stored = localStorage.getItem(CLASSROOM_SUB_KEY) as Sub | null;
+      if (stored && CLASSROOM_SUBS.includes(stored)) return stored;
+    } catch { /* storage blocked */ }
+    return 'profile';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(CLASSROOM_SUB_KEY, sub); } catch { /* quota */ }
+  }, [sub]);
   const [data, setData] = useState<DashboardShape | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // c2-261: last successful fetch timestamp, surfaced next to the refresh
+  // button as "Updated Xs ago" so users know staleness at a glance.
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   // c2-231 / #75: rolling history of per-domain counts, surfaced as
   // sparklines next to the coverage bars.
   const [history, setHistory] = useState<GradebookSnapshot[]>(() => loadGradebookHistory());
@@ -112,6 +129,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
       clearTimeout(to);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
+      setLastUpdated(Date.now());
     } catch (e: any) {
       const m = String(e?.message || e || 'fetch failed');
       setErr(m.includes('abort') ? 'Backend busy — request timed out. Try again in a moment.' : m);
@@ -187,6 +205,14 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
             already auto-poll at 10s but users want a force-reload after a
             backend action. Spinner while load in-flight. */}
         <div style={{ flex: 1 }} />
+        {/* c2-261: staleness indicator — hidden until the first successful
+            fetch so it doesn't flash "Updated 0s ago" before data lands. */}
+        {lastUpdated != null && (
+          <span aria-live='polite' style={{
+            alignSelf: 'center', fontSize: T.typography.sizeXs, color: C.textDim,
+            marginRight: T.spacing.sm, fontFamily: 'ui-monospace, monospace',
+          }}>Updated {formatRelative(lastUpdated)}</span>
+        )}
         <button onClick={load} disabled={loading} aria-label='Refresh classroom data'
           title={loading ? 'Refreshing…' : 'Refresh (auto-refreshes every 10s on live tabs)'}
           style={{
@@ -926,9 +952,4 @@ const Placeholder: React.FC<{ C: any; title: string; body: string; data: unknown
           fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12px',
           color: C.textMuted, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '240px',
         }}>
-          {JSON.stringify(data, null, 2)}
-        </pre>
-      )}
-    </div>
-  </div>
-);
+ 
