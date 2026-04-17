@@ -254,6 +254,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
             <button
               onClick={() => controlTrainer('start')}
               disabled={control.busy !== null || trainerActive}
+              aria-label='Start training'
               style={{
                 flex: 1, padding: '5px 8px', fontSize: '10px', fontWeight: 700,
                 textTransform: 'uppercase', letterSpacing: '0.06em',
@@ -268,6 +269,7 @@ export function TrainingDashboardContent({ host, C, totalFactsFallback }: Traini
             <button
               onClick={() => controlTrainer('stop')}
               disabled={control.busy !== null || !trainerActive}
+              aria-label='Stop training'
               style={{
                 flex: 1, padding: '5px 8px', fontSize: '10px', fontWeight: 700,
                 textTransform: 'uppercase', letterSpacing: '0.06em',
