@@ -547,7 +547,12 @@ ${cmdList}
       else mq.removeListener(handler);
     };
   }, []);
-  const effectiveThemeKey = settings.autoTheme ? (osPrefersLight ? 'light' : 'dark') : settings.theme;
+  // Preview theme: when the user hovers a theme card in Settings we flip
+  // the dashboard to that theme briefly so they can see the result before
+  // committing. null = no preview, fall through to the persisted choice.
+  const [previewTheme, setPreviewTheme] = useState<string | null>(null);
+  const effectiveThemeKey = previewTheme
+    ?? (settings.autoTheme ? (osPrefersLight ? 'light' : 'dark') : settings.theme);
   const baseTheme = THEMES[effectiveThemeKey] || DARK;
   const C = settings.customTheme ? { ...baseTheme, ...settings.customTheme } : baseTheme;
 
@@ -1443,6 +1448,9 @@ ${cmdList}
   const [showConvoSidebar, setShowConvoSidebar] = useState<boolean>(true);
   const [showPlanSidebar, setShowPlanSidebar] = useState<boolean>(true);
   const [showArchived, setShowArchived] = useState<boolean>(false);
+  // Inline rename state for sidebar conversations (replaces browser prompt()).
+  const [renamingConvoId, setRenamingConvoId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState<string>('');
   // c0-027: 3-view app (Chat / Classroom / Admin). Admin is still a modal,
   // but Chat and Classroom are true top-level views that replace each other.
   // Hash-route-aware: #chat / #classroom / #admin hydrate the view on mount
@@ -2374,7 +2382,8 @@ ${cmdList}
           setSettings={setSettings as any}
           tab={settingsTab}
           onTabChange={(t) => setSettingsTab(t)}
-          onClose={() => setShowSettings(false)}
+          onPreviewTheme={setPreviewTheme}
+          onClose={() => { setPreviewTheme(null); setShowSettings(false); }}
           currentTier={currentTier}
           onTierSelect={(tier) => { setCurrentTier(tier); handleTierSwitch(tier); }}
           onExportEvents={() => { exportEvents(); logEvent('export_events', {}); }}
@@ -2894,7 +2903,37 @@ ${cmdList}
                         }}>
                           {c.pinned && <span style={{ color: C.yellow, fontSize: '11px' }}>{'\u{1F4CC}'}</span>}
                           {c.starred && <span style={{ color: C.yellow, fontSize: '11px' }}>{'\u2605'}</span>}
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.title}</span>
+                          {renamingConvoId === c.id ? (
+                            <input autoFocus type='text'
+                              value={renameDraft}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => setRenameDraft(e.target.value)}
+                              onBlur={() => {
+                                const v = renameDraft.trim();
+                                if (v && v !== c.title) renameConversation(c.id, v);
+                                setRenamingConvoId(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); }
+                                else if (e.key === 'Escape') { e.preventDefault(); setRenamingConvoId(null); }
+                              }}
+                              aria-label={`Rename ${c.title}`}
+                              maxLength={80}
+                              style={{
+                                flex: 1, minWidth: 0,
+                                background: C.bgInput, border: `1px solid ${C.accentBorder}`,
+                                borderRadius: '4px', color: C.text, padding: '2px 6px',
+                                fontSize: '13px', fontFamily: 'inherit', outline: 'none',
+                              }} />
+                          ) : (
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                              onDoubleClick={(e) => {
+                                // c0-020 polish: double-click the title to inline-rename.
+                                e.stopPropagation();
+                                setRenamingConvoId(c.id);
+                                setRenameDraft(c.title);
+                              }}>{c.title}</span>
+                          )}
                         </div>
                         <div style={{ fontSize: '10px', color: C.textDim, marginTop: '2px' }}>
                           {c.messages.length} msg &middot; {formatRelative(c.updatedAt)}
@@ -2927,9 +2966,9 @@ ${cmdList}
                           }}>{'\u{1F4CC}'}</button>
                         <button onClick={(e) => {
                           e.stopPropagation();
-                          const next = prompt('Rename conversation', c.title);
-                          if (next !== null) renameConversation(c.id, next);
-                        }} title='Rename' aria-label={`Rename ${c.title}`}
+                          setRenamingConvoId(c.id);
+                          setRenameDraft(c.title);
+                        }} title='Rename (or double-click title)' aria-label={`Rename ${c.title}`}
                           style={{
                             background: 'transparent', border: 'none', color: C.textDim,
                             cursor: 'pointer', fontSize: '10px', padding: '2px 3px',

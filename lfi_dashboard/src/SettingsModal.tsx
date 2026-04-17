@@ -38,6 +38,8 @@ export interface SettingsModalProps {
   onExportEvents: () => void;
   onExportConversations: () => void;
   onExportAllJson: () => void;
+  // Live-preview a theme while hovering its card. null clears the preview.
+  onPreviewTheme?: (themeKey: string | null) => void;
   onClearHistory: () => void;
   onResetSettings: () => void;
   onDeleteAccount: () => void;
@@ -48,7 +50,7 @@ export interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   C, isMobile, settings, setSettings, tab, onTabChange, onClose,
   currentTier, onTierSelect,
-  onExportEvents, onExportConversations, onExportAllJson, onClearHistory, onResetSettings, onDeleteAccount,
+  onExportEvents, onExportConversations, onExportAllJson, onPreviewTheme, onClearHistory, onResetSettings, onDeleteAccount,
   conversationCount, messageCount,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -231,7 +233,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               const preview = THEMES[t.id];
               const picked = settings.theme === t.id;
               return (
-                <button key={t.id} onClick={() => setSettings(s => ({ ...s, theme: t.id }))}
+                <button key={t.id}
+                  onClick={() => { setSettings(s => ({ ...s, theme: t.id })); onPreviewTheme?.(null); }}
+                  onMouseEnter={() => onPreviewTheme?.(t.id)}
+                  onMouseLeave={() => onPreviewTheme?.(null)}
+                  onFocus={() => onPreviewTheme?.(t.id)}
+                  onBlur={() => onPreviewTheme?.(null)}
                   style={{
                     padding: '14px', background: preview.bgCard,
                     border: `2px solid ${picked ? C.accent : C.border}`,
