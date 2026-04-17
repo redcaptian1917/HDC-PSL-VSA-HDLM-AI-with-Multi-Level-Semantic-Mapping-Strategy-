@@ -765,17 +765,30 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           </tr>
                         </thead>
                         <tbody>
-                          {filtered.slice(0, 200).map((e, i) => (
-                            <tr key={i}>
-                              <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
-                                {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                              </td>
-                              <td style={{ padding: '6px 12px', color: C.accent, fontFamily: 'ui-monospace, monospace' }}>{e.kind}</td>
-                              <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {e.data ? JSON.stringify(e.data) : ''}
-                              </td>
-                            </tr>
-                          ))}
+                          {filtered.slice(0, 200).map((e, i) => {
+                            // Color dot to visually group kinds — positive
+                            // signals green, negatives red, navigation neutral
+                            // accent. Makes the scroll scan-able at a glance.
+                            const dotColor =
+                              e.kind.includes('error') || e.kind.includes('failed') || e.kind.includes('negative') ? C.red
+                              : e.kind.includes('positive') || e.kind.includes('success') || e.kind.includes('done') ? C.green
+                              : e.kind.includes('warn') || e.kind.includes('stop') ? C.yellow
+                              : C.accent;
+                            return (
+                              <tr key={i}>
+                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
+                                  {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </td>
+                                <td style={{ padding: '6px 12px', fontFamily: 'ui-monospace, monospace', color: C.text, whiteSpace: 'nowrap' }}>
+                                  <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: dotColor, marginRight: '8px', verticalAlign: 'middle' }} aria-hidden='true' />
+                                  <span style={{ color: dotColor }}>{e.kind}</span>
+                                </td>
+                                <td style={{ padding: '6px 12px', color: C.textMuted, fontFamily: 'ui-monospace, monospace', maxWidth: '520px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {e.data ? JSON.stringify(e.data) : ''}
+                                </td>
+                              </tr>
+                            );
+                          })}
                           {filtered.length === 0 && (
                             <tr><td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: C.textMuted, fontStyle: 'italic' }}>No events match.</td></tr>
                           )}
