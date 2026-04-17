@@ -434,6 +434,23 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               padding: '0 8px',
             }}>{formatRelative(msg.timestamp)}</span>
         </div>
+        {/* c2-360 / task 88: word count + GPT-style token estimate. Hidden on
+            empty / thinking messages so it doesn't flash during streaming.
+            Token estimate is ceil(len/4) which is the conventional ballpark
+            for English prose; good enough without bundling a tokenizer. */}
+        {!isThinking && msg.content && msg.content.trim().length > 0 && (() => {
+          const words = msg.content.trim().split(/\s+/).length;
+          const tokens = Math.ceil(msg.content.length / 4);
+          return (
+            <div style={{
+              fontSize: T.typography.sizeXs, color: C.textDim,
+              padding: '0 8px', marginTop: '2px',
+              fontFamily: T.typography.fontMono,
+            }}>
+              {words.toLocaleString()} {words === 1 ? 'word' : 'words'} · ~{tokens.toLocaleString()} tokens
+            </div>
+          );
+        })()}
         {/* Last-message helpfulness nudge — only on the latest assistant reply,
             fades to invisibility once user votes (tracked via onFeedbackPositive/
             onFeedbackNegative side effects at the parent). Addresses c0-008 #5. */}
