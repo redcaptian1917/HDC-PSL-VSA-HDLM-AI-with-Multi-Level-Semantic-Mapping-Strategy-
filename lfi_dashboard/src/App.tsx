@@ -613,6 +613,38 @@ ${cmdList}
     return () => clearTimeout(t);
   }, [isConnected]);
 
+  // URL hash <-> activeView sync. State change pushes the hash; popstate
+  // (back/forward) reads the hash and updates state. Admin opens as a modal
+  // so it also writes #admin while showAdmin is true, and restores the
+  // previous view (chat or classroom) when closed.
+  useEffect(() => {
+    const want = showAdmin ? 'admin' : activeView;
+    const cur = window.location.hash.replace('#', '');
+    if (cur !== want) {
+      const url = `${window.location.pathname}${window.location.search}#${want}`;
+      // Use replaceState for in-session updates so we don't balloon history
+      // with every tab click; back button still works because the initial
+      // page load pushed its own entry.
+      window.history.replaceState(null, '', url);
+    }
+  }, [activeView, showAdmin]);
+  useEffect(() => {
+    const onHashChange = () => {
+      const h = window.location.hash.replace('#', '');
+      if (h === 'admin') {
+        setShowAdmin(true);
+      } else if (h === 'classroom') {
+        setShowAdmin(false);
+        setActiveView('classroom');
+      } else {
+        setShowAdmin(false);
+        setActiveView('chat');
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
   // Backend health probe — when WS is down, periodically GET /api/status to
   // distinguish "WS hiccup, REST still works" (transient) from "whole backend
   // gone" (worth telling the user to start the dev server). Only runs while
@@ -1336,7 +1368,12 @@ ${cmdList}
   const [showArchived, setShowArchived] = useState<boolean>(false);
   // c0-027: 3-view app (Chat / Classroom / Admin). Admin is still a modal,
   // but Chat and Classroom are true top-level views that replace each other.
-  const [activeView, setActiveView] = useState<'chat' | 'classroom'>('chat');
+  // Hash-route-aware: #chat / #classroom / #admin hydrate the view on mount
+  // and forward/back history traversal updates the active view.
+  const [activeView, setActiveView] = useState<'chat' | 'classroom'>(() => {
+    const h = (typeof window !== 'undefined' && window.location.hash.replace('#', '')) || 'chat';
+    return h === 'classroom' ? 'classroom' : 'chat';
+  });
   const [convoSearch, setConvoSearch] = useState('');
 
   // ---- Send ----
