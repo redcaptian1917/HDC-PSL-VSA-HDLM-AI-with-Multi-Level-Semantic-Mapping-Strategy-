@@ -282,6 +282,7 @@ const SovereignCommandConsole: React.FC = () => {
     defaultTier: 'Pulse' | 'Bridge' | 'BigBrain'; // Persistent model default
     compactMode: boolean;          // TUI-density mode for power users
     autoTheme: boolean;            // Follow OS prefers-color-scheme dynamically
+    notifyOnReply: boolean;        // OS notification when AI finishes while tab hidden
     customTheme: {
       bg: string; accent: string; text: string; green: string; red: string;
     } | null;
@@ -297,6 +298,7 @@ const SovereignCommandConsole: React.FC = () => {
     defaultTier: 'Pulse',   // Persistent model default the user controls in Settings
     compactMode: false,
     autoTheme: false,
+    notifyOnReply: false,
     customTheme: null,
   };
   const [settings, setSettings] = useState<Settings>(() => {
@@ -816,6 +818,18 @@ ${cmdList}
               } as any];
             });
           } else if (msg.type === 'chat_done') {
+            // OS notification when the user has tabbed away and opted in.
+            // Requires prior permission grant; silently no-op otherwise.
+            if (settings.notifyOnReply && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+              try {
+                const n = new Notification('PlausiDen AI replied', {
+                  body: 'Your response is ready.',
+                  tag: 'plausiden-reply',   // coalesces repeated replies
+                  silent: false,
+                });
+                n.onclick = () => { try { window.focus(); n.close(); } catch {} };
+              } catch { /* non-fatal */ }
+            }
             // End of streaming — finalize the message.
             applyToStreamingConvo(prev => {
               const last = prev[prev.length - 1];
@@ -2762,7 +2776,7 @@ ${cmdList}
             display: 'flex', alignItems: 'center', gap: '14px',
             padding: '6px 14px', background: C.bgCard,
             borderBottom: `1px solid ${C.borderSubtle}`,
-            fontSize: '11px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: '11px', fontFamily: T.typography.fontMono,
             color: C.textMuted, flexShrink: 0, overflowX: 'auto', whiteSpace: 'nowrap',
           }}>
           <span title='CPU temperature'>
@@ -3327,7 +3341,7 @@ ${cmdList}
                       ))}
                     </div>
                     <span style={{ color: C.text, fontWeight: 500 }}>{thinkingStep || 'Thinking'}</span>
-                    <span style={{ color: stuck ? C.red : C.textDim, fontSize: '11px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                    <span style={{ color: stuck ? C.red : C.textDim, fontSize: '11px', fontFamily: T.typography.fontMono }}>
                       {Math.floor(thinkingElapsed / 60) > 0 ? `${Math.floor(thinkingElapsed / 60)}m ` : ''}{thinkingElapsed % 60}s
                     </span>
                     {stuck && (

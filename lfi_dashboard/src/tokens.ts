@@ -3,6 +3,11 @@
 //
 // Phase 1.2 of FRONTEND_SUPERSOCIETY_PLAN.md. Target is a 4/8 px grid so all
 // layouts snap to consistent rhythm (AVP-2 §30 design-system consistency).
+//
+// c0-024/99: the cross-platform source of truth is `design-system.ts`. We
+// re-export its typography so components can pull everything from `T.*`.
+
+import { typography as dsTypography } from './design-system';
 
 // ---- Spacing (4 px base; step 1 = 4 px, step 2 = 8 px, … ) ----
 // Named in conventional t-shirt sizes for legibility.
@@ -54,6 +59,8 @@ export const motion = {
 // ---- Typography scale ----
 // Ordered so readers can pick a step by visual hierarchy without doing math.
 // `body` is the default; step up/down one level at a time for contrast.
+// Font families come from design-system.ts (single source of truth shared
+// with desktop + Android builds) via fontFamily + fontMono re-exports.
 export const typography = {
   // Sizes
   sizeXs: '11px',    // metadata, badges
@@ -80,6 +87,9 @@ export const typography = {
   trackingLoose: '0.10em',
   trackingCap: '0.15em',
   trackingCapWide: '0.20em',
+  // Font families re-exported from the cross-platform design-system.
+  fontFamily: dsTypography.fontFamily,
+  fontMono: dsTypography.fontMono,
 } as const;
 
 // ---- Z-index scale ----

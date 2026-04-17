@@ -345,6 +345,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             { key: 'persistConversations', label: 'Save conversations locally', sub: 'Stored in this browser only; never uploaded. Per PSA policy.' },
             { key: 'showReasoning', label: 'Show reasoning trace on replies', sub: 'Expandable per-message. Shows DerivationTrace steps.' },
             { key: 'compactMode', label: 'Compact mode', sub: 'Dense TUI-style layout: smaller fonts, tighter spacing.' },
+            { key: 'notifyOnReply', label: 'Notify when AI replies', sub: 'OS notification if the tab is hidden when a response finishes.' },
             { key: 'developerMode', label: 'Developer mode', sub: 'Telemetry, system info, plan panel, provenance badges, diagnostic panels.' },
           ] as const).map((row, i) => (
             <label key={row.key} style={{
@@ -357,7 +358,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div style={{ fontSize: '11px', color: C.textDim, marginTop: '2px' }}>{row.sub}</div>
               </div>
               <input type='checkbox' checked={!!settings[row.key]}
-                onChange={(e) => setSettings(s => ({ ...s, [row.key]: e.target.checked }))}
+                onChange={async (e) => {
+                  const v = e.target.checked;
+                  // Request Notification permission the first time the user
+                  // opts into the reply-notification flag — quieter than
+                  // prompting on page load.
+                  if (row.key === 'notifyOnReply' && v && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+                    try { await Notification.requestPermission(); } catch { /* non-fatal */ }
+                  }
+                  setSettings(s => ({ ...s, [row.key]: v }));
+                }}
                 style={{ width: '18px', height: '18px', accentColor: C.accent, flexShrink: 0 }} />
             </label>
           ))}
