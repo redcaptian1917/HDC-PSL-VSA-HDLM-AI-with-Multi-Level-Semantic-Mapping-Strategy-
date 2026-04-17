@@ -192,6 +192,19 @@ const SovereignCommandConsole: React.FC = () => {
   // us render an inline Retry affordance that resends the prior user
   // message. Cleared on successful next send or manual dismiss.
   const [lastErrorRetry, setLastErrorRetry] = useState<{ userContent: string; at: number } | null>(null);
+  // c2-372 / task 105: streaming throughput tracker. startAt = ms timestamp
+  // of the first chat_chunk; chars grows with every subsequent chunk.
+  // null when no stream is active. Used to render a live tokens/s chip
+  // during response generation.
+  const [streamTiming, setStreamTiming] = useState<{ startAt: number; chars: number } | null>(null);
+  // Tick once per 500 ms so the tokens/s readout updates visibly without
+  // causing a re-render storm. The effect runs only while a stream is live.
+  const [streamTimingTick, setStreamTimingTick] = useState(0);
+  useEffect(() => {
+    if (!streamTiming) return;
+    const id = setInterval(() => setStreamTimingTick(t => t + 1), 500);
+    return () => clearInterval(id);
+  }, [streamTiming != null]);
   const [isConnected, setIsConnected] = useState(false);
   // Debounced disconnect banner — avoid flashing the banner on the initial
   // pre-connect moment or on momentary reconnects under 2s.
@@ -928,6 +941,13 @@ ${cmdList}
             // Streaming: append partial text to the last assistant message,
             // or create one if this is the first chunk.
             setIsThinking(false);
+            // c2-372 / task 105: accumulate chars into streamTiming so the
+            // tokens/s chip can compute ceil(chars/4) / elapsed. First chunk
+            // seeds startAt; subsequent chunks just grow the counter.
+            const chunkLen = (msg.text || '').length;
+            setStreamTiming(prev => prev
+              ? { ...prev, chars: prev.chars + chunkLen }
+              : { startAt: Date.now(), chars: chunkLen });
             applyToStreamingConvo(prev => {
               const last = prev[prev.length - 1];
               if (last && last.role === 'assistant' && (last as any)._streaming) {
@@ -940,6 +960,8 @@ ${cmdList}
               } as any];
             });
           } else if (msg.type === 'chat_done') {
+            // c2-372 / task 105: end of stream -- drop the timing chip.
+            setStreamTiming(null);
             // OS notification when the user has tabbed away and opted in.
             // Requires prior permission grant; silently no-op otherwise.
             if (settings.notifyOnReply && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
@@ -1005,6 +1027,8 @@ ${cmdList}
           } else if (msg.type === 'chat_error') {
             console.debug("// SCC: Chat error:", msg.error);
             setIsThinking(false);
+            // c2-372: error also ends the stream -- clear the timing chip.
+            setStreamTiming(null);
             applyToStreamingConvo(prev => {
               // c2-371 / task 79: remember the most recent user turn so the
               // Retry button has something to resend. Scanned from the end
@@ -4609,6 +4633,36 @@ ${cmdList}
                         <span style={{ fontSize: T.typography.sizeMd, color: C.textMuted }}>{c.desc}</span>
                       </button>
                     ))}
+                  </div>
+                );
+              })()}
+
+              {/* c2-372 / task 105: live tokens/s chip during streaming.
+                  Renders between the chat list and the input row. Hidden
+                  outside of active streams. Tokens = ceil(chars/4) (English
+                  GPT-ish ballpark); elapsed in seconds. Right-aligned so it
+                  sits over the input's right edge without shifting layout.
+                  streamTimingTick dependency keeps the chip refreshing
+                  without re-rendering the whole tree. */}
+              {streamTiming && (() => {
+                void streamTimingTick;
+                const elapsedMs = Math.max(1, Date.now() - streamTiming.startAt);
+                const toks = Math.ceil(streamTiming.chars / 4);
+                const tps = (toks / (elapsedMs / 1000)).toFixed(1);
+                return (
+                  <div aria-live='polite' style={{
+                    display: 'flex', justifyContent: 'flex-end',
+                    marginBottom: T.spacing.sm,
+                    fontSize: T.typography.sizeXs, color: C.textMuted,
+                    fontFamily: T.typography.fontMono,
+                  }}>
+                    <span style={{
+                      background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+                      borderRadius: T.radii.sm,
+                      padding: `2px ${T.spacing.sm}`,
+                    }}>
+                      {tps} tok/s <span style={{ color: C.textDim }}>(~{toks.toLocaleString()} tok)</span>
+                    </span>
                   </div>
                 );
               })()}
