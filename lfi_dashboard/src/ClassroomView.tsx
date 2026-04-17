@@ -284,9 +284,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
 
         {/* --- Test Center --- */}
         {sub === 'tests' && (
-          <Placeholder C={C} title='Test Center'
-            body='Run benchmarks and quick quizzes against the current model. Awaiting /api/classroom/test endpoint.'
-            data={null} />
+          <TestCenterTab C={C} host={host} data={data} />
         )}
 
         {/* --- Report Cards --- */}
@@ -361,6 +359,109 @@ const DomainBars: React.FC<{ C: any; rows: Array<{ domain: string; count: number
           <span style={{ width: '96px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{r.count.toLocaleString()}</span>
         </div>
       ))}
+    </div>
+  );
+};
+
+const TestCenterTab: React.FC<{ C: any; host: string; data: DashboardShape | null }> = ({ C, host, data }) => {
+  const [auditInput, setAuditInput] = React.useState('');
+  const [auditResult, setAuditResult] = React.useState<any>(null);
+  const [auditError, setAuditError] = React.useState<string | null>(null);
+  const [auditLoading, setAuditLoading] = React.useState(false);
+  const runAudit = async () => {
+    const text = auditInput.trim();
+    if (!text) return;
+    setAuditLoading(true);
+    setAuditError(null);
+    setAuditResult(null);
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 10000);
+      const res = await fetch(`http://${host}:3000/api/audit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }), signal: ctrl.signal,
+      });
+      clearTimeout(to);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAuditResult(await res.json());
+    } catch (e: any) {
+      setAuditError(String(e?.message || e || 'fetch failed'));
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+  const psl = data?.quality?.psl_calibration;
+  return (
+    <div>
+      <h2 style={{ fontSize: '18px', fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Test Center</h2>
+      <p style={{ fontSize: '13px', color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
+        Run a PSL audit against any text using the existing /api/audit endpoint. PSL calibration below shows the
+        system-wide pass rate the last time a full sweep ran.
+      </p>
+      {/* Calibration status card */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: T.spacing.md, marginBottom: T.spacing.xl,
+      }}>
+        <Stat C={C} label='PSL pass rate' value={(() => {
+          const p = pctNorm(psl?.pass_rate ?? data?.training?.pass_rate);
+          return p != null ? `${p.toFixed(1)}%` : '—';
+        })()} color={(() => {
+          const p = pctNorm(psl?.pass_rate ?? data?.training?.pass_rate);
+          return p == null ? C.textMuted : p >= 95 ? C.green : p >= 80 ? C.yellow : C.red;
+        })()} />
+        <Stat C={C} label='PSL status' value={psl?.status || '—'} color={C.accent} />
+        <Stat C={C} label='Last run' value={psl?.last_run ? String(psl.last_run) : '—'} color={C.textSecondary} />
+        <Stat C={C} label='Tested' value={data?.training?.total_tested != null ? data.training.total_tested.toLocaleString() : '—'} color={C.purple} />
+      </div>
+      {/* Ad-hoc audit */}
+      <div style={{
+        padding: T.spacing.lg, border: `1px solid ${C.borderSubtle}`,
+        borderRadius: T.radii.md, background: C.bgCard,
+      }}>
+        <div style={{ fontSize: '12px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+          Ad-hoc PSL audit
+        </div>
+        <textarea value={auditInput}
+          onChange={(e) => setAuditInput(e.target.value)}
+          placeholder='Paste a statement, citation, or fact claim to audit…'
+          aria-label='Audit input'
+          autoComplete='off' spellCheck
+          maxLength={10000}
+          style={{
+            width: '100%', minHeight: '96px', padding: '10px 12px',
+            background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+            borderRadius: T.radii.md, color: C.text, fontFamily: 'inherit',
+            fontSize: T.typography.sizeBody, outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+          }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: T.spacing.md }}>
+          <span style={{ fontSize: '11px', color: C.textDim }}>{auditInput.length}/10000</span>
+          <button onClick={runAudit} disabled={auditLoading || !auditInput.trim()}
+            style={{
+              padding: '8px 18px', background: auditLoading || !auditInput.trim() ? C.bgInput : C.accent,
+              color: auditLoading || !auditInput.trim() ? C.textMuted : '#fff',
+              border: 'none', borderRadius: T.radii.sm, cursor: auditLoading ? 'wait' : (auditInput.trim() ? 'pointer' : 'not-allowed'),
+              fontFamily: 'inherit', fontSize: T.typography.sizeMd, fontWeight: T.typography.weightSemibold,
+            }}>{auditLoading ? 'Auditing…' : 'Run audit'}</button>
+        </div>
+        {auditError && (
+          <div role='alert' style={{
+            marginTop: T.spacing.md, padding: '8px 12px',
+            background: C.redBg, border: `1px solid ${C.redBorder}`, color: C.red,
+            borderRadius: T.radii.md, fontSize: '12px',
+          }}>{auditError}</div>
+        )}
+        {auditResult && (
+          <pre style={{
+            marginTop: T.spacing.md, padding: '12px', background: C.bgInput,
+            border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
+            fontFamily: "'JetBrains Mono','Fira Code',monospace", fontSize: '12px',
+            color: C.text, whiteSpace: 'pre-wrap', overflowX: 'auto', maxHeight: '320px',
+          }}>
+            {JSON.stringify(auditResult, null, 2)}
+          </pre>
+        )}
+      </div>
     </div>
   );
 };
