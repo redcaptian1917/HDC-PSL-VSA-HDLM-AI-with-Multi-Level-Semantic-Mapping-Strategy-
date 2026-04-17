@@ -10,6 +10,15 @@ import { compactNum } from './util';
 
 export type AdminTab = 'dashboard' | 'domains' | 'training' | 'quality' | 'system' | 'logs';
 
+interface DashboardShape {
+  overview?: { total_facts?: number; total_sources?: number; cve_facts?: number; adversarial_facts?: number; total_training_pairs?: number };
+  quality?: { average?: number; high_quality_count?: number; low_quality_count?: number; high_quality_pct?: number };
+  training?: { sessions?: number; learning_signals?: number; total_tested?: number; total_correct?: number; pass_rate?: number; psl_calibration?: any };
+  score?: { accuracy_score?: number; grade?: string; breakdown?: { quality?: number; adversarial?: number; coverage?: number; training?: number } };
+  domains?: Array<{ domain: string; count: number }>;
+  training_files?: Array<{ file: string; pairs: number; size_mb: number }>;
+  system?: { uptime_hours?: number; server_version?: string };
+}
 interface DomainRow { domain: string; facts: number; avg_quality?: number; avg_length?: number }
 interface AccuracyShape {
   pass_rate?: number; accuracy?: number; samples?: number;
@@ -66,6 +75,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
   const [tab, setTab] = useState<AdminTab>(initialTab);
+  const [dashboard, setDashboard] = useState<DashboardShape | null>(null);
   const [domains, setDomains] = useState<DomainRow[] | null>(null);
   const [accuracy, setAccuracy] = useState<AccuracyShape | null>(null);
   const [quality, setQuality] = useState<QualityShape | null>(null);
@@ -87,18 +97,27 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 10000);
     try {
-      if (t === 'dashboard' || t === 'domains') {
+      if (t === 'dashboard') {
+        // c0-026: use the consolidated endpoint — returns overview + quality
+        // + training + score + domains + training_files + system in one call.
+        try {
+          setDashboard(await fetchJson('/api/admin/dashboard', ctrl.signal));
+        } catch {
+          // Fall back to the per-feature endpoints if /dashboard isn't up yet.
+        }
+      }
+      if (t === 'domains') {
         const data: any = await fetchJson('/api/admin/training/domains', ctrl.signal);
         const arr: DomainRow[] = Array.isArray(data?.domains) ? data.domains : Array.isArray(data) ? data : [];
         setDomains(arr.sort((a, b) => b.facts - a.facts));
       }
-      if (t === 'dashboard' || t === 'training') {
+      if (t === 'training') {
         setAccuracy(await fetchJson('/api/admin/training/accuracy', ctrl.signal));
       }
-      if (t === 'dashboard' || t === 'quality') {
+      if (t === 'quality') {
         setQuality(await fetchJson('/api/quality/report', ctrl.signal));
       }
-      if (t === 'dashboard' || t === 'system') {
+      if (t === 'system') {
         setSysInfo(await fetchJson('/api/system/info', ctrl.signal));
       }
       if (t === 'logs') {
@@ -131,6 +150,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   useEffect(() => {
     if (tab !== 'training') return;
     const id = setInterval(() => { loadTab('training'); }, 5000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line
+  }, [tab]);
+
+  // c0-026: Dashboard tab auto-refreshes every 10s against the consolidated
+  // /api/admin/dashboard endpoint. Paused when user switches tabs.
+  useEffect(() => {
+    if (tab !== 'dashboard') return;
+    const id = setInterval(() => { loadTab('dashboard'); }, 10000);
     return () => clearInterval(id);
     // eslint-disable-next-line
   }, [tab]);
@@ -230,23 +258,91 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {/* ---------- Dashboard ---------- */}
           {tab === 'dashboard' && (
             <div>
+              {err.dashboard && <AdminErr C={C} msg={err.dashboard} />}
+              {/* Accuracy grade + score breakdown from /api/admin/dashboard */}
+              {dashboard?.score && (
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'minmax(180px, 1fr) 3fr',
+                  gap: T.spacing.lg, marginBottom: T.spacing.xl,
+                  padding: T.spacing.lg, borderRadius: T.radii.lg,
+                  background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+                      Accuracy grade
+                    </div>
+                    <div style={{
+                      fontSize: '72px', fontWeight: T.typography.weightBlack,
+                      color: (() => {
+                        const g = dashboard.score?.grade || '';
+                        if (g.startsWith('A')) return C.green;
+                        if (g.startsWith('B')) return C.accent;
+                        if (g.startsWith('C')) return C.yellow;
+                        return C.red;
+                      })(),
+                      lineHeight: 1, marginTop: '4px',
+                      fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                    }}>{dashboard.score.grade || '—'}</div>
+                    {typeof dashboard.score.accuracy_score === 'number' && (
+                      <div style={{ fontSize: '13px', color: C.textSecondary, marginTop: '4px', fontFamily: 'ui-monospace, monospace' }}>
+                        {dashboard.score.accuracy_score.toFixed(1)} / 100
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+                      Score breakdown
+                    </div>
+                    {dashboard.score.breakdown && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {(['quality', 'adversarial', 'coverage', 'training'] as const).map(k => {
+                          const v = dashboard.score?.breakdown?.[k];
+                          if (typeof v !== 'number') return null;
+                          const pc = v <= 1.5 ? v * 100 : v;
+                          const col = pc >= 80 ? C.green : pc >= 60 ? C.yellow : C.red;
+                          return (
+                            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
+                              <span style={{ width: '110px', fontSize: '12px', color: C.textSecondary, textTransform: 'capitalize' }}>{k}</span>
+                              <div style={{ flex: 1, background: C.bg, height: '10px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
+                                <div style={{ width: `${pc}%`, height: '100%', background: col, transition: 'width 0.4s' }} />
+                              </div>
+                              <span style={{ width: '56px', textAlign: 'right', fontSize: '12px', color: col, fontFamily: 'ui-monospace, monospace', fontWeight: T.typography.weightBold }}>{pc.toFixed(0)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               <div style={{
                 display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
                 gap: T.spacing.md, marginBottom: T.spacing.xl,
               }}>
                 {[
-                  { label: 'Facts', value: factsCount ? compactNum(factsCount) : '—', color: C.purple },
-                  { label: 'Sources', value: sourcesCount ? String(sourcesCount) : '—', color: C.green },
-                  { label: 'Domains', value: domains ? String(domains.length) : '—', color: C.accent },
-                  { label: 'Accuracy', value: (() => {
-                    const p = pctNorm(accuracy?.pass_rate ?? accuracy?.accuracy);
+                  { label: 'Facts', value: (() => {
+                    const v = dashboard?.overview?.total_facts ?? factsCount;
+                    return v ? compactNum(v) : '—';
+                  })(), color: C.purple },
+                  { label: 'Sources', value: (() => {
+                    const v = dashboard?.overview?.total_sources ?? sourcesCount;
+                    return v ? String(v) : '—';
+                  })(), color: C.green },
+                  { label: 'Training pairs', value: dashboard?.overview?.total_training_pairs != null ? compactNum(dashboard.overview.total_training_pairs) : '—', color: C.accent },
+                  { label: 'Pass rate', value: (() => {
+                    const p = pctNorm(dashboard?.training?.pass_rate ?? accuracy?.pass_rate ?? accuracy?.accuracy);
                     return p != null ? `${p.toFixed(1)}%` : '—';
                   })(), color: C.yellow },
-                  { label: 'Adversarial', value: quality?.adversarial_count != null ? compactNum(quality.adversarial_count) : '—', color: C.red },
-                  { label: 'CPU temp', value: sysInfo?.cpu_temp_c != null ? `${sysInfo.cpu_temp_c.toFixed(0)}°C` : '—', color: (sysInfo?.cpu_temp_c ?? 0) > 65 ? C.red : C.green },
+                  { label: 'Adversarial', value: dashboard?.overview?.adversarial_facts != null
+                    ? compactNum(dashboard.overview.adversarial_facts)
+                    : (quality?.adversarial_count != null ? compactNum(quality.adversarial_count) : '—'), color: C.red },
+                  { label: 'Avg quality', value: (() => {
+                    const q = dashboard?.quality?.average;
+                    return typeof q === 'number' ? q.toFixed(2) : '—';
+                  })(), color: C.green },
                 ].map(card => (
                   <div key={card.label} style={{
-                    padding: '16px 18px', borderRadius: T.radii.xl,
+                    padding: '16px 18px', borderRadius: T.radii.lg,
                     background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
                   }}>
                     <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: T.typography.weightBold, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
@@ -258,28 +354,36 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </div>
                 ))}
               </div>
-              {/* Domain bar chart */}
-              {domains && domains.length > 0 && (() => {
-                const top = [...domains].sort((a, b) => b.facts - a.facts).slice(0, 10);
-                const max = Math.max(...top.map(d => d.facts), 1);
+              {/* Domain bar chart — prefer consolidated dashboard.domains
+                  when present ({domain, count} shape), fall back to domains
+                  state ({domain, facts}). */}
+              {(() => {
+                type R = { label: string; value: number };
+                const source: R[] =
+                  dashboard?.domains && dashboard.domains.length > 0
+                    ? dashboard.domains.map(d => ({ label: d.domain, value: d.count }))
+                    : (domains || []).map(d => ({ label: d.domain, value: d.facts }));
+                if (source.length === 0) return null;
+                const top = [...source].sort((a, b) => b.value - a.value).slice(0, 10);
+                const max = Math.max(...top.map(d => d.value), 1);
                 return (
-                  <div>
+                  <div style={{ marginBottom: T.spacing.xl }}>
                     <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
                       Top 10 domains by fact count
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {top.map(d => (
-                        <div key={d.domain} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
-                          <span style={{ width: '140px', fontSize: '12px', color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.domain}</span>
+                        <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
+                          <span style={{ width: '160px', fontSize: '12px', color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.label}</span>
                           <div style={{ flex: 1, background: C.bgInput, height: '18px', borderRadius: T.radii.xs, overflow: 'hidden' }}>
                             <div style={{
-                              width: `${(d.facts / max) * 100}%`, height: '100%',
-                              background: countColor(d.facts),
+                              width: `${(d.value / max) * 100}%`, height: '100%',
+                              background: countColor(d.value),
                               transition: 'width 0.4s',
                             }} />
                           </div>
-                          <span style={{ width: '72px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>
-                            {d.facts.toLocaleString()}
+                          <span style={{ width: '84px', textAlign: 'right', fontSize: '12px', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>
+                            {d.value.toLocaleString()}
                           </span>
                         </div>
                       ))}
@@ -287,6 +391,41 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </div>
                 );
               })()}
+              {/* Training files list from consolidated endpoint */}
+              {dashboard?.training_files && dashboard.training_files.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: T.typography.weightBold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, marginBottom: '10px' }}>
+                    Training datasets ({dashboard.training_files.length})
+                  </div>
+                  <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeMd }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}` }}>File</th>
+                          <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}` }}>Pairs</th>
+                          <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}` }}>Size</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...dashboard.training_files].sort((a, b) => b.pairs - a.pairs).map(f => (
+                          <tr key={f.file}>
+                            <td style={{ padding: '8px 12px', fontFamily: 'ui-monospace, monospace', color: C.text }}>{f.file}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.accent }}>{f.pairs.toLocaleString()}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'ui-monospace, monospace', color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {dashboard?.system && (
+                <div style={{ marginTop: T.spacing.xl, fontSize: '11px', color: C.textDim, textAlign: 'center' }}>
+                  Server v{dashboard.system.server_version || '?'}
+                  {typeof dashboard.system.uptime_hours === 'number' && ` · uptime ${dashboard.system.uptime_hours.toFixed(1)}h`}
+                  {' · auto-refreshes every 10s'}
+                </div>
+              )}
             </div>
           )}
 

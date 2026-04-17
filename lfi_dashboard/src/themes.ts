@@ -1,74 +1,58 @@
 // Theme palettes. Each export shares the shape of DARK; the THEMES record
 // maps the string key used in localStorage / Settings to its palette.
+//
+// c0-024 2026-04-17: DARK + LIGHT now pull from ./design-system.ts (the
+// cross-platform single source of truth shared with Tauri desktop + Android
+// WebView). Field names stay the same so existing components don't need
+// refactoring.
+import { darkTheme as ds_dark, lightTheme as ds_light, typography as ds_type } from './design-system';
 
-export const DARK = {
-  // c0-019 FINAL THEME 2026-04-17: professional/technical, Stripe/Linear/
-  // Notion/GitHub reference. Slate neutrals, single blue accent, NO neon,
-  // NO glow, NO gradients. System font stack. "Tool I trust with my
-  // infrastructure," not "cool side project."
-  bg: '#0f1117',              // near-black cool gray undertone
-  bgCard: '#161922',          // panels / cards
-  bgInput: '#1a1d28',         // input fields
-  bgHover: '#252836',         // hover states
-  border: '#1f2233',
-  borderFocus: 'rgba(59,130,246,0.55)',     // blue-500 55%
-  borderSubtle: '#1c1f2b',    // barely-there separation
-  text: '#ecedf0',            // crisp but not pure white
-  textSecondary: '#8b8fa3',   // labels, metadata
-  textMuted: '#565b6e',       // placeholders, disabled
-  textDim: '#404455',
-  accent: '#3b82f6',          // blue-500 — the only accent
-  accentGlow: 'transparent',  // c0-019: no glow effects
-  accentBg: '#1e3a5f',        // blue-tinted bg for selected items
-  accentBorder: 'rgba(59,130,246,0.35)',
-  green: '#22c55e',
-  greenBg: 'rgba(34,197,94,0.10)',
-  greenBorder: 'rgba(34,197,94,0.25)',
-  red: '#ef4444',
-  redBg: 'rgba(239,68,68,0.10)',
-  redBorder: 'rgba(239,68,68,0.25)',
-  // Purple retained for internal distinctions (provenance badge etc.) but
-  // pulled toward neutral indigo-slate so it reads as "another status" not
-  // "second brand accent."
+// Derive a legacy-shaped palette from the cross-platform theme tokens. The
+// helper preserves the existing field names the rest of the app expects.
+const fromTokens = (t: typeof ds_dark) => ({
+  bg: t.bgDeep,
+  bgCard: t.bgSurface,
+  bgInput: t.bgInput,
+  bgHover: t.bgHover,
+  border: t.border,
+  borderFocus: t.accent,
+  borderSubtle: t.border,
+  text: t.textPrimary,
+  textSecondary: t.textSecondary,
+  textMuted: t.textTertiary,
+  textDim: t.textTertiary,
+  accent: t.accent,
+  accentGlow: 'transparent',   // c0-019: no glow
+  accentBg: t.accentMuted,
+  accentBorder: t.borderHover,
+  green: t.success,
+  greenBg: hexToRgba(t.success, 0.10),
+  greenBorder: hexToRgba(t.success, 0.28),
+  red: t.error,
+  redBg: hexToRgba(t.error, 0.10),
+  redBorder: hexToRgba(t.error, 0.28),
+  // Purple kept as a secondary-status color (provenance badges etc.). Not
+  // part of the core design-system palette, but we need it for semantic
+  // distinctions the system uses in the chat. Stay in a neutral indigo.
   purple: '#8b5cf6',
-  purpleBg: 'rgba(139,92,246,0.10)',
-  purpleBorder: 'rgba(139,92,246,0.25)',
-  yellow: '#eab308',          // warning
-  yellowBg: 'rgba(234,179,8,0.10)',
-  // System font stack per c0-019.
-  font: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-};
+  purpleBg: hexToRgba('#8b5cf6', 0.10),
+  purpleBorder: hexToRgba('#8b5cf6', 0.25),
+  yellow: t.warning,
+  yellowBg: hexToRgba(t.warning, 0.10),
+  font: ds_type.fontFamily,
+});
 
-export const LIGHT: typeof DARK = {
-  // c0-019 FINAL LIGHT: cool-neutral surfaces, deeper blue accent for AA.
-  bg: '#f5f6f8',              // page
-  bgCard: '#ffffff',          // surface
-  bgInput: '#f5f6f8',         // inputs == page (flat, no extra tone)
-  bgHover: '#f0f1f4',         // hover
-  border: '#e5e7eb',
-  borderFocus: 'rgba(37,99,235,0.50)',
-  borderSubtle: '#ebedf0',
-  text: '#111827',
-  textSecondary: '#6b7280',
-  textMuted: '#9ca3af',
-  textDim: '#b5bbc4',
-  accent: '#2563eb',          // deeper blue for AA on white
-  accentGlow: 'transparent',
-  accentBg: '#eff6ff',        // muted blue bg for selected
-  accentBorder: 'rgba(37,99,235,0.28)',
-  green: '#16a34a',
-  greenBg: 'rgba(22,163,74,0.10)',
-  greenBorder: 'rgba(22,163,74,0.28)',
-  red: '#dc2626',
-  redBg: 'rgba(220,38,38,0.08)',
-  redBorder: 'rgba(220,38,38,0.28)',
-  purple: '#7c3aed',
-  purpleBg: 'rgba(124,58,237,0.08)',
-  purpleBorder: 'rgba(124,58,237,0.28)',
-  yellow: '#ca8a04',
-  yellowBg: 'rgba(202,138,4,0.10)',
-  font: DARK.font,
-};
+function hexToRgba(hex: string, alpha: number): string {
+  // Accepts #rrggbb. Falls back to the input unchanged if it doesn't match
+  // (design-system.ts only defines hex values, so this is safe in practice).
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (!m) return hex;
+  return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})`;
+}
+
+export const DARK = fromTokens(ds_dark);
+
+export const LIGHT: typeof DARK = fromTokens(ds_light);
 
 export const MIDNIGHT: typeof DARK = {
   bg: '#0a0f1f',
