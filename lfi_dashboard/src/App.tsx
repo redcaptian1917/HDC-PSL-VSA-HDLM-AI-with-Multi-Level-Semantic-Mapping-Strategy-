@@ -3611,7 +3611,7 @@ ${cmdList}
                 {item.label}
                 {isDesktop && (
                   <kbd aria-hidden='true' style={{
-                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                    fontFamily: T.typography.fontMono,
                     fontSize: '10px', color: isActive ? C.accent : C.textDim,
                     opacity: 0.7,
                   }}>{mod()}{item.mod}</kbd>
@@ -3673,7 +3673,7 @@ ${cmdList}
                     chip uses the same muted-border styling as the Command
                     Palette item shortcuts so the language is consistent. */}
                 <kbd aria-hidden='true' style={{
-                  marginLeft: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  marginLeft: 'auto', fontFamily: T.typography.fontMono,
                   fontSize: '10px', color: C.accent, opacity: 0.7,
                   border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.sm,
                   padding: '1px 5px', letterSpacing: '0.02em',
@@ -4346,7 +4346,7 @@ ${cmdList}
                   fontSize: T.typography.sizeMd, fontFamily: 'inherit',
                 }}
               />
-              <span style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: 'ui-monospace, monospace' }}>
+              <span style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: T.typography.fontMono }}>
                 {!chatSearch
                   ? `${messages.length} msgs`
                   : chatSearchMode === 'highlight' && matchCount > 0
@@ -4891,7 +4891,7 @@ ${cmdList}
                       style={{
                         position: 'absolute', top: '6px', right: '14px',
                         fontSize: '10px', fontWeight: 700,
-                        color, fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                        color, fontFamily: T.typography.fontMono,
                         background: pct > 0.95 ? C.redBg : C.accentBg,
                         padding: '2px 6px', borderRadius: T.radii.sm,
                         pointerEvents: 'none',
@@ -5291,7 +5291,7 @@ ${cmdList}
                     color: latencyMs < 100 ? C.green : latencyMs < 500 ? C.yellow : C.red,
                     background: latencyMs < 100 ? C.greenBg : latencyMs < 500 ? C.accentBg : C.redBg,
                     padding: '1px 6px', borderRadius: T.radii.sm,
-                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                    fontFamily: T.typography.fontMono,
                   }} title='Avg round-trip of last 5 /api/status polls'>
                     {Math.round(latencyMs)}ms
                   </span>
