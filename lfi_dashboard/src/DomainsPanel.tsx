@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { T } from './tokens';
+// c2-380 / BIG #180: shared sortable table.
+import { DataTable } from './components';
+import type { Column } from './components';
 
 // Training Domains panel (c0-016 B3). Fetches /api/admin/training/domains on
 // mount + button-press and renders a sortable-by-count table. Color-coded by
@@ -46,15 +49,6 @@ export const DomainsPanel: React.FC<DomainsPanelProps> = ({ C, host }) => {
   // Lazy — first load triggered by button click, not mount. Admin panel is
   // already a heavy area; don't pay the cost until the user asks.
   const countColor = (n: number) => n > 10000 ? C.green : n > 1000 ? C.yellow : C.red;
-  const thStyle = {
-    textAlign: 'left' as const, padding: `${T.spacing.xs} ${T.spacing.sm}`,
-    fontWeight: T.typography.weightBold,
-    background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}`,
-  };
-  const tdStyle = {
-    padding: `${T.spacing.xs} ${T.spacing.sm}`, textAlign: 'right' as const,
-    fontFamily: 'ui-monospace, monospace',
-  };
   return (
     <div style={{ marginTop: T.spacing.md }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: T.spacing.sm }}>
@@ -90,36 +84,52 @@ export const DomainsPanel: React.FC<DomainsPanelProps> = ({ C, host }) => {
           No domain telemetry yet.
         </div>
       )}
-      {rows && rows.length > 0 && (
-        <div style={{ overflowX: 'auto', border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: T.typography.sizeXs, color: C.text }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>Domain</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Facts</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Quality</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Len</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)' }}>
-                  <td style={{ ...tdStyle, textAlign: 'left', fontWeight: T.typography.weightSemibold, fontFamily: 'inherit' }}>{r.domain}</td>
-                  <td style={{ ...tdStyle, color: countColor(r.facts), fontWeight: T.typography.weightBold }}>
-                    {r.facts.toLocaleString()}
-                  </td>
-                  <td style={{ ...tdStyle, color: C.textMuted }}>
-                    {typeof r.avg_quality === 'number' ? r.avg_quality.toFixed(2) : '—'}
-                  </td>
-                  <td style={{ ...tdStyle, color: C.textMuted }}>
-                    {typeof r.avg_length === 'number' ? r.avg_length.toFixed(0) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {rows && rows.length > 0 && (() => {
+        // c2-380 / BIG #180: sidebar DomainsPanel now uses DataTable. Four
+        // sortable columns; facts default desc so the heavy hitters land
+        // on top, matching the previous fixed sort. Uses the compact sizeXs
+        // cell font since this is an inline sidebar surface.
+        const cols: ReadonlyArray<Column<DomainRow>> = [
+          {
+            id: 'domain', header: 'Domain', align: 'left',
+            sortKey: (r) => r.domain.toLowerCase(),
+            accessor: (r) => <span style={{ fontWeight: T.typography.weightSemibold }}>{r.domain}</span>,
+          },
+          {
+            id: 'facts', header: 'Facts', align: 'right',
+            sortKey: (r) => r.facts,
+            accessor: (r) => (
+              <span style={{ color: countColor(r.facts), fontWeight: T.typography.weightBold, fontFamily: T.typography.fontMono }}>
+                {r.facts.toLocaleString()}
+              </span>
+            ),
+          },
+          {
+            id: 'quality', header: 'Quality', align: 'right',
+            sortKey: (r) => typeof r.avg_quality === 'number' ? r.avg_quality : -1,
+            accessor: (r) => (
+              <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>
+                {typeof r.avg_quality === 'number' ? r.avg_quality.toFixed(2) : '\u2014'}
+              </span>
+            ),
+          },
+          {
+            id: 'len', header: 'Len', align: 'right',
+            sortKey: (r) => typeof r.avg_length === 'number' ? r.avg_length : -1,
+            accessor: (r) => (
+              <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>
+                {typeof r.avg_length === 'number' ? r.avg_length.toFixed(0) : '\u2014'}
+              </span>
+            ),
+          },
+        ];
+        return (
+          <DataTable<DomainRow> C={C} rows={rows} columns={cols}
+            rowKey={(r) => r.domain}
+            sort={{ col: 'facts', dir: 'desc' }}
+            cellFontSize={T.typography.sizeXs} />
+        );
+      })()}
     </div>
   );
 };
