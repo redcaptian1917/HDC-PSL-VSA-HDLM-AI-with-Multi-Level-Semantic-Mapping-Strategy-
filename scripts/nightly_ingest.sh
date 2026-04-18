@@ -84,14 +84,55 @@ conn.close()
 print(f"New facts from JSONL: {total}")
 PYEOF
 
-# 3. Refresh DuckDB analytics
+# 3. Refresh DuckDB analytics — incremental by created_at, full rebuild monthly.
+# #318: CREATE OR REPLACE was re-scanning 59M+ rows every night. Now we
+# INSERT only rows with created_at > last_sync_ts, except on the 1st of the
+# month or when PLAUSIDEN_DUCKDB_FULL=1 is set (schema fix / recovery).
+# (sqlite_scan doesn't expose the implicit rowid column; created_at is
+# populated by default on every facts insert so it's the stable watermark.)
 python3 -u << 'PYEOF' >> "$LOG" 2>&1
-import duckdb, os
+import duckdb, os, datetime
 BRAIN = os.path.expanduser("~/.local/share/plausiden/brain.db")
 ANALYTICS = os.path.expanduser("~/.local/share/plausiden/analytics.duckdb")
 duck = duckdb.connect(ANALYTICS)
 duck.execute("INSTALL sqlite; LOAD sqlite;")
-duck.execute(f"CREATE OR REPLACE TABLE fact_analytics AS SELECT domain, source, COALESCE(quality_score, 0.5) as quality_score, length(value) as value_length FROM sqlite_scan('{BRAIN}', 'facts')")
+
+today = datetime.date.today()
+force_full = os.environ.get("PLAUSIDEN_DUCKDB_FULL") == "1" or today.day == 1
+has_table = bool(duck.execute(
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name='fact_analytics'"
+).fetchone()[0])
+has_ts_col = False
+if has_table:
+    cols = {r[0] for r in duck.execute("PRAGMA table_info('fact_analytics')").fetchall()}
+    has_ts_col = 'src_created_at' in cols
+
+if force_full or not has_table or not has_ts_col:
+    reason = "forced" if force_full else ("missing table" if not has_table else "schema upgrade")
+    print(f"DuckDB FULL rebuild ({reason})", flush=True)
+    duck.execute(f"""
+        CREATE OR REPLACE TABLE fact_analytics AS
+        SELECT created_at as src_created_at, domain, source,
+               COALESCE(quality_score, 0.5) as quality_score,
+               length(value) as value_length
+        FROM sqlite_scan('{BRAIN}', 'facts')
+    """)
+else:
+    last = duck.execute(
+        "SELECT COALESCE(MAX(src_created_at), '1970-01-01') FROM fact_analytics"
+    ).fetchone()[0]
+    before = duck.execute("SELECT COUNT(*) FROM fact_analytics").fetchone()[0]
+    duck.execute(f"""
+        INSERT INTO fact_analytics
+        SELECT created_at as src_created_at, domain, source,
+               COALESCE(quality_score, 0.5) as quality_score,
+               length(value) as value_length
+        FROM sqlite_scan('{BRAIN}', 'facts')
+        WHERE created_at > '{last}'
+    """)
+    after = duck.execute("SELECT COUNT(*) FROM fact_analytics").fetchone()[0]
+    print(f"DuckDB incremental: +{after - before:,} new rows (last_ts={last})", flush=True)
+
 count = duck.execute("SELECT COUNT(*) FROM fact_analytics").fetchone()[0]
 duck.close()
 print(f"DuckDB refreshed: {count:,} facts")
