@@ -192,6 +192,12 @@ const SovereignCommandConsole: React.FC = () => {
   // us render an inline Retry affordance that resends the prior user
   // message. Cleared on successful next send or manual dismiss.
   const [lastErrorRetry, setLastErrorRetry] = useState<{ userContent: string; at: number } | null>(null);
+  // c2-387 / BIG #176: pending branch marker. Set by onCommitEdit immediately
+  // before the resend; the next user-message append inside handleSend stamps
+  // _branchedFromId onto the new bubble so the UI can render a "Branch" tag.
+  // Cleared in handleSend after being consumed so subsequent normal sends
+  // don't inherit the flag.
+  const pendingBranchFromRef = useRef<number | null>(null);
   // c2-372 / task 105: streaming throughput tracker. startAt = ms timestamp
   // of the first chat_chunk; chars grows with every subsequent chunk.
   // null when no stream is active. Used to render a live tokens/s chip
@@ -2056,9 +2062,14 @@ ${cmdList}
     // Record user message. If only images were pasted (no text), use a
     // placeholder so the turn renders as a proper user bubble.
     const userContent = trimmed || '(pasted image)';
+    // c2-387 / BIG #176: if a branch origin is pending, stamp the new bubble
+    // so the UI can show a "Branch from #N" indicator. Consumed exactly once.
+    const branchedFromId = pendingBranchFromRef.current;
+    pendingBranchFromRef.current = null;
     setMessages(prev => [...prev, {
-      id: msgId(), role: 'user', content: userContent, timestamp: Date.now()
-    }]);
+      id: msgId(), role: 'user', content: userContent, timestamp: Date.now(),
+      ...(branchedFromId != null ? { _branchedFromId: branchedFromId } : null),
+    } as ChatMessage]);
     // Announce the attachment as a system message so the preview is visible
     // in the conversation. Keep the data URL out of persisted content
     // (localStorage bloat); just summarise count and byte total.
@@ -4593,6 +4604,24 @@ ${cmdList}
                     }}>Queued (offline)</span>
                   </div>
                 )}
+                {msg.role === 'user' && (msg as any)._branchedFromId != null && (
+                  /* c2-387 / BIG #176: branch-from indicator. Same header-
+                     slot shape as the Queued badge; purple palette so
+                     branching reads as a neutral navigation cue rather
+                     than a warning or error. */
+                  <div style={{
+                    display: 'flex', justifyContent: 'flex-end',
+                    marginBottom: '4px',
+                  }}>
+                    <span style={{
+                      fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                      color: C.purple, background: C.purpleBg,
+                      border: `1px solid ${C.purpleBorder}`, borderRadius: T.radii.sm,
+                      padding: `2px ${T.spacing.sm}`,
+                      textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+                    }}>Branch</span>
+                  </div>
+                )}
                 {msg.role === 'user' && (
                   <UserMessage
                     msg={msg} C={C} isMobile={isMobile}
@@ -4606,6 +4635,9 @@ ${cmdList}
                       if (idx >= 0) setMessages(prev => prev.slice(0, idx));
                       setEditingMsgId(null);
                       setInput(trimmed);
+                      // c2-387 / BIG #176: tell the next handleSend to mark
+                      // the new bubble as a branch from the edited message.
+                      pendingBranchFromRef.current = msg.id;
                       setTimeout(() => handleSend(), 50);
                       logEvent('message_edited', { originalLen: msg.content.length, newLen: trimmed.length });
                     }}
