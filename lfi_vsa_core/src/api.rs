@@ -3620,6 +3620,118 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Fact corpus marketplace (#285) ----
+
+    /// GET /api/corpus/marketplace?limit=N
+    ///
+    /// Ranks every known source in the facts table by a composite
+    /// quality score derived from:
+    ///   - fact_count            (log-scaled, higher = more contribution)
+    ///   - avg_quality_score     (raw, higher = better)
+    ///   - source_trust          (0..1, from #293)
+    ///   - vetted_ratio          (human vetting coverage)
+    ///
+    /// Composite = 0.4·trust + 0.3·avg_quality + 0.2·vetted + 0.1·log_size
+    ///
+    /// Gives the UI (and an axiom-driven auto-rejection path) a single
+    /// sortable number per source. Intended consumer: Library → "Corpus
+    /// Marketplace" view — show top corpora, flag low-scoring ones.
+    async fn corpus_marketplace_handler(
+        State(state): State<Arc<AppState>>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let limit: i64 = params.get("limit")
+            .and_then(|s| s.parse().ok()).unwrap_or(50).min(500);
+
+        let conn = match state.db.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return axum::Json(json!({"error": "db lock"})),
+        };
+        // BUG ASSUMPTION: GROUP BY source on a 58M-row prod table
+        // exceeds the 2-minute curl timeout. Instead, sample the most
+        // recent 50k facts by rowid DESC (free scan), aggregate that
+        // slice, then join with source_trust. This gives a current-
+        // activity snapshot — what's actively being ingested — which
+        // is the most useful lens for a marketplace ranking anyway.
+        let mut stmt = match conn.prepare(
+            "WITH sample AS ( \
+               SELECT source, \
+                      COALESCE(quality_score, confidence, 0.5) AS q, \
+                      COALESCE(vetted, 0) AS v \
+               FROM facts ORDER BY rowid DESC LIMIT 50000 \
+             ) \
+             SELECT s.source, COUNT(*), \
+                    ROUND(AVG(s.q), 4), \
+                    ROUND(AVG(CASE WHEN s.v = 1 THEN 1.0 ELSE 0.0 END), 4), \
+                    COALESCE(st.trust, 0.5) \
+             FROM sample s \
+             LEFT JOIN source_trust st ON st.source = s.source \
+             WHERE s.source IS NOT NULL AND s.source != '' \
+             GROUP BY s.source \
+             ORDER BY COUNT(*) DESC LIMIT ?1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return axum::Json(json!({"sources": [], "error": "query failed"})),
+        };
+
+        let rows: Vec<(String, i64, f64, f64, f64)> = stmt.query_map(
+            rusqlite::params![limit],
+            |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, f64>(2)?,
+                r.get::<_, f64>(3)?,
+                r.get::<_, f64>(4)?,
+            )),
+        ).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        drop(stmt);
+
+        // Composite score — log-scaled size contribution so a 100k-row
+        // source doesn't fully dominate a 1k-row source that's higher
+        // quality. log10(count+1) / 7.0 normalizes a 10M-row source to
+        // ~1.0 contribution.
+        let mut items: Vec<serde_json::Value> = rows.into_iter().map(|(
+            source, count, avg_q, vetted_ratio, trust
+        )| {
+            let log_size = ((count as f64 + 1.0).log10() / 7.0).clamp(0.0, 1.0);
+            let composite = 0.4 * trust
+                          + 0.3 * avg_q
+                          + 0.2 * vetted_ratio
+                          + 0.1 * log_size;
+            json!({
+                "source": source,
+                "fact_count": count,
+                "avg_quality": avg_q,
+                "vetted_ratio": vetted_ratio,
+                "trust": trust,
+                "log_size_contrib": (log_size * 10000.0).round() / 10000.0,
+                "composite_score": (composite * 10000.0).round() / 10000.0,
+            })
+        }).collect();
+
+        // Sort by composite desc so the top of the list is the "best"
+        // corpus even when raw fact_count differs.
+        items.sort_by(|a, b| {
+            let a_s = a["composite_score"].as_f64().unwrap_or(0.0);
+            let b_s = b["composite_score"].as_f64().unwrap_or(0.0);
+            b_s.partial_cmp(&a_s).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        axum::Json(json!({
+            "sources": items,
+            "count": items.len(),
+            "sample_size": 50_000,
+            "sampled": true,
+            "scoring": {
+                "trust_weight": 0.4,
+                "quality_weight": 0.3,
+                "vetted_weight": 0.2,
+                "size_weight": 0.1,
+                "size_normalization": "log10(count+1) / 7.0 clamped to [0, 1]",
+            },
+        }))
+    }
+
     // ---- Merkle-chained security audit (#305) ----
 
     /// POST /api/audit/chain/append
@@ -4566,6 +4678,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/audit/chain/append", post(audit_chain_append_handler))
         .route("/api/audit/chain/recent", get(audit_chain_recent_handler))
         .route("/api/audit/chain/verify", get(audit_chain_verify_handler))
+        .route("/api/corpus/marketplace", get(corpus_marketplace_handler))
         .route("/api/fsrs/due", get(fsrs_due_handler))
         .route("/api/fsrs/review", post(fsrs_review_handler))
         .route("/api/explain", post(explain_query_handler))
