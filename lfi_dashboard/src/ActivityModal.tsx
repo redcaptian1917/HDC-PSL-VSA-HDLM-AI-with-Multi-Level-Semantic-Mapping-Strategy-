@@ -71,7 +71,7 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
     <div ref={dialogRef} role='dialog' aria-modal='true' aria-labelledby='scc-activity-title'
       onClick={(e) => e.stopPropagation()}
       style={{
-        width: '100%', maxWidth: '900px', height: '82vh',
+        width: '100%', maxWidth: '900px', height: '82dvh',
         background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
         boxShadow: T.shadows.modal,

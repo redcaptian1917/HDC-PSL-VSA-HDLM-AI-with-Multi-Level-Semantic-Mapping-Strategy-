@@ -41,7 +41,9 @@ export class AppErrorBoundary extends React.Component<
     };
     return (
       <div role="alert" style={{
-        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        // c2-411 / BIG #218 mobile: dvh so the error card stays centred on
+        // small viewports even with a virtual keyboard.
+        minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: bg, color: fg,
         padding: '40px', fontFamily: "'DM Sans', -apple-system, sans-serif",
       }}>

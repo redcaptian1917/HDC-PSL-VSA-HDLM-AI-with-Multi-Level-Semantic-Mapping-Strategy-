@@ -134,6 +134,19 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [domains, setDomains] = useState<DomainRow[] | null>(null);
   const [accuracy, setAccuracy] = useState<AccuracyShape | null>(null);
   const [quality, setQuality] = useState<QualityShape | null>(null);
+  // c2-424 / task 207: rolling history of quality.average so we can show
+  // a sparkline above the Quality tab. Bounded buffer + min-gap to stop
+  // rapid tab-visits spamming the array.
+  type QualitySnap = { ts: number; avg: number; highCount: number; lowCount: number };
+  const [qualityHistory, setQualityHistory] = useState<QualitySnap[]>(() => {
+    try {
+      const raw = localStorage.getItem('lfi_quality_history_v1');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((s: any) => s && typeof s.ts === 'number' && typeof s.avg === 'number').slice(-48);
+    } catch { return []; }
+  });
   const [sysInfo, setSysInfo] = useState<SystemShape | null>(null);
   const [fleet, setFleet] = useState<FleetShape | null>(null);
   const [logs, setLogs] = useState<string[] | null>(null);
@@ -184,7 +197,24 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         setAccuracy(await fetchJson('/api/admin/training/accuracy', ctrl.signal));
       }
       if (t === 'quality') {
-        setQuality(await fetchJson('/api/quality/report', ctrl.signal));
+        const q = await fetchJson<QualityShape>('/api/quality/report', ctrl.signal);
+        setQuality(q);
+        // c2-424 / task 207: snapshot for the Quality tab sparkline.
+        // 10-min min gap so repeatedly opening the tab doesn't flood the
+        // buffer. localStorage persists across reloads.
+        if (typeof q?.average === 'number' && isFinite(q.average)) {
+          setQualityHistory(prev => {
+            const last = prev[prev.length - 1];
+            if (last && Date.now() - last.ts < 10 * 60_000) return prev;
+            const next: QualitySnap[] = [...prev, {
+              ts: Date.now(), avg: q.average!,
+              highCount: q.high_quality_count ?? 0,
+              lowCount: q.low_quality_count ?? 0,
+            }].slice(-48);
+            try { localStorage.setItem('lfi_quality_history_v1', JSON.stringify(next)); } catch { /* quota */ }
+            return next;
+          });
+        }
       }
       if (t === 'system') {
         setSysInfo(await fetchJson('/api/system/info', ctrl.signal));
@@ -838,6 +868,57 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               {err.quality && <ErrorAlert C={C} message={err.quality} onRetry={() => loadTab('quality')} retrying={loading === 'quality'} />}
               {quality ? (
                 <>
+                  {/* c2-424 / task 207: quality.average sparkline. Rendered
+                      above the headline DashCards so trend-at-a-glance is
+                      the first thing users see when the tab opens. Hidden
+                      until we have >=2 snapshots so a fresh install doesn't
+                      flash a flat line. */}
+                  {qualityHistory.length >= 2 && (() => {
+                    const values = qualityHistory.map(s => s.avg);
+                    const max = Math.max(...values);
+                    const min = Math.min(...values);
+                    const range = max - min;
+                    const W = 240, H = 32;
+                    const step = W / (values.length - 1);
+                    const y = (v: number) => range === 0 ? H / 2 : H - ((v - min) / range) * (H - 2) - 1;
+                    const points = values.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+                    const latest = values[values.length - 1];
+                    const first = values[0];
+                    const delta = latest - first;
+                    const trendColor = delta > 0.01 ? C.green : delta < -0.01 ? C.red : C.textDim;
+                    return (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: T.spacing.lg,
+                        padding: T.spacing.md, marginBottom: T.spacing.lg,
+                        background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                        borderRadius: T.radii.md, flexWrap: 'wrap',
+                      }}>
+                        <div>
+                          <div style={{
+                            fontSize: '10px', color: C.textMuted, textTransform: 'uppercase',
+                            letterSpacing: T.typography.trackingLoose, fontWeight: T.typography.weightBold,
+                          }}>Avg quality trend</div>
+                          <div style={{
+                            fontSize: T.typography.sizeXl, fontWeight: T.typography.weightBlack,
+                            color: trendColor, fontFamily: T.typography.fontMono,
+                          }}>
+                            {latest.toFixed(3)} <span style={{ fontSize: T.typography.sizeXs, opacity: 0.7 }}>
+                              {delta >= 0 ? '+' : ''}{delta.toFixed(3)}
+                            </span>
+                          </div>
+                        </div>
+                        <svg width={W} height={H} role='img'
+                          aria-label={`Quality trend, ${qualityHistory.length} samples, latest ${latest.toFixed(3)}`}
+                          style={{ display: 'block' }}>
+                          <polyline fill='none' stroke={trendColor} strokeWidth='1.8'
+                            strokeLinecap='round' strokeLinejoin='round' points={points} />
+                        </svg>
+                        <span style={{ fontSize: T.typography.sizeXs, color: C.textDim, fontFamily: T.typography.fontMono, marginLeft: 'auto' }}>
+                          {qualityHistory.length} samples &middot; last {new Date(qualityHistory[qualityHistory.length - 1].ts).toLocaleString()}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
                     <DashCard C={C} label='Adversarial' value={quality.adversarial_count != null ? compactNum(quality.adversarial_count) : '—'} color={C.red} />
                     <DashCard C={C} label='Distinct sources' value={quality.distinct_sources != null ? String(quality.distinct_sources) : '—'} color={C.purple} />

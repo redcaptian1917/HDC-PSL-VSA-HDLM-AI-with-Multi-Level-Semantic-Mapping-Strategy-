@@ -49,6 +49,22 @@ pub struct AppState {
     pub calibration: Mutex<crate::cognition::calibration::CalibrationEngine>,
     /// Knowledge graph — persistent fact connections and domain cross-references.
     pub knowledge_graph: crate::cognition::knowledge_graph::KnowledgeGraph,
+    /// Classroom lesson sessions — active training child processes.
+    /// Map: session_id (uuid) → TrainingSession{pid, routine, model, started_at}.
+    /// SUPERSOCIETY: the UI needs to see + control long-running training jobs
+    /// from the browser. In-memory only — restarting the server orphans the
+    /// child processes but they keep running. Persistence ↔ #324 followup.
+    pub lesson_sessions: Arc<Mutex<std::collections::HashMap<String, TrainingSession>>>,
+}
+
+/// Active training lesson tracked by AppState.lesson_sessions.
+#[derive(Clone, Debug)]
+pub struct TrainingSession {
+    pub pid: u32,
+    pub routine: String,
+    pub model_tier: String,
+    pub domains: Vec<String>,
+    pub started_at: String,
 }
 
 /// POST /api/auth body.
@@ -2136,6 +2152,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         knowledge_graph,
         experience: Mutex::new(crate::intelligence::experience_learning::ExperienceLearner::new()),
         calibration: Mutex::new(crate::cognition::calibration::CalibrationEngine::new()),
+        lesson_sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
     });
 
     // --- Image Generation ---

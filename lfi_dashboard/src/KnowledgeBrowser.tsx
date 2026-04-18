@@ -20,9 +20,13 @@ export interface KnowledgeBrowserProps {
   error?: string | null;
   onRetry?: () => void;
   onClose: () => void;
+  // c2-405 / task 191: optional jump-link to Admin → Training. When provided,
+  // the zero state surfaces a button that opens it (instead of just telling
+  // users to chat more).
+  onOpenTraining?: () => void;
 }
 
-export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, concepts, due, loading, error, onRetry, onClose }) => {
+export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, concepts, due, loading, error, onRetry, onClose, onOpenTraining }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
   const isEmpty = !loading && !error && facts.length === 0 && concepts.length === 0 && due.length === 0;
@@ -37,7 +41,7 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
     <div ref={dialogRef} role='dialog' aria-modal='true' aria-labelledby='scc-knowledge-title'
       onClick={(e) => e.stopPropagation()}
       style={{
-        width: '100%', maxWidth: '700px', height: '80vh',
+        width: '100%', maxWidth: '700px', height: '80dvh',
         background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
         boxShadow: T.shadows.modal,
@@ -88,19 +92,40 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
             )}
           </div>
         )}
-        {/* Full zero state — no facts, no concepts, nothing due. */}
+        {/* c2-405 / task 191: full zero state. Explains WHY it's empty (KB
+            hydrates from ingestion / chat) and gives two paths forward —
+            chat more, or open Admin → Training to kick off ingestion. */}
         {isEmpty && (
           <div style={{
             padding: '40px 20px', textAlign: 'center',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: T.spacing.sm,
           }}>
             <svg width='48' height='48' viewBox='0 0 24 24' fill='none' stroke={C.textMuted} strokeWidth='1.5' aria-hidden='true'>
               <path d='M12 3v18M3 12h18' strokeLinecap='round' />
               <circle cx='12' cy='12' r='9' />
             </svg>
-            <div style={{ fontSize: '14px', fontWeight: 700, color: C.text }}>Nothing learned yet</div>
-            <div style={{ fontSize: T.typography.sizeSm, color: C.textMuted, maxWidth: '360px', lineHeight: 1.6 }}>
-              PlausiDen's knowledge base is empty. Start chatting — it records facts and reinforces concepts from every exchange. Use <code style={{ fontFamily: 'monospace', color: C.accent }}>/knowledge</code> to seed it manually.
+            <div style={{ fontSize: T.typography.sizeBody, fontWeight: 700, color: C.text }}>Nothing learned yet</div>
+            <div style={{ fontSize: T.typography.sizeSm, color: C.textMuted, maxWidth: '420px', lineHeight: 1.6 }}>
+              The knowledge base hydrates from two sources: ongoing chat (facts + concepts get picked up automatically), and the background training pipeline (ingests curated sources into the KB). If both are idle, it stays empty.
+            </div>
+            <div style={{ display: 'flex', gap: T.spacing.sm, marginTop: T.spacing.sm, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {onOpenTraining && (
+                <button onClick={onOpenTraining}
+                  style={{
+                    padding: '8px 16px', fontSize: T.typography.sizeSm, fontWeight: T.typography.weightBold,
+                    background: C.accentBg, border: `1px solid ${C.accentBorder}`, color: C.accent,
+                    borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>Open Training →</button>
+              )}
+              <button onClick={onClose}
+                style={{
+                  padding: '8px 16px', fontSize: T.typography.sizeSm, fontWeight: T.typography.weightBold,
+                  background: 'transparent', border: `1px solid ${C.border}`, color: C.textSecondary,
+                  borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
+                }}>Start chatting</button>
+            </div>
+            <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, marginTop: T.spacing.xs }}>
+              Or run <code style={{ fontFamily: 'monospace', color: C.accent }}>/knowledge</code> at the chat prompt to reopen this panel.
             </div>
           </div>
         )}

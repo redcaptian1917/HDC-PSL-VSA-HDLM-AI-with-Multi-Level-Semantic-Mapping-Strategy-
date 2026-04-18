@@ -23,12 +23,17 @@
 // FIX: Eruda FAB positioned to avoid input bar overlap
 // ============================================================
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useDeferredValue } from 'react';
 // c2-228 / #79: language grammars are loaded on demand by markdown.tsx via
 // hljsLazy.ts so each lives in its own Vite chunk; only the theme CSS
 // (required before any highlighted HTML renders) ships in the initial bundle.
 import 'highlight.js/styles/github-dark.css';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportAllAsJson, formatRelative, formatDayBucket, mod, stripMarkdown } from './util';
+// c2-388 / BIG #179: GroupedVirtuoso for the sidebar conversation list —
+// renders only visible rows so the DOM stays O(viewport) instead of
+// O(conversations). Pinned + day-bucket clusters map 1:1 to Virtuoso
+// groups, which gives us native sticky headers for free.
+import { GroupedVirtuoso } from 'react-virtuoso';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportConversationTxt, exportAllAsJson, formatRelative, formatDayBucket, mod, modKey, stripMarkdown } from './util';
 import { TrainingDashboardContent } from './TrainingDashboard';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { LoginScreen } from './LoginScreen';
@@ -244,6 +249,24 @@ const SovereignCommandConsole: React.FC = () => {
   type ToastEntry = { id: number; msg: string; exiting?: boolean; onUndo?: () => void };
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
   const scheduledToastIds = useRef<Set<number>>(new Set());
+  // c2-397 / task 200: global Cmd+Z undo for the last delete. Written by
+  // deleteConversation alongside its toast-undo button; cleared after the
+  // toast hold window so a stale Cmd+Z doesn't resurrect an old entry.
+  const pendingUndoRef = useRef<{ fn: () => void; at: number } | null>(null);
+  // c2-410 / task 206: backup of the most recent input clear so Cmd+Z in
+  // the textarea can restore it. Populated by the clearInputWithBackup
+  // helper (send path + slash commands) — not by natural typing, since
+  // the browser's native undo handles that.
+  const draftBackupRef = useRef<{ text: string; at: number } | null>(null);
+  const clearInputWithBackup = (current: string) => {
+    if (current.trim()) draftBackupRef.current = { text: current, at: Date.now() };
+    setInput('');
+  };
+  // c2-400 / task 185: floating right-click menu over chat messages. Role
+  // disambiguates which action set to render. Closes on outside click + Esc
+  // via the escape-hatch handler that's already wired for modals, plus a
+  // dedicated outside-click listener below.
+  const [msgContextMenu, setMsgContextMenu] = useState<{ x: number; y: number; msgId: number; role: 'user' | 'assistant'; content: string } | null>(null);
   // Brief visual pulse on the input container when a message is sent (c0-020
   // "visual feedback on send"). Tracked as a bumping id so consecutive sends
   // retrigger the animation cleanly.
@@ -309,11 +332,31 @@ const SovereignCommandConsole: React.FC = () => {
   // polling hooks defined later (useStatusPoll / useQualityPoll / useSysInfoPoll).
   // Nothing else ever writes to these, so no local state is needed.
 
+  // c2-419: preload the frequently-opened modals while the browser is idle.
+  // React.lazy fetches the chunk on first render of the lazy element, which
+  // adds a visible stall on mobile when you tap the Ctrl+K palette affordance.
+  // Warming the module cache on idle makes the first open feel instant —
+  // the chunk is already downloaded and parsed. Skipped for the heavy ones
+  // (AdminModal, XTermModal, ClassroomView) which stay pay-on-demand.
+  useEffect(() => {
+    const preload = () => {
+      import('./CommandPalette');
+      import('./ShortcutsModal');
+      import('./SettingsModal');
+    };
+    if (typeof (window as any).requestIdleCallback === 'function') {
+      const id = (window as any).requestIdleCallback(preload, { timeout: 4000 });
+      return () => (window as any).cancelIdleCallback?.(id);
+    }
+    const id = window.setTimeout(preload, 2000);
+    return () => window.clearTimeout(id);
+  }, []);
+
   // Persistent settings (localStorage-backed). A single object keeps storage
   // compact and makes future additions one-line.
   type Settings = {
     theme: 'dark' | 'light' | 'midnight' | 'forest' | 'sunset' | 'contrast' | 'rose';
-    fontSize: 'small' | 'medium' | 'large';
+    fontSize: 'small' | 'medium' | 'large' | 'xlarge';
     sendOnEnter: boolean;
     persistConversations: boolean;
     showReasoning: boolean;
@@ -441,6 +484,25 @@ const SovereignCommandConsole: React.FC = () => {
           URL.revokeObjectURL(url);
         } catch {}
       } },
+    // c2-401 / task 194: clone the active conversation so the user can
+    // explore an alternate path without losing the original.
+    { cmd: '/duplicate', label: 'Duplicate conversation', desc: 'Clone the current conversation',
+      run: () => {
+        if (!currentConversationId) { showToast('No active conversation'); return; }
+        duplicateConversation(currentConversationId);
+      } },
+    // c2-395 / task 197: plain-text export for the current conversation.
+    // Useful for analysis tools that prefer untagged prose.
+    { cmd: '/export-txt', label: 'Export as plain text', desc: 'Current conversation as .txt',
+      run: () => {
+        const c = conversations.find(cc => cc.id === currentConversationId);
+        if (!c) { showToast('No active conversation'); return; }
+        try {
+          exportConversationTxt(c);
+          logEvent('conversation_exported_txt', { id: c.id });
+          showToast('Exported .txt');
+        } catch { showToast('Export failed'); }
+      } },
     { cmd: '/compact', label: 'Toggle compact mode', desc: 'Dense TUI-style layout for power users',
       run: () => setSettings(s => ({ ...s, compactMode: !s.compactMode })) },
     { cmd: '/training', label: 'Training dashboard', desc: 'View training status, domain stats, and pipeline health',
@@ -464,6 +526,30 @@ const SovereignCommandConsole: React.FC = () => {
       run: () => { setShowAdmin(true); } },
     { cmd: '/classroom', label: 'Classroom', desc: 'Training, grades, datasets',
       run: () => { setShowAdmin(false); setActiveView('classroom'); } },
+    // c2-391 / task 217: /time — prints local + UTC + server uptime as a
+    // system message. Useful for cross-timezone debugging without leaving
+    // the chat. Uses the already-available /api/status payload (fire + forget).
+    { cmd: '/time', label: 'Time check', desc: 'Local + UTC + server uptime',
+      run: () => {
+        const now = new Date();
+        const local = now.toLocaleString();
+        const utc = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+        const offsetMin = -now.getTimezoneOffset();
+        const offsetStr = (offsetMin >= 0 ? '+' : '-') + String(Math.abs(Math.floor(offsetMin / 60))).padStart(2, '0') + ':' + String(Math.abs(offsetMin % 60)).padStart(2, '0');
+        const append = (body: string) => setMessages(prev => [...prev, {
+          id: msgId(), role: 'system', content: body, timestamp: Date.now(),
+        }]);
+        append(`**Time check**\n- Local: ${local} (UTC${offsetStr})\n- UTC:   ${utc}\n- Server uptime: querying…`);
+        // Fetch status to append uptime. If it fails, leave the "querying..."
+        // placeholder — users can see the backend is offline separately.
+        fetch(`http://${getHost()}:3000/api/status`).then(r => r.json()).then(s => {
+          const secs = Number(s?.uptime_seconds ?? 0);
+          if (!isFinite(secs) || secs <= 0) return;
+          const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
+          const uptimeStr = d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+          append(`Server uptime: ${uptimeStr}`);
+        }).catch(() => { /* silent; user already has local+UTC */ });
+      } },
     { cmd: '/fleet', label: 'Fleet', desc: 'Orchestrator: instances, tasks, timeline',
       run: () => { setShowAdmin(false); setActiveView('fleet'); } },
     { cmd: '/library', label: 'Library', desc: 'Source inventory with quality + vetted status',
@@ -603,7 +689,13 @@ ${cmdList}
   const [activityTab, setActivityTab] = useState<'chat' | 'events' | 'system'>('chat');
   const [localEvents, setLocalEvents] = useState<Array<{ t: number; kind: string; data?: any }>>([]);
 
-  const fontScale = settings.compactMode ? 0.85 : (settings.fontSize === 'small' ? 0.88 : settings.fontSize === 'large' ? 1.15 : 1.0);
+  // c2-398 / task 198: added xlarge step (1.35x) for a11y users needing
+  // the big bump without OS-level zoom. Small=0.88 / Medium=1.0 / Large=1.15.
+  const fontScale = settings.compactMode ? 0.85
+    : settings.fontSize === 'small' ? 0.88
+    : settings.fontSize === 'large' ? 1.15
+    : settings.fontSize === 'xlarge' ? 1.35
+    : 1.0;
 
   // Announce new assistant messages + tool completions to screen readers via a
   // visually-hidden aria-live region. Tracks last assistant id so we only speak
@@ -739,6 +831,24 @@ ${cmdList}
     const t = setTimeout(() => setShowDisconnectBanner(true), 2000);
     return () => clearTimeout(t);
   }, [isConnected]);
+
+  // c0-027 / c2-411 fix: activeView must be declared before the useEffect
+  // below that lists it as a dep — the old location near line 2189 caused
+  // a TDZ on mount ("Cannot access 'Lt' before initialization"), because
+  // the effect's deps array reads activeView during render and the
+  // useState line hadn't executed yet.
+  // 3-view app (Chat / Classroom / Admin). Admin is still a modal, but Chat
+  // and Classroom are true top-level views that replace each other.
+  // Hash-route-aware: #chat / #classroom / #admin hydrate the view on mount
+  // and forward/back history traversal updates the active view.
+  const [activeView, setActiveView] = useState<'chat' | 'classroom' | 'fleet' | 'library' | 'auditorium'>(() => {
+    const h = (typeof window !== 'undefined' && window.location.hash.replace('#', '')) || 'chat';
+    if (h === 'classroom') return 'classroom';
+    if (h === 'fleet') return 'fleet';
+    if (h === 'library') return 'library';
+    if (h === 'auditorium') return 'auditorium';
+    return 'chat';
+  });
 
   // URL hash <-> activeView sync. State change pushes the hash; popstate
   // (back/forward) reads the hash and updates state. Admin opens as a modal
@@ -1218,6 +1328,11 @@ ${cmdList}
       console.debug("// SCC: Tier switch response:", data);
       if (data.status === 'ok') {
         setCurrentTier(data.tier);
+        // c2-416: persist the selection so a reload doesn't snap back to
+        // Pulse. Previously currentTier was session-only; settings.defaultTier
+        // was a separate "start here on new sessions" knob. Users expected
+        // the live selector to stick — so we now sync both.
+        setSettings(s => ({ ...s, defaultTier: data.tier }));
         logEvent('tier_switched', { tier: data.tier });
       } else {
         // Revert optimistic update if backend rejected.
@@ -1438,6 +1553,45 @@ ${cmdList}
           showToast('Regenerating…');
         }
       }
+      else if (mod && e.shiftKey && k === 'l') {
+        // c2-389 / task 190: Cmd+Shift+L jumps straight to admin Logs. The
+        // plain Cmd+L is reserved (browser address bar); Shift-variant is
+        // ours. Also pulls in the chat log via fetchChatLog so the tab has
+        // fresh data when it opens.
+        e.preventDefault();
+        setAdminInitialTab('logs');
+        setShowAdmin(true);
+        fetchChatLog(50);
+        logEvent('shortcut_logs', {});
+      }
+      else if (mod && e.shiftKey && k === 'a') {
+        // c2-390 / task 214: Cmd+Shift+A flips autoTheme. Surfaces a toast
+        // so the user sees which state they just landed in.
+        e.preventDefault();
+        setSettings(s => {
+          const next = !s.autoTheme;
+          showToast(`Auto theme ${next ? 'on' : 'off'}`);
+          logEvent('shortcut_auto_theme', { on: next });
+          return { ...s, autoTheme: next };
+        });
+      }
+      else if (mod && !e.shiftKey && k === 'z') {
+        // c2-397 / task 200: Cmd+Z undoes the last soft-delete while the
+        // toast-hold window is open. Ignored when focus is in an editable
+        // target so textarea / input native undo still wins. The toast's
+        // own Undo button remains — this is just a keyboard path.
+        const target = e.target as HTMLElement | null;
+        const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+        if (isEditable) return;
+        const pending = pendingUndoRef.current;
+        if (!pending) return;
+        if (Date.now() - pending.at > 5100) { pendingUndoRef.current = null; return; }
+        e.preventDefault();
+        pending.fn();
+        pendingUndoRef.current = null;
+        showToast('Undone');
+        logEvent('shortcut_undo_delete', {});
+      }
       else if (mod && k === 'f') {
         // Cmd/Ctrl+F — chat-view search hijack. When the user is typing in
         // an input or a modal is open, fall through to the browser's native
@@ -1459,6 +1613,10 @@ ${cmdList}
         });
       }
       else if (e.key === 'Escape') {
+        // c2-400 / task 185: message context menu takes Escape before any
+        // modal — it's the most-recent interaction and feels local to the
+        // pointer position.
+        if (msgContextMenu) { setMsgContextMenu(null); return; }
         if (showShortcuts) setShowShortcuts(false);
         else if (showCmdPalette) setShowCmdPalette(false);
         else if (showSettings) setShowSettings(false);
@@ -1864,14 +2022,25 @@ ${cmdList}
     // clear_history, bulk_delete_archived). Only message count leaks —
     // no title or content — so no PII hits the event log.
     logEvent('delete_conversation', { messages: victim.messages.length, wasActive });
-    showToast(`Deleted "${victim.title}"`, () => {
-      // Restore at the original index so pinned/sorted order is preserved.
+    // c2-397 / task 200: publish the undo so the global Cmd+Z handler can
+    // trigger it while the toast is live. Cleared after 5.2s (toast hold +
+    // exit anim) so a late Cmd+Z doesn't resurrect a stale entry.
+    const undo = () => {
       setConversations(cur => {
         if (cur.some(c => c.id === id)) return cur; // already restored
         const restored = [...cur];
         restored.splice(Math.min(idx, restored.length), 0, victim);
         return restored;
       });
+    };
+    pendingUndoRef.current = { fn: undo, at: Date.now() };
+    setTimeout(() => {
+      if (pendingUndoRef.current && Date.now() - pendingUndoRef.current.at >= 5100) {
+        pendingUndoRef.current = null;
+      }
+    }, 5200);
+    showToast(`Deleted "${victim.title}"`, () => {
+      undo();
       if (wasActive) setCurrentConversationId(id);
       logEvent('delete_conversation_undo', { messages: victim.messages.length });
     });
@@ -1904,7 +2073,10 @@ ${cmdList}
   // the search box has text. Case-insensitive; returns the raw string when
   // no query is supplied so non-searching renders stay a simple text node.
   const highlightConvoTitle = (title: string): React.ReactNode => {
-    const q = convoSearch.trim();
+    // c2-399 / task 186: use the deferred value so the <mark> highlights
+    // match the filter output (otherwise a mid-keystroke frame could mark
+    // substrings that aren't in the visible list yet).
+    const q = deferredConvoSearch.trim();
     if (!q) return title;
     const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`(${safe})`, 'i');
@@ -2004,11 +2176,41 @@ ${cmdList}
     logEvent('toggle_archived', { nowArchived });
     showToast(nowArchived ? 'Archived' : 'Unarchived');
   };
+  // c2-401 / task 194: duplicate a conversation. Fresh id + timestamp,
+  // "(copy)" suffix on the title, pinned/starred/archived/draft reset so
+  // the clone is a neutral starting point. Jump to the new one so the
+  // user sees the result of their action. Never duplicates the active id
+  // onto itself — silently no-ops if the source is missing.
+  const duplicateConversation = (id: string) => {
+    const src = conversations.find(c => c.id === id);
+    if (!src) return;
+    const now = Date.now();
+    const clone: Conversation = {
+      id: newConvoId(),
+      title: `${src.title} (copy)`.slice(0, 80),
+      messages: src.messages.map(m => ({ ...m, id: msgId() })),
+      createdAt: now,
+      updatedAt: now,
+      // pinning / starring / archiving / drafts are all user-scoped on the
+      // original — drop on the clone so it starts clean.
+    };
+    setConversations(prev => [...prev, clone]);
+    setCurrentConversationId(clone.id);
+    logEvent('conversation_duplicated', { sourceId: id, messages: clone.messages.length });
+    showToast(`Duplicated as "${clone.title.slice(0, 32)}${clone.title.length > 32 ? '\u2026' : ''}"`);
+  };
 
   // Smart auto-title: look at the first user turn + first assistant reply,
   // pick a short key-phrase that beats simple truncation. Falls back to
   // titleFrom if no signal. Rule-of-thumb similar to ChatGPT/Gemini heuristics.
-  const [showConvoSidebar, setShowConvoSidebar] = useState<boolean>(true);
+  // c2-414 / BIG #218 mobile: sidebar starts closed on small viewports so
+  // the chat surface gets the full width on open. Desktop + tablet still
+  // open by default. Uses innerWidth directly so the decision doesn't wait
+  // for the useBreakpoint effect to flush.
+  const [showConvoSidebar, setShowConvoSidebar] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth >= 768;
+  });
   const [showPlanSidebar, setShowPlanSidebar] = useState<boolean>(true);
   const [showArchived, setShowArchived] = useState<boolean>(false);
   // Inline rename state for sidebar conversations (replaces browser prompt()).
@@ -2030,19 +2232,27 @@ ${cmdList}
       return next;
     });
   };
-  // c0-027: 3-view app (Chat / Classroom / Admin). Admin is still a modal,
-  // but Chat and Classroom are true top-level views that replace each other.
-  // Hash-route-aware: #chat / #classroom / #admin hydrate the view on mount
-  // and forward/back history traversal updates the active view.
-  const [activeView, setActiveView] = useState<'chat' | 'classroom' | 'fleet' | 'library' | 'auditorium'>(() => {
-    const h = (typeof window !== 'undefined' && window.location.hash.replace('#', '')) || 'chat';
-    if (h === 'classroom') return 'classroom';
-    if (h === 'fleet') return 'fleet';
-    if (h === 'library') return 'library';
-    if (h === 'auditorium') return 'auditorium';
-    return 'chat';
-  });
   const [convoSearch, setConvoSearch] = useState('');
+  // c2-399 / task 186: deferred copy for the filter pipeline. Input stays
+  // snappy (convoSearch updates per keystroke) while the virtualized list
+  // re-renders at a lower priority against deferredConvoSearch. React 18
+  // concurrent feature — no manual debounce timer needed.
+  const deferredConvoSearch = useDeferredValue(convoSearch);
+  // c2-420 / task 193: date-range filter chips above the convo list. 'all'
+  // is the default; 'today' / 'week' / 'month' narrow by updatedAt. Pinned
+  // rows are always shown regardless — they're manually promoted, so
+  // filtering them out would contradict user intent. Persisted per-device.
+  type DateFilter = 'all' | 'today' | 'week' | 'month';
+  const [convoDateFilter, setConvoDateFilter] = useState<DateFilter>(() => {
+    try {
+      const v = localStorage.getItem('lfi_convo_date_filter') as DateFilter | null;
+      if (v === 'today' || v === 'week' || v === 'month' || v === 'all') return v;
+    } catch { /* storage blocked */ }
+    return 'all';
+  });
+  useEffect(() => {
+    try { localStorage.setItem('lfi_convo_date_filter', convoDateFilter); } catch { /* quota */ }
+  }, [convoDateFilter]);
 
   // ---- Send ----
   // Routes the message through the active skill. Chat/code go over the WS;
@@ -2515,8 +2725,11 @@ ${cmdList}
       position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px',
       overflow: 'hidden', clip: 'rect(0 0 0 0)', border: 0,
     }}>{srAnnouncement}</div>
-    <div style={{
-      display: 'flex', flexDirection: 'column', height: '100vh', width: '100%',
+    <div className='lfi-app-root' style={{
+      // c2-411 / BIG #218 mobile: 100dvh shrinks with the mobile virtual
+      // keyboard so the chat input stays reachable. The class-level CSS
+      // below supplies a 100vh fallback for browsers without dvh support.
+      display: 'flex', flexDirection: 'column', height: '100dvh', width: '100%',
       background: C.bg, color: C.text,
       fontFamily: C.font,
       overflow: 'hidden',
@@ -2625,6 +2838,80 @@ ${cmdList}
           </div>
         </div>
       )}
+      {/* ========== MESSAGE RIGHT-CLICK CONTEXT MENU ========== */}
+      {/* c2-400 / task 185: floating menu anchored at the right-click coords.
+          Invisible full-screen backdrop catches outside clicks; Esc closes
+          via the same path as other modals. menu items vary by role. */}
+      {msgContextMenu && (() => {
+        const m = msgContextMenu;
+        const close = () => setMsgContextMenu(null);
+        const copy = (text: string) => {
+          copyToClipboard(text);
+          showToast('Copied');
+          logEvent('message_copied', { role: m.role, length: text.length, via: 'context-menu' });
+          close();
+        };
+        const isLastAssistant = m.role === 'assistant' && messages[messages.length - 1]?.id === m.msgId;
+        // Clamp the menu so it doesn't spill off the right / bottom edge.
+        const MENU_W = 220, MENU_H = 180;
+        const x = Math.min(m.x, window.innerWidth - MENU_W - 8);
+        const y = Math.min(m.y, window.innerHeight - MENU_H - 8);
+        const btnStyle: React.CSSProperties = {
+          display: 'block', width: '100%', textAlign: 'left',
+          padding: `${T.spacing.sm} ${T.spacing.md}`,
+          background: 'transparent', border: 'none', color: C.text,
+          cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: T.typography.sizeMd,
+        };
+        const onBtnHover = (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = C.bgHover; };
+        const onBtnLeave = (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = 'transparent'; };
+        return (
+          <>
+            <div onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }}
+              style={{
+                position: 'fixed', inset: 0, zIndex: T.z.modal + 50,
+                background: 'transparent',
+              }} />
+            <div role='menu' aria-label={`${m.role} message actions`}
+              style={{
+                position: 'fixed', left: x, top: y, zIndex: T.z.modal + 51,
+                width: MENU_W, background: C.bgCard,
+                border: `1px solid ${C.border}`, borderRadius: T.radii.md,
+                boxShadow: T.shadows.modal, padding: T.spacing.xs + ' 0',
+                fontFamily: 'inherit',
+              }}>
+              <button role='menuitem' style={btnStyle} onMouseEnter={onBtnHover} onMouseLeave={onBtnLeave}
+                onClick={() => copy(m.content)}>Copy</button>
+              <button role='menuitem' style={btnStyle} onMouseEnter={onBtnHover} onMouseLeave={onBtnLeave}
+                onClick={() => copy(stripMarkdown(m.content))}>Copy as plain text</button>
+              <div role='separator' style={{ height: '1px', background: C.borderSubtle, margin: `${T.spacing.xs} 0` }} />
+              {m.role === 'user' && (
+                <>
+                  <button role='menuitem' style={btnStyle} onMouseEnter={onBtnHover} onMouseLeave={onBtnLeave}
+                    onClick={() => { setEditingMsgId(m.msgId); setEditText(m.content); close(); }}>Edit and resend</button>
+                  <button role='menuitem' style={btnStyle} onMouseEnter={onBtnHover} onMouseLeave={onBtnLeave}
+                    onClick={() => {
+                      // Fork: slice from this user message forward, preload the
+                      // input + stamp the branch marker so handleSend labels
+                      // the new turn as a branch. Matches the edit path.
+                      const idx = messages.findIndex(mm => mm.id === m.msgId);
+                      if (idx >= 0) setMessages(prev => prev.slice(0, idx));
+                      setInput(m.content);
+                      pendingBranchFromRef.current = m.msgId;
+                      inputRef.current?.focus();
+                      logEvent('message_forked', { via: 'context-menu' });
+                      close();
+                    }}>Fork from here</button>
+                </>
+              )}
+              {m.role === 'assistant' && isLastAssistant && !isThinking && (
+                <button role='menuitem' style={btnStyle} onMouseEnter={onBtnHover} onMouseLeave={onBtnLeave}
+                  onClick={() => { regenerateLast(); showToast('Regenerating…'); close(); }}>Regenerate</button>
+              )}
+            </div>
+          </>
+        );
+      })()}
       {/* ========== EPHEMERAL TOAST STACK (copy feedback, etc.) ========== */}
       {toasts.length > 0 && (
         <div style={{
@@ -2633,7 +2920,12 @@ ${cmdList}
           pointerEvents: 'none', // let individual toasts opt-in below
         }}>
           {toasts.map(t => (
+            // c2-392 / task 189: click anywhere on the toast to dismiss.
+            // The Undo button still wins via stopPropagation in its handler
+            // so accidental clicks near the Undo affordance don't race.
             <div key={t.id} role='status' aria-live='polite'
+              onClick={() => setToasts(prev => prev.filter(tt => tt.id !== t.id))}
+              title='Click to dismiss'
               style={{
                 padding: `${T.spacing.sm} ${T.spacing.md}`,
                 background: C.bgCard, color: C.text,
@@ -2642,11 +2934,12 @@ ${cmdList}
                 boxShadow: T.shadows.card,
                 animation: t.exiting ? 'scc-toast-out 0.18s ease-in forwards' : 'scc-toast-in 0.18s ease-out',
                 display: 'flex', alignItems: 'center', gap: T.spacing.md,
-                pointerEvents: 'auto',
+                pointerEvents: 'auto', cursor: 'pointer',
               }}>
               <span>{t.msg}</span>
               {t.onUndo && (
-                <button onClick={() => {
+                <button onClick={(e) => {
+                  e.stopPropagation(); // don't also fire the dismiss
                   t.onUndo?.();
                   // Dismiss just this toast, leave any siblings alone.
                   setToasts(prev => prev.filter(tt => tt.id !== t.id));
@@ -2886,7 +3179,7 @@ ${cmdList}
           <div onClick={(e) => e.stopPropagation()}
             role='dialog' aria-modal='true' aria-labelledby='scc-training-title'
             style={{
-              width: '100%', maxWidth: '750px', height: '80vh',
+              width: '100%', maxWidth: '750px', height: '80dvh',
               background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: '14px',
               display: 'flex', flexDirection: 'column', overflow: 'hidden',
               boxShadow: '0 24px 60px rgba(0,0,0,0.45)',
@@ -2921,6 +3214,13 @@ ${cmdList}
           error={knowledgeError}
           onRetry={fetchKnowledge}
           onClose={() => setShowKnowledge(false)}
+          // c2-405 / task 191: zero-state CTA. Close the KB and open Admin
+          // → Training so the user can start ingestion.
+          onOpenTraining={() => {
+            setShowKnowledge(false);
+            setAdminInitialTab('training');
+            setShowAdmin(true);
+          }}
         />
       )}
 
@@ -2951,6 +3251,9 @@ ${cmdList}
             onRun: () => { createNewConversation(); } },
           { id: 'clear-chat', label: 'Clear current chat', hint: 'Erase this conversation\'s messages', group: 'Actions',
             onRun: () => { clearChat(); } },
+          // c2-401 / task 194: palette entry for the duplicate action.
+          { id: 'duplicate-convo', label: 'Duplicate current conversation', hint: 'Clone to a new entry (copy) in the sidebar', group: 'Actions',
+            onRun: () => { if (currentConversationId) duplicateConversation(currentConversationId); } },
           { id: 'toggle-sidebar', label: showConvoSidebar ? 'Hide sidebar' : 'Show sidebar', hint: 'Toggle conversations panel', group: 'Actions',
             shortcut: '$mod+B',
             onRun: () => { setShowConvoSidebar(v => !v); } },
@@ -2987,14 +3290,24 @@ ${cmdList}
           { id: 'open-knowledge', label: 'Knowledge browser', hint: 'Facts, concepts, reviews', group: 'Navigate',
             onRun: () => { setShowKnowledge(true); fetchKnowledge(); } },
           { id: 'open-logs', label: 'Open activity logs', hint: 'Chat log + UI events', group: 'Navigate',
+            shortcut: '$mod+Shift+L',
             onRun: () => { setAdminInitialTab('logs'); setShowAdmin(true); fetchChatLog(50); } },
           { id: 'toggle-dev', label: `${settings.developerMode ? 'Disable' : 'Enable'} developer mode`, hint: 'Telemetry + plan panel', group: 'Navigate',
             shortcut: '$mod+D',
             onRun: () => { setSettings(s => ({ ...s, developerMode: !s.developerMode })); } },
-          ...conversations.slice(0, 20).map(c => ({
-            id: `convo-${c.id}`, label: c.title, hint: `${c.messages.length} message${c.messages.length === 1 ? '' : 's'}`, group: 'Conversations',
-            onRun: () => { setCurrentConversationId(c.id); },
-          })),
+          ...conversations.slice(0, 20).map(c => {
+            // c2-422 / task 209: body excerpt for fuzzy matching.
+            // Concatenates the last ~6 message bodies then caps at 500
+            // chars so a long chat doesn't balloon the palette's in-memory
+            // items array. Nothing is rendered — searchBody is score-only.
+            const recent = c.messages.slice(-6).map(m => m.content).join(' ').replace(/\s+/g, ' ');
+            const searchBody = recent.length > 500 ? recent.slice(0, 500) : recent;
+            return {
+              id: `convo-${c.id}`, label: c.title, hint: `${c.messages.length} message${c.messages.length === 1 ? '' : 's'}`, group: 'Conversations',
+              searchBody,
+              onRun: () => { setCurrentConversationId(c.id); },
+            };
+          }),
         ];
         return (
           <CommandPalette
@@ -3223,16 +3536,25 @@ ${cmdList}
               <line x1="9" y1="4" x2="9" y2="20"/>
             </svg>
           </button>
-          <div style={{ fontSize: T.typography.sizeMd, fontWeight: 800, letterSpacing: '0.02em', color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
-            PlausiDen <span style={{ color: C.accent }}>AI</span>
-            {/* Per Bible §4.5: subtle shield icon when PlausiDen/incognito mode
-                is active. No text label — just the icon. */}
-            {isCurrentIncognito && (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" title="Incognito mode active">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-            )}
-          </div>
+          {/* c2-415 / BIG #218 mobile: the "PlausiDen AI" wordmark eats ~90px
+              on narrow viewports; tabs + hamburger + avatar already identify
+              the app. Keep the incognito shield indicator — it's a security
+              tell users need to see regardless of viewport. */}
+          {!isMobile && (
+            <div style={{ fontSize: T.typography.sizeMd, fontWeight: 800, letterSpacing: '0.02em', color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              PlausiDen <span style={{ color: C.accent }}>AI</span>
+              {isCurrentIncognito && (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" title="Incognito mode active">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              )}
+            </div>
+          )}
+          {isMobile && isCurrentIncognito && (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" title="Incognito mode active">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          )}
           {/* Inline stats — developer-only per design review. */}
           {isDesktop && settings.developerMode && (
             <div style={{ display: 'flex', gap: T.spacing.lg, marginLeft: '8px', fontSize: T.typography.sizeSm, color: C.textDim }}>
@@ -3610,11 +3932,11 @@ ${cmdList}
                 onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.color = C.textMuted; }}>
                 {item.label}
                 {isDesktop && (
-                  <kbd aria-hidden='true' style={{
+                  <kbd className='lfi-shortcut-chip' aria-hidden='true' style={{
                     fontFamily: T.typography.fontMono,
                     fontSize: '10px', color: isActive ? C.accent : C.textDim,
                     opacity: 0.7,
-                  }}>{mod()}{item.mod}</kbd>
+                  }}>{modKey(item.mod)}</kbd>
                 )}
               </button>
             );
@@ -3650,8 +3972,13 @@ ${cmdList}
               width: showConvoSidebar ? '360px' : '0px',
               transition: 'width 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
             } : {
-              width: '320px', maxWidth: '86vw',
+              // c2-414 / BIG #218 mobile: widened a bit (was 320/86vw) so
+              // the action-icon row isn't cramped against the title, and
+              // use dvh so the sidebar is flush with the actual viewport
+              // height (100vh is wrong when the address bar is visible).
+              width: 'min(340px, 92vw)',
               position: 'fixed', top: 0, bottom: 0, left: 0, zIndex: 100,
+              height: '100dvh',
               transform: showConvoSidebar ? 'translateX(0)' : 'translateX(-105%)',
               transition: 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
               boxShadow: showConvoSidebar ? '2px 0 24px rgba(0,0,0,0.45)' : 'none',
@@ -3671,14 +3998,43 @@ ${cmdList}
                 <span style={{ fontSize: T.typography.sizeBody }}>{'\u002B'}</span> New chat
                 {/* c2-264: shortcut hint on the primary sidebar CTA. kbd
                     chip uses the same muted-border styling as the Command
-                    Palette item shortcuts so the language is consistent. */}
-                <kbd aria-hidden='true' style={{
-                  marginLeft: 'auto', fontFamily: T.typography.fontMono,
-                  fontSize: '10px', color: C.accent, opacity: 0.7,
-                  border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.sm,
-                  padding: '1px 5px', letterSpacing: '0.02em',
-                }}>{mod()}N</kbd>
+                    Palette item shortcuts so the language is consistent.
+                    c2-412: hidden on mobile — no physical keyboard to
+                    Ctrl+N with, so the chip was just noise. */}
+                {!isMobile && (
+                  <kbd aria-hidden='true' style={{
+                    marginLeft: 'auto', fontFamily: T.typography.fontMono,
+                    fontSize: '10px', color: C.accent, opacity: 0.7,
+                    border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.sm,
+                    padding: '1px 5px', letterSpacing: '0.02em',
+                  }}>{modKey('N')}</kbd>
+                )}
               </button>
+              {/* c2-402 / task 199: today's user-message count across all
+                  conversations. Muted pill under the CTA; hidden when
+                  count is 0 so first-boot users don't see a silent 0. */}
+              {(() => {
+                const startOfToday = new Date();
+                startOfToday.setHours(0, 0, 0, 0);
+                const cutoff = startOfToday.getTime();
+                let todayCount = 0;
+                for (const c of conversations) {
+                  for (const m of c.messages) {
+                    if (m.role === 'user' && m.timestamp >= cutoff) todayCount++;
+                  }
+                }
+                if (todayCount === 0) return null;
+                return (
+                  <div title={`${todayCount} message${todayCount === 1 ? '' : 's'} sent today across all conversations`}
+                    style={{
+                      fontSize: T.typography.sizeXs, color: C.textDim,
+                      textAlign: 'center', marginBottom: T.spacing.sm,
+                      fontFamily: T.typography.fontMono,
+                    }}>
+                    {todayCount} sent today
+                  </div>
+                );
+              })()}
               <input
                 type='search'
                 aria-label='Search conversations'
@@ -3699,24 +4055,73 @@ ${cmdList}
                 onFocus={(e) => e.currentTarget.style.borderColor = C.accent}
                 onBlur={(e) => e.currentTarget.style.borderColor = C.borderSubtle}
               />
+              {/* c2-420 / task 193: date-range chips. Pinned rows ignore
+                  the filter so they stay visible at the top regardless.
+                  'All' is the default. */}
+              <div role='radiogroup' aria-label='Filter conversations by date range'
+                style={{ display: 'flex', gap: '4px', marginTop: T.spacing.sm }}>
+                {([
+                  { id: 'all' as const,   label: 'All' },
+                  { id: 'today' as const, label: 'Today' },
+                  { id: 'week' as const,  label: 'Week' },
+                  { id: 'month' as const, label: 'Month' },
+                ]).map(c => {
+                  const active = c.id === convoDateFilter;
+                  return (
+                    <button key={c.id} onClick={() => setConvoDateFilter(c.id)}
+                      role='radio' aria-checked={active}
+                      style={{
+                        flex: 1, padding: '5px 0',
+                        fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                        background: active ? C.accentBg : 'transparent',
+                        border: `1px solid ${active ? C.accentBorder : C.borderSubtle}`,
+                        color: active ? C.accent : C.textMuted,
+                        borderRadius: T.radii.sm, cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}>{c.label}</button>
+                  );
+                })}
+              </div>
             </div>
-            <div data-convo-scroller='true' style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+            {/* c2-388 / BIG #179: switched from a flat scroll container to a
+                flex column hosting GroupedVirtuoso for the main list and a
+                natural-height archived section below. Virtuoso owns the
+                scroll within its bounded flex:1 slot; archived section sits
+                below with its own static height. The outer container keeps
+                data-convo-scroller so navigateConvoRow's querySelectorAll
+                still works when arrowing between focused rows. */}
+            <div data-convo-scroller='true' style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              minHeight: 0,  // lets Virtuoso's flex:1 child compute height
+              padding: '8px',
+            }}>
               {conversations.length === 0 && (
                 <div style={{ padding: T.spacing.lg, textAlign: 'center', color: C.textMuted, fontSize: T.typography.sizeSm }}>
                   No conversations yet.
                 </div>
               )}
-              {/* c2-252 / #114: day-bucket headers for non-pinned rows; plus
-                  c2-253 / #115: "Pinned" header when there's >=1 pinned row,
-                  and a no-matches empty state when search filters everything
-                  out. IIFE so closures reset on every render. */}
               {(() => {
+                // c2-420 / task 193: date-range cutoff. Pinned rows bypass
+                // the filter (user manually promoted them). 'all' means no
+                // cutoff.
+                const dateCutoff = (() => {
+                  const now = Date.now();
+                  if (convoDateFilter === 'today') {
+                    const d = new Date(); d.setHours(0, 0, 0, 0);
+                    return d.getTime();
+                  }
+                  if (convoDateFilter === 'week') return now - 7 * 86400_000;
+                  if (convoDateFilter === 'month') return now - 30 * 86400_000;
+                  return 0;
+                })();
                 const filtered = conversations
                   .filter(c => {
                     if (c.archived && !showArchived) return false;
                     if (c.archived && showArchived) return false;
-                    if (!convoSearch.trim()) return true;
-                    const q = convoSearch.toLowerCase();
+                    // c2-420: date filter — pinned always visible.
+                    if (!c.pinned && dateCutoff > 0 && c.updatedAt < dateCutoff) return false;
+                    if (!deferredConvoSearch.trim()) return true;
+                    const q = deferredConvoSearch.toLowerCase();
                     if (c.title.toLowerCase().includes(q)) return true;
                     return c.messages.some(m => m.content.toLowerCase().includes(q));
                   })
@@ -3731,14 +4136,37 @@ ${cmdList}
                     }
                     return b.updatedAt - a.updatedAt;
                   });
-                // c2-255 / #117: precompute counts per bucket so the header
-                // can show "Today · 3". "Pinned" shares the same map.
-                const bucketCounts: Record<string, number> = {};
-                for (const c of filtered) {
-                  const key = c.pinned ? 'Pinned' : formatDayBucket(c.updatedAt);
-                  bucketCounts[key] = (bucketCounts[key] ?? 0) + 1;
+                // c2-388 / BIG #179: build groups array so GroupedVirtuoso
+                // can render each as a contiguous run with a sticky header.
+                // Pinned first, then Starred (c2-409 / task 208), then each
+                // day-bucket. flatItems is the full list in render order so
+                // itemContent can index straight into it.
+                type Group = { label: string; convos: Conversation[] };
+                const groups: Group[] = [];
+                const pinned = filtered.filter(c => c.pinned);
+                if (pinned.length > 0) groups.push({ label: 'Pinned', convos: pinned });
+                // c2-409 / task 208: Starred group sits above the day
+                // buckets. Pinned + starred both true → stays in Pinned
+                // (pinned is a stronger promotion).
+                const starred = filtered.filter(c => !c.pinned && c.starred);
+                if (starred.length > 0) {
+                  // Sort starred by updatedAt desc (pinOrder doesn't apply).
+                  starred.sort((a, b) => b.updatedAt - a.updatedAt);
+                  groups.push({ label: 'Starred', convos: starred });
                 }
-                if (filtered.length === 0 && convoSearch.trim()) {
+                for (const c of filtered) {
+                  if (c.pinned || c.starred) continue;
+                  const bucket = formatDayBucket(c.updatedAt);
+                  const last = groups[groups.length - 1];
+                  if (last && last.label === bucket) {
+                    last.convos.push(c);
+                  } else {
+                    groups.push({ label: bucket, convos: [c] });
+                  }
+                }
+                const groupCounts = groups.map(g => g.convos.length);
+                const flatItems = groups.flatMap(g => g.convos);
+                if (filtered.length === 0 && deferredConvoSearch.trim()) {
                   return (
                     <div style={{
                       padding: `${T.spacing.xl} ${T.spacing.md}`, textAlign: 'center',
@@ -3755,49 +4183,29 @@ ${cmdList}
                     </div>
                   );
                 }
-                let lastBucket = '';
-                let hasEmittedPinnedHeader = false;
-                return filtered.flatMap(c => {
-                  const nodes: React.ReactNode[] = [];
-                  if (c.pinned && !hasEmittedPinnedHeader) {
-                    nodes.push(
-                      /* c2-384 / BIG #179: day-bucket + pinned headers are
-                         sticky so they stay visible while scrolling a long
-                         conversation history. role=heading + aria-level=3
-                         makes them navigable by SR users (previously
-                         aria-hidden). background matches sidebar so text
-                         below the header doesn't show through. */
-                      <div key='dh-pinned' role='heading' aria-level={3} style={{
-                        position: 'sticky', top: 0, zIndex: 1,
-                        background: C.bg,
-                        padding: `${T.spacing.sm} ${T.spacing.sm} ${T.spacing.xs}`,
-                        fontSize: '10px', fontWeight: T.typography.weightBold,
-                        color: C.textDim, textTransform: 'uppercase',
-                        letterSpacing: T.typography.trackingLoose,
-                        userSelect: 'none',
-                      }}>Pinned <span style={{ color: C.textMuted, fontWeight: T.typography.weightMedium }}>{'\u00B7 '}{bucketCounts['Pinned']}</span></div>
-                    );
-                    hasEmittedPinnedHeader = true;
-                  }
-                  if (!c.pinned) {
-                    const bucket = formatDayBucket(c.updatedAt);
-                    if (bucket !== lastBucket) {
-                      nodes.push(
-                        <div key={`dh-${bucket}-${c.id}`} role='heading' aria-level={3} style={{
-                          position: 'sticky', top: 0, zIndex: 1,
-                          background: C.bg,
-                          padding: `${T.spacing.sm} ${T.spacing.sm} ${T.spacing.xs}`,
-                          fontSize: '10px', fontWeight: T.typography.weightBold,
-                          color: C.textDim, textTransform: 'uppercase',
-                          letterSpacing: T.typography.trackingLoose,
-                          userSelect: 'none',
-                        }}>{bucket} <span style={{ color: C.textMuted, fontWeight: T.typography.weightMedium }}>{'\u00B7 '}{bucketCounts[bucket]}</span></div>
-                      );
-                      lastBucket = bucket;
-                    }
-                  }
+                // c2-388 / BIG #179: group header render. Sticky is now
+                // handled by GroupedVirtuoso itself (fixed-position relative
+                // to the Scroller), so we drop the CSS position:sticky.
+                const renderGroupHeader = (groupIndex: number) => {
+                  const g = groups[groupIndex];
+                  if (!g) return null;
+                  return (
+                    <div role='heading' aria-level={3} style={{
+                      background: C.bg,
+                      padding: `${T.spacing.sm} ${T.spacing.sm} ${T.spacing.xs}`,
+                      fontSize: '10px', fontWeight: T.typography.weightBold,
+                      color: C.textDim, textTransform: 'uppercase',
+                      letterSpacing: T.typography.trackingLoose,
+                      userSelect: 'none',
+                    }}>{g.label} <span style={{ color: C.textMuted, fontWeight: T.typography.weightMedium }}>{'\u00B7 '}{g.convos.length}</span></div>
+                  );
+                };
+                // c2-388: row render extracted so GroupedVirtuoso's
+                // itemContent can map flatItems[index] → JSX without
+                // inlining 150+ lines of handlers in the Virtuoso prop.
+                const renderConvoRow = (c: Conversation) => {
                   const isActive = c.id === currentConversationId;
-                  nodes.push(
+                  return (
                     <div key={c.id}
                       onClick={() => setCurrentConversationId(c.id)}
                       role='button' tabIndex={0}
@@ -3807,7 +4215,17 @@ ${cmdList}
                       // c2-269: hover tooltip with metadata — created / last
                       // updated / message count / flags. Helps users pick
                       // between similarly-titled conversations.
-                      title={`${c.title}\n${c.messages.length} message${c.messages.length === 1 ? '' : 's'}\nCreated: ${new Date(c.createdAt).toLocaleString()}\nUpdated: ${new Date(c.updatedAt).toLocaleString()}${c.pinned ? '\nPinned' : ''}${c.starred ? '\nStarred' : ''}${c.draft?.trim() ? '\nHas unsent draft' : ''}`}
+                      // c2-408 / task 201: also include the last user
+                      // message preview (160-char cap) so users get a
+                      // content cue, not just metadata. Falls through to
+                      // empty when the conversation has no user turns yet.
+                      title={(() => {
+                        const lastUser = [...c.messages].reverse().find(m => m.role === 'user');
+                        const preview = lastUser
+                          ? `\n\nLast: \u201C${lastUser.content.replace(/\s+/g, ' ').slice(0, 160)}${lastUser.content.length > 160 ? '\u2026' : ''}\u201D`
+                          : '';
+                        return `${c.title}\n${c.messages.length} message${c.messages.length === 1 ? '' : 's'}\nCreated: ${new Date(c.createdAt).toLocaleString()}\nUpdated: ${new Date(c.updatedAt).toLocaleString()}${c.pinned ? '\nPinned' : ''}${c.starred ? '\nStarred' : ''}${c.draft?.trim() ? '\nHas unsent draft' : ''}${preview}`;
+                      })()}
                       onKeyDown={(e) => navigateConvoRow(e, c.id)}
                       draggable={!!c.pinned}
                       onDragStart={(e) => {
@@ -3916,11 +4334,14 @@ ${cmdList}
                       </div>
                       {/* Action icons — hover-only per design review. Uses
                           CSS class toggled by the parent's onMouseEnter/Leave.
-                          Star stays visible when active for discoverability. */}
+                          Star stays visible when active for discoverability.
+                          c2-414 / BIG #218 mobile: always visible on touch —
+                          no hover to reveal them, and the context-menu path
+                          is too hidden as a primary affordance. */}
                       <div className='convo-actions'
                         style={{
                           display: 'flex', gap: '2px',
-                          opacity: isActive ? 0.7 : 0,
+                          opacity: isMobile ? 0.7 : (isActive ? 0.7 : 0),
                           transition: 'opacity 0.12s',
                         }}>
                         <button onClick={(e) => { e.stopPropagation(); toggleStarred(c.id); }}
@@ -3939,32 +4360,42 @@ ${cmdList}
                             color: c.pinned ? C.yellow : C.textDim,
                             cursor: 'pointer', fontSize: T.typography.sizeXs, padding: '2px 3px',
                           }}>{'\u{1F4CC}'}</button>
-                        <button onClick={(e) => {
-                          e.stopPropagation();
-                          setRenamingConvoId(c.id);
-                          setRenameDraft(c.title);
-                        }} title='Rename (or double-click title)' aria-label={`Rename ${c.title}`}
-                          style={{
-                            background: 'transparent', border: 'none', color: C.textDim,
-                            cursor: 'pointer', fontSize: '10px', padding: '2px 3px',
-                          }}>{'\u270E'}</button>
-                        <button onClick={(e) => {
-                          e.stopPropagation();
-                          // Shift-click exports PDF; plain click exports md.
-                          // Keeps the action bar compact without adding a
-                          // third button, discoverable via the tooltip.
-                          if (e.shiftKey) {
-                            exportConversationPdf(c);
-                            logEvent('conversation_exported_pdf', { id: c.id });
-                          } else {
-                            exportConversationMd(c);
-                            logEvent('conversation_exported_md', { id: c.id });
-                          }
-                        }} title='Export as Markdown (Shift-click: PDF)' aria-label={`Export ${c.title} as Markdown, Shift-click for PDF`}
-                          style={{
-                            background: 'transparent', border: 'none', color: C.textDim,
-                            cursor: 'pointer', fontSize: '10px', padding: '2px 3px',
-                          }}>{'\u2B07'}</button>
+                        {/* c2-414 / BIG #218 mobile: rename + export are
+                            hidden on touch to keep the row compact. Users
+                            still have double-tap-title for rename and the
+                            /export-txt + Admin → Export-all paths for
+                            export. Star/pin/archive/delete stay — they're
+                            the frequent actions. */}
+                        {!isMobile && (
+                          <>
+                            <button onClick={(e) => {
+                              e.stopPropagation();
+                              setRenamingConvoId(c.id);
+                              setRenameDraft(c.title);
+                            }} title='Rename (or double-click title)' aria-label={`Rename ${c.title}`}
+                              style={{
+                                background: 'transparent', border: 'none', color: C.textDim,
+                                cursor: 'pointer', fontSize: '10px', padding: '2px 3px',
+                              }}>{'\u270E'}</button>
+                            <button onClick={(e) => {
+                              e.stopPropagation();
+                              // Shift-click exports PDF; plain click exports md.
+                              // Keeps the action bar compact without adding a
+                              // third button, discoverable via the tooltip.
+                              if (e.shiftKey) {
+                                exportConversationPdf(c);
+                                logEvent('conversation_exported_pdf', { id: c.id });
+                              } else {
+                                exportConversationMd(c);
+                                logEvent('conversation_exported_md', { id: c.id });
+                              }
+                            }} title='Export as Markdown (Shift-click: PDF)' aria-label={`Export ${c.title} as Markdown, Shift-click for PDF`}
+                              style={{
+                                background: 'transparent', border: 'none', color: C.textDim,
+                                cursor: 'pointer', fontSize: '10px', padding: '2px 3px',
+                              }}>{'\u2B07'}</button>
+                          </>
+                        )}
                         <button onClick={(e) => { e.stopPropagation(); toggleArchived(c.id); }}
                           title={c.archived ? 'Unarchive' : 'Archive'}
                           aria-label={c.archived ? `Unarchive ${c.title}` : `Archive ${c.title}`}
@@ -3985,8 +4416,29 @@ ${cmdList}
                       </div>
                     </div>
                   );
-                  return nodes;
-                });
+                };
+                // c2-388: GroupedVirtuoso renders only visible rows + their
+                // headers. style height:100% so it fills the flex:1 slot
+                // of data-convo-scroller. overscan keeps drag-reorder smooth
+                // by pre-rendering ±3 rows above/below the viewport.
+                return (
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    <GroupedVirtuoso
+                      style={{ height: '100%' }}
+                      groupCounts={groupCounts}
+                      groupContent={renderGroupHeader}
+                      itemContent={(index) => {
+                        const c = flatItems[index];
+                        if (!c) return null;
+                        return renderConvoRow(c);
+                      }}
+                      // Stable keys so re-renders don't remount the drag
+                      // source mid-drop. group${i} and ${id} never collide.
+                      computeItemKey={(index) => flatItems[index]?.id ?? `i-${index}`}
+                      increaseViewportBy={{ top: 200, bottom: 200 }}
+                    />
+                  </div>
+                );
               })()}
               {/* Archived section — collapsible, hidden by default. Only appears
                   when at least one conversation is archived. */}
@@ -4399,6 +4851,27 @@ ${cmdList}
             </div>
             );
           })()}
+          {/* c2-404 / task 195: reading-progress gauge. 2px bar at the top
+              of the chat pane; width = chatTopIndex / (messages.length - 1).
+              Hidden while streaming (isThinking) and on short convos (<10
+              messages). Pure visual — doesn't affect layout or clicks. */}
+          {!isThinking && messages.length >= 10 && (() => {
+            const pct = Math.max(0, Math.min(100, (chatTopIndex / Math.max(1, messages.length - 1)) * 100));
+            return (
+              <div aria-hidden='true'
+                style={{
+                  position: 'absolute', top: 0, left: 0, right: 0, height: '2px',
+                  background: 'transparent', zIndex: T.z.sticky,
+                  pointerEvents: 'none',
+                }}>
+                <div style={{
+                  height: '100%', width: `${pct}%`,
+                  background: C.accent, opacity: 0.6,
+                  transition: 'width 0.15s linear',
+                }} />
+              </div>
+            );
+          })()}
           {/* Floating "scroll to bottom" — appears when user has scrolled
               up away from the latest message in a non-empty chat. Avoids the
               UX trap where new AI replies arrive but the user is reading
@@ -4412,7 +4885,12 @@ ${cmdList}
                 // FAB doesn't tuck behind the chat input on iPhones with a
                 // home-indicator bar. calc() falls back cleanly on platforms
                 // without env() support (gives the original 120px).
-                position: 'absolute', bottom: 'calc(120px + env(safe-area-inset-bottom, 0px))', right: '24px',
+                // c2-419 / BIG #218 mobile: extra offset + right-edge inset
+                // on mobile so the FAB clears the input's action row + the
+                // send button cleanly.
+                position: 'absolute',
+                bottom: `calc(${isMobile ? '160px' : '120px'} + env(safe-area-inset-bottom, 0px))`,
+                right: isMobile ? '16px' : '24px',
                 width: '40px', height: '40px', borderRadius: T.radii.round,
                 background: C.bgCard, border: `1px solid ${C.accentBorder}`,
                 color: C.accent, cursor: 'pointer', boxShadow: T.shadows.card,
@@ -4423,6 +4901,30 @@ ${cmdList}
                 stroke='currentColor' strokeWidth='2.5' strokeLinecap='round' strokeLinejoin='round'>
                 <line x1='12' y1='5' x2='12' y2='19' />
                 <polyline points='19 12 12 19 5 12' />
+              </svg>
+            </button>
+          )}
+          {/* c2-396 / task 210: mirror of scroll-to-bottom. Appears when
+              the user has scrolled past the start of a long conversation
+              (chatTopIndex > 4 — anything less already shows the inline
+              "Today" separator so a top jump would be redundant). */}
+          {chatTopIndex > 4 && messages.length > 10 && (
+            <button onClick={() => chatViewRef.current?.scrollToIndex(0)}
+              aria-label='Jump to top of conversation'
+              title='Jump to top'
+              style={{
+                position: 'absolute', top: '64px',
+                right: isMobile ? '16px' : '24px',
+                width: '36px', height: '36px', borderRadius: T.radii.round,
+                background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+                color: C.textMuted, cursor: 'pointer', boxShadow: T.shadows.cardLight,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: T.z.sticky, fontFamily: 'inherit',
+              }}>
+              <svg width='16' height='16' viewBox='0 0 24 24' fill='none'
+                stroke='currentColor' strokeWidth='2.5' strokeLinecap='round' strokeLinejoin='round'>
+                <line x1='12' y1='19' x2='12' y2='5' />
+                <polyline points='5 12 12 5 19 12' />
               </svg>
             </button>
           )}
@@ -4628,6 +5130,10 @@ ${cmdList}
                     maxWidth={userBubbleMaxWidth}
                     editing={editingMsgId === msg.id}
                     editText={editText} setEditText={setEditText}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setMsgContextMenu({ x: e.clientX, y: e.clientY, msgId: msg.id, role: 'user', content: msg.content });
+                    }}
                     onBeginEdit={() => { setEditingMsgId(msg.id); setEditText(msg.content); }}
                     onCancelEdit={() => setEditingMsgId(null)}
                     onCommitEdit={(trimmed) => {
@@ -4649,11 +5155,25 @@ ${cmdList}
                     formatTime={formatTime}
                   />
                 )}
-                {msg.role === 'assistant' && (
+                {msg.role === 'assistant' && (() => {
+                  // c2-393 / task 205: walk backwards from this assistant's
+                  // index to find the closest user-turn timestamp. Skips
+                  // system / web / tool rows interposed between user and
+                  // assistant. undefined if none found — the chip hides.
+                  let respondToTs: number | undefined;
+                  for (let k = index - 1; k >= 0; k--) {
+                    if (messages[k]?.role === 'user') { respondToTs = messages[k].timestamp; break; }
+                  }
+                  return (
                   <AssistantMessage
                     msg={msg} C={C} isMobile={isMobile} isDesktop={isDesktop}
                     isLast={messages[messages.length - 1]?.id === msg.id}
                     isThinking={isThinking}
+                    respondToTs={respondToTs}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setMsgContextMenu({ x: e.clientX, y: e.clientY, msgId: msg.id, role: 'assistant', content: msg.content });
+                    }}
                     showReasoning={!!settings.showReasoning}
                     developerMode={!!settings.developerMode}
                     reasoningExpanded={expandedReasoning === msg.id}
@@ -4688,7 +5208,8 @@ ${cmdList}
                     }}
                     formatTime={formatTime}
                   />
-                )}
+                  );
+                })()}
               </>
             )}
           />
@@ -4861,42 +5382,37 @@ ${cmdList}
                     </div>
                   );
                 })()}
-                {/* c2-358 / task 81: subtle always-on character count in the
-                    bottom-right of the input wrapper. Hidden on empty input so
-                    the chrome stays clean. Positioned 60px from the right so
-                    it clears the Send button without overlapping. The louder
-                    >70% meter below takes over once the count matters. */}
-                {input.length > 0 && input.length <= 70000 && (
-                  <div aria-hidden='true' style={{
-                    position: 'absolute', bottom: '8px', right: '60px',
-                    fontSize: T.typography.sizeXs, color: C.textDim,
-                    pointerEvents: 'none', fontVariantNumeric: 'tabular-nums',
-                  }}>
-                    {input.length.toLocaleString()}
-                  </div>
-                )}
-                {/* Character counter — silent until >70% of the 100k limit.
-                    Amber from 70-95%, red above. Absolute-positioned so it
-                    doesn't push the textarea or the actions row. */}
-                {input.length > 70000 && (() => {
+                {/* c2-413 / BIG #218 mobile: unified counter chip. Always
+                    shows chars + token estimate on one line (whiteSpace:
+                    nowrap). Default subtle styling under 70% of the 100k
+                    context window; turns amber 70–95% and red >95% — the
+                    colour is the only alarm signal, layout stays identical
+                    so the chip doesn't jump between positions.
+                    Positioned top-right so it doesn't collide with the
+                    Send button at bottom-right on narrow viewports. */}
+                {input.length > 0 && (() => {
                   const pct = input.length / 100000;
-                  const color = pct > 0.95 ? C.red : C.yellow;
-                  // Rough token estimate — GPT-style tokenizers average ~4
-                  // chars / token for English. Good enough for "am I close
-                  // to the context window?" without bundling a tokenizer.
+                  const loud = pct > 0.70;
+                  const color = pct > 0.95 ? C.red : pct > 0.70 ? C.yellow : C.textDim;
+                  const bg = pct > 0.95 ? C.redBg : pct > 0.70 ? C.accentBg : 'transparent';
                   const tokens = Math.ceil(input.length / 4);
                   return (
-                    <div aria-live='polite'
-                      title={`Approx ${tokens.toLocaleString()} tokens (≈4 chars/token)`}
+                    <div aria-live={loud ? 'polite' : 'off'}
+                      title={`${input.length.toLocaleString()} chars · approx ${tokens.toLocaleString()} tokens (≈4 chars/token) · 100,000 cap`}
                       style={{
                         position: 'absolute', top: '6px', right: '14px',
-                        fontSize: '10px', fontWeight: 700,
+                        fontSize: '10px', fontWeight: loud ? 700 : 500,
                         color, fontFamily: T.typography.fontMono,
-                        background: pct > 0.95 ? C.redBg : C.accentBg,
-                        padding: '2px 6px', borderRadius: T.radii.sm,
+                        background: bg,
+                        padding: bg === 'transparent' ? 0 : '2px 6px',
+                        borderRadius: T.radii.sm,
                         pointerEvents: 'none',
+                        whiteSpace: 'nowrap',
+                        // c2-413: tabular-nums keeps width stable as digits
+                        // tick, so the chip doesn't dance around the corner.
+                        fontVariantNumeric: 'tabular-nums',
                       }}>
-                      {input.length.toLocaleString()} / 100,000 · ~{tokens.toLocaleString()}tok
+                      {input.length.toLocaleString()}c · ~{tokens.toLocaleString()}t
                     </div>
                   );
                 })()}
@@ -5024,7 +5540,11 @@ ${cmdList}
                 maxLength={100000}
                 style={{
                   background: 'transparent', border: 'none', outline: 'none',
-                  resize: 'none', fontSize: '15.5px', lineHeight: '1.55',
+                  // c2-411 / BIG #218 mobile: bump to 16px on mobile — iOS
+                  // Safari zooms the viewport when an input has font-size
+                  // <16px focused. 15.5px on desktop is unchanged via the
+                  // isMobile branch.
+                  resize: 'none', fontSize: isMobile ? '16px' : '15.5px', lineHeight: '1.55',
                   padding: '18px 20px 10px',
                   color: C.text, fontFamily: 'inherit',
                   minHeight: '72px', maxHeight: '280px',
@@ -5209,23 +5729,30 @@ ${cmdList}
                   </svg>
                 </button>
                 {/* Model selector — replaces the header tier dropdown, right
-                    where ChatGPT/Gemini put theirs. Labels user-friendly. */}
+                    where ChatGPT/Gemini put theirs. Labels user-friendly.
+                    c2-418: restored on mobile (previously hidden in c2-415
+                    to reclaim horizontal space). Mobile gets short labels
+                    (just the tier name) and tighter padding so it fits;
+                    full descriptive labels remain on desktop. */}
                 <select value={currentTier} disabled={tierSwitching}
                   onChange={(e) => handleTierSwitch(e.target.value)}
                   title='Model'
                   aria-label='Model tier'
                   style={{
-                    padding: '7px 28px 7px 12px', fontSize: T.typography.sizeMd, fontWeight: 600,
+                    padding: isMobile ? '6px 22px 6px 8px' : '7px 28px 7px 12px',
+                    fontSize: isMobile ? T.typography.sizeSm : T.typography.sizeMd,
+                    fontWeight: 600,
                     background: C.bgInput, color: C.text,
                     border: `1px solid ${C.border}`, borderRadius: T.radii.lg,
                     cursor: tierSwitching ? 'wait' : 'pointer', fontFamily: 'inherit',
                     appearance: 'none', WebkitAppearance: 'none',
                     backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath fill='%237f8296' d='M0 2l4 4 4-4z'/%3E%3C/svg%3E")`,
-                    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center',
+                    backgroundRepeat: 'no-repeat', backgroundPosition: isMobile ? 'right 6px center' : 'right 10px center',
+                    flexShrink: 0,
                   }}>
-                  <option value="Pulse">LFI Pulse &middot; fast</option>
-                  <option value="Bridge">LFI Bridge &middot; balanced</option>
-                  <option value="BigBrain">LFI BigBrain &middot; deepest</option>
+                  <option value="Pulse">{isMobile ? 'Pulse' : 'LFI Pulse \u00B7 fast'}</option>
+                  <option value="Bridge">{isMobile ? 'Bridge' : 'LFI Bridge \u00B7 balanced'}</option>
+                  <option value="BigBrain">{isMobile ? 'BigBrain' : 'LFI BigBrain \u00B7 deepest'}</option>
                 </select>
                 <div style={{ flex: 1 }} />
                 {/* Active-skill chip: visible when non-default so the user
@@ -5303,7 +5830,7 @@ ${cmdList}
                   title='Open the command palette'
                   style={{ cursor: 'pointer', color: C.textMuted }}
                   onClick={() => { setShowCmdPalette(true); setCmdQuery(''); setCmdIndex(0); }}>
-                  {mod()}K
+                  {modKey('K')}
                 </span>
                 <span style={{ cursor: 'pointer', color: C.textMuted }} onClick={() => { setInput('/'); setShowSlashMenu(true); setSlashFilter(''); inputRef.current?.focus(); }}>
                   / commands
@@ -5544,6 +6071,46 @@ ${cmdList}
         .eruda-entry-btn { bottom: 80px !important; right: 10px !important; }
         /* Skip link: keep off-screen until focus lands on it, then slide into view. */
         .lfi-skip-link:focus { top: 0 !important; outline: none; box-shadow: ${C.focusRing}; }
+        /* c2-411 / BIG #218 mobile: dvh fallback for browsers without support.
+           Modern Chrome/Safari/Firefox all have dvh since 2022, so this just
+           catches the long tail. @supports ensures we don't double-apply. */
+        @supports not (height: 100dvh) {
+          .lfi-app-root { height: 100vh !important; }
+        }
+        /* Tap highlight: disable on interactive elements so tap doesn't flash
+           a translucent grey box on mobile Safari / Chrome. */
+        button, a, [role="button"], [role="tab"], [role="option"], [role="menuitem"] {
+          -webkit-tap-highlight-color: transparent;
+        }
+        /* c2-411 / BIG #218 mobile: icon-only buttons have inline width/
+           height of 28–36px on desktop. On coarse pointers (touch) we force
+           a 44x44 minimum so WCAG 2.1 §2.5.5 is met. Chat input toolbar +
+           sidebar action icons were the worst offenders. Scope to actual
+           icon buttons via a marker class so we don't inflate text buttons
+           that are already 40px+ tall. */
+        @media (pointer: coarse) {
+          .lfi-icon-btn, button[aria-label]:not(.lfi-text-btn) {
+            min-width: 44px !important;
+            min-height: 44px !important;
+          }
+          /* iOS Safari zooms the viewport when a focused input has a
+             font-size < 16px. Force the minimum on inputs / textareas /
+             selects so focus doesn't teleport the layout. */
+          input, textarea, select {
+            font-size: max(16px, 1em);
+          }
+          /* c2-412 / BIG #218 mobile: decorative keyboard shortcut chips
+             (⌘K next to a button label) are noise on touch — you can't
+             chord with a thumb. Marker class makes them opt-in; keeps
+             the ShortcutsModal content (which is informational) visible. */
+          kbd.lfi-shortcut-chip { display: none !important; }
+        }
+        /* c2-417: reverted the blanket full-screen-modal rule from c2-415.
+           The Command Palette is a top-anchored popover, not a
+           modal-experience surface — stretching it to 100dvh left a mostly-
+           blank screen with a search input at the top. Each modal now
+           keeps its existing mobile sizing (Settings, Admin, Knowledge,
+           Activity already size sensibly via max-width:100% + dvh). */
         /* c0-020 E4 a11y: visible focus ring on any interactive element
            reached by keyboard. Mouse clicks suppress this because we use
            :focus-visible, which is WCAG 2.1 AA compliant.

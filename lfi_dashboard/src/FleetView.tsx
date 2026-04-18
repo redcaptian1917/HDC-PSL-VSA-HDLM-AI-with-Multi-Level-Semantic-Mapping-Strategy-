@@ -42,6 +42,8 @@ export const FleetView: React.FC<FleetViewProps> = ({ C, host, isDesktop }) => {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  // c2-407 / task 211: per-instance activity filter. Empty string = "all".
+  const [timelineFilter, setTimelineFilter] = useState<string>('');
 
   const load = async () => {
     setLoading(true);
@@ -173,8 +175,15 @@ export const FleetView: React.FC<FleetViewProps> = ({ C, host, isDesktop }) => {
               // timestamp) is now default and the Who / Event columns cycle
               // alphabetical on click. Caps visible rows at 200 for parity
               // with the previous implementation.
+              // c2-407 / task 211: filter by instance. Options pulled from
+              // the actual rows so renames show up immediately; "All" resets.
               type Row = { t: number | string; instance: string; event: string; data?: any };
-              const rows: Row[] = fleet.timeline.slice(0, 200);
+              const allRows: Row[] = fleet.timeline;
+              const instances = Array.from(new Set(allRows.map(r => r.instance))).sort();
+              const filtered = timelineFilter
+                ? allRows.filter(r => r.instance === timelineFilter)
+                : allRows;
+              const rows: Row[] = filtered.slice(0, 200);
               const toTs = (r: Row): number => typeof r.t === 'number'
                 ? r.t * (r.t < 1e12 ? 1000 : 1)
                 : new Date(r.t).getTime();
@@ -205,9 +214,40 @@ export const FleetView: React.FC<FleetViewProps> = ({ C, host, isDesktop }) => {
               ];
               return (
                 <div>
-                  <Label color={C.textMuted} mb={T.spacing.sm}>
-                    Recent activity ({fleet.timeline.length})
-                  </Label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: T.spacing.sm, gap: T.spacing.md, flexWrap: 'wrap' }}>
+                    <Label color={C.textMuted} mb='0'>
+                      Recent activity ({timelineFilter ? `${filtered.length} of ${allRows.length}` : allRows.length})
+                    </Label>
+                    {/* c2-407 / task 211: narrow the timeline to one instance.
+                        Rendered as a native select — no dep, keyboard-accessible
+                        out of the box. */}
+                    {instances.length > 1 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.xs }}>
+                        <select value={timelineFilter}
+                          onChange={(e) => setTimelineFilter(e.target.value)}
+                          aria-label='Filter activity by instance'
+                          style={{
+                            padding: `${T.spacing.xs} ${T.spacing.sm}`, fontSize: T.typography.sizeXs,
+                            background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                            color: C.text, borderRadius: T.radii.sm,
+                            fontFamily: 'inherit', cursor: 'pointer',
+                          }}>
+                          <option value=''>All instances</option>
+                          {instances.map(i => <option key={i} value={i}>{i}</option>)}
+                        </select>
+                        {timelineFilter && (
+                          <button onClick={() => setTimelineFilter('')}
+                            aria-label='Clear instance filter'
+                            style={{
+                              background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                              color: C.textMuted, borderRadius: T.radii.sm,
+                              padding: `${T.spacing.xs} ${T.spacing.sm}`,
+                              fontSize: T.typography.sizeXs, cursor: 'pointer', fontFamily: 'inherit',
+                            }}>{'\u2715'}</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ maxHeight: '420px', overflowY: 'auto' }}>
                     <DataTable<Row> C={C} rows={rows} columns={cols}
                       rowKey={(r) => `${toTs(r)}-${r.instance}-${r.event}`}

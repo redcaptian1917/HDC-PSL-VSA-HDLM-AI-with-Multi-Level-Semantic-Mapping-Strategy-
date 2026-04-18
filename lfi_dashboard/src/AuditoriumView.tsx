@@ -56,6 +56,19 @@ export const AuditoriumView: React.FC<AuditoriumViewProps> = ({ C, host, isDeskt
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  // c2-423 / task 212: rolling 7-day history of passes_completed +
+  // security/quality scores. Mirrors the Gradebook snapshot pattern.
+  // 30 samples is ~3.5 days at 3h cadence, enough to show a trend.
+  type AvpSnap = { ts: number; passes: number; security: number | null; quality: number | null };
+  const [history, setHistory] = useState<AvpSnap[]>(() => {
+    try {
+      const raw = localStorage.getItem('lfi_avp_history_v1');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((s: any) => s && typeof s.ts === 'number').slice(-30);
+    } catch { return []; }
+  });
 
   const load = async () => {
     setLoading(true);
@@ -75,6 +88,21 @@ export const AuditoriumView: React.FC<AuditoriumViewProps> = ({ C, host, isDeskt
       catch { data = await tryPath('/api/admin/avp/status'); }
       setStatus(data);
       setLastUpdated(Date.now());
+      // c2-423 / task 212: append snapshot. Min 15-min gap so rapid
+      // reloads don't spam the buffer; bounded at 30 entries.
+      setHistory(prev => {
+        const last = prev[prev.length - 1];
+        if (last && Date.now() - last.ts < 15 * 60_000) return prev;
+        const snap: AvpSnap = {
+          ts: Date.now(),
+          passes: data.passes_completed ?? 0,
+          security: pctNorm(data.security_score),
+          quality: pctNorm(data.code_quality_score),
+        };
+        const next = [...prev, snap].slice(-30);
+        try { localStorage.setItem('lfi_avp_history_v1', JSON.stringify(next)); } catch { /* quota */ }
+        return next;
+      });
     } catch (e: any) {
       const m = String(e?.message || e || 'fetch failed');
       setErr(m.includes('abort') ? 'AVP status endpoint timed out.' : m);
@@ -175,6 +203,61 @@ export const AuditoriumView: React.FC<AuditoriumViewProps> = ({ C, host, isDeskt
             value={qualityPct != null ? `${qualityPct.toFixed(1)}%` : '—'}
             color={scoreColor(qualityPct)} />
         </div>
+
+        {/* c2-423 / task 212: trend row — 3 inline sparklines showing the
+            last ~3 days of passes, security score, quality score. Only
+            rendered when we have >=2 snapshots (1 snapshot = flat line
+            flash). aria-label per sparkline announces latest value. */}
+        {history.length >= 2 && (() => {
+          const sparkline = (values: (number | null)[], color: string, ariaLabel: string) => {
+            const clean = values.filter((v): v is number => typeof v === 'number');
+            if (clean.length < 2) return null;
+            const max = Math.max(...clean);
+            const min = Math.min(...clean);
+            const range = max - min;
+            const W = 120, H = 24;
+            const step = W / (clean.length - 1);
+            const y = (v: number) => range === 0 ? H / 2 : H - ((v - min) / range) * (H - 2) - 1;
+            const points = clean.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+            return (
+              <svg width={W} height={H} role='img' aria-label={ariaLabel} style={{ display: 'block' }}>
+                <polyline fill='none' stroke={color} strokeWidth='1.5'
+                  strokeLinecap='round' strokeLinejoin='round' points={points} />
+              </svg>
+            );
+          };
+          const cell = (label: string, values: (number | null)[], latest: number | null, color: string, fmt: (n: number) => string) => (
+            <div style={{
+              flex: 1, minWidth: '160px',
+              padding: T.spacing.sm,
+              background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+              borderRadius: T.radii.md,
+              display: 'flex', flexDirection: 'column', gap: T.spacing.xs,
+            }}>
+              <div style={{
+                fontSize: '10px', color: C.textMuted, textTransform: 'uppercase',
+                letterSpacing: T.typography.trackingLoose, fontWeight: T.typography.weightBold,
+              }}>{label}</div>
+              {sparkline(values, color, `${label} trend, latest ${latest == null ? 'unknown' : fmt(latest)}`)}
+              <div style={{ fontSize: T.typography.sizeXs, color: C.textDim, fontFamily: T.typography.fontMono }}>
+                {history.length} samples
+              </div>
+            </div>
+          );
+          const passValues = history.map(h => h.passes);
+          const secValues = history.map(h => h.security);
+          const qualValues = history.map(h => h.quality);
+          return (
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: T.spacing.md,
+              marginBottom: T.spacing.xl,
+            }}>
+              {cell('Passes over time', passValues, passValues[passValues.length - 1] ?? null, C.accent, n => String(n))}
+              {cell('Security trend', secValues, secValues[secValues.length - 1] ?? null, C.green, n => `${n.toFixed(1)}%`)}
+              {cell('Quality trend', qualValues, qualValues[qualValues.length - 1] ?? null, C.purple, n => `${n.toFixed(1)}%`)}
+            </div>
+          );
+        })()}
 
         {/* Tier structure — always rendered from the protocol. */}
         <div style={{ marginBottom: T.spacing.xl }}>

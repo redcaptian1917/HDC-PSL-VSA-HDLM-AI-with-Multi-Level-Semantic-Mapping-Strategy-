@@ -7,8 +7,13 @@ set -euo pipefail
 
 LOG="/var/log/lfi/nightly_ingest.log"
 DB="$HOME/.local/share/plausiden/brain.db"
-DATASET_DIR="$HOME/Development/PlausiDen/New training sets i found"
-HF_DIR="$HOME/LFI-data/hf-conversations"
+# REGRESSION-GUARD: training datasets live under /home/user/, NOT $HOME
+# (=/root when this runs as root via systemd). The old $HOME/... path
+# silently FileNotFoundError'd every night — kitsune 18GB zip sat unprocessed.
+# Override with PLAUSIDEN_DATASET_DIR if the layout changes.
+DATASET_DIR="${PLAUSIDEN_DATASET_DIR:-/home/user/Development/PlausiDen/New training sets i found}"
+HF_DIR="${PLAUSIDEN_HF_DIR:-/home/user/LFI-data/hf-conversations}"
+export DATASET_DIR HF_DIR
 
 echo "[$(date)] Nightly ingest starting" >> "$LOG"
 
@@ -22,7 +27,7 @@ conn.execute("PRAGMA busy_timeout=600000")
 conn.execute("PRAGMA journal_mode=WAL")
 processed = set(r[0] for r in conn.execute("SELECT DISTINCT source FROM facts").fetchall())
 
-SRC = os.path.expanduser("~/Development/PlausiDen/New training sets i found")
+SRC = os.environ.get("DATASET_DIR", "/home/user/Development/PlausiDen/New training sets i found")
 total = 0
 for fname in sorted(os.listdir(SRC)):
     if not fname.endswith(".zip"): continue

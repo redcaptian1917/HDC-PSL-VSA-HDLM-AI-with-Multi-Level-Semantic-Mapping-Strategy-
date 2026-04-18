@@ -11,7 +11,7 @@ export interface SettingsShape {
   displayName: string;
   avatarDataUrl?: string;
   avatarGradient?: string;
-  fontSize: 'small' | 'medium' | 'large';
+  fontSize: 'small' | 'medium' | 'large' | 'xlarge';
   erudaMode: 'auto' | 'on' | 'off';
   sendOnEnter: boolean;
   persistConversations: boolean;
@@ -73,7 +73,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
         padding: isMobile ? T.spacing.xl : '28px', color: C.text,
         boxShadow: T.shadows.modal,
-        maxHeight: '90vh', overflowY: 'auto',
+        maxHeight: '90dvh', overflowY: 'auto',
       }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
         <h2 id='scc-settings-title' style={{ margin: 0, fontSize: '15px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Settings</h2>
@@ -268,8 +268,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           <div style={{ marginTop: '18px' }}>
             <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Font Size</label>
+            {/* c2-398 / task 198: extended the enum with 'xlarge' for the
+                a11y case of users who need the big step without zooming the
+                whole app. fontScale in App.tsx maps xlarge → 1.35. */}
             <div style={{ display: 'flex', gap: T.spacing.sm, marginTop: '8px' }}>
-              {(['small', 'medium', 'large'] as const).map(sz => (
+              {(['small', 'medium', 'large', 'xlarge'] as const).map(sz => (
                 <button key={sz} onClick={() => setSettings(s => ({ ...s, fontSize: sz }))}
                   style={{
                     flex: 1, padding: T.spacing.md,
@@ -278,7 +281,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     color: settings.fontSize === sz ? C.accent : C.textMuted,
                     borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit',
                     textTransform: 'uppercase', fontSize: T.typography.sizeSm, fontWeight: 700,
-                  }}>{sz}</button>
+                  }}>{sz === 'xlarge' ? 'X-Large' : sz}</button>
               ))}
             </div>
           </div>
@@ -478,6 +481,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             Merges conversations (by id); settings replaced after confirmation.
           </div>
 
+          {/* c2-425 / task 188: storage usage breakdown. Enumerates localStorage
+              keys the app owns + queries navigator.storage.estimate() for the
+              browser's overall quota/usage. Computed on mount of this tab
+              via a local useState+useEffect so it doesn't recompute every
+              render. Hidden entries are zero-byte. */}
+          <StorageUsage C={C} />
+
           <div style={{ marginTop: '22px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
             <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.red, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>Danger zone</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: T.spacing.sm }}>
@@ -516,5 +526,101 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
     </div>
   </div>
+  );
+};
+
+// c2-425 / task 188: storage-usage breakdown panel. Splits localStorage by
+// the keys the app writes + browser-level quota via navigator.storage.
+// Reads are on mount / when the "Refresh" link is clicked; not live-updated
+// because LS writes are rare and the estimate is expensive enough to not
+// poll. Sizes computed as key.length + value.length in chars, then bytes
+// via `* 2` for UTF-16 storage (LS spec) — same approach everyone uses.
+const StorageUsage: React.FC<{ C: any }> = ({ C }) => {
+  type Entry = { key: string; label: string; bytes: number };
+  const [entries, setEntries] = React.useState<Entry[]>([]);
+  const [quota, setQuota] = React.useState<{ used?: number; total?: number }>({});
+  const [tick, setTick] = React.useState(0);
+  const refresh = () => setTick(t => t + 1);
+  React.useEffect(() => {
+    const known: Array<{ key: string; label: string }> = [
+      { key: 'lfi_conversations_v2', label: 'Conversations' },
+      { key: 'lfi_settings',         label: 'Settings' },
+      { key: 'lfi_events',           label: 'Event log' },
+      { key: 'lfi_conversations_v1', label: 'Legacy conversations' },
+      { key: 'lfi_auth',             label: 'Auth state' },
+      { key: 'lfi_current_conversation', label: 'Active conversation id' },
+      { key: 'lfi_audit_history_v1', label: 'Audit history' },
+      { key: 'lfi_gradebook_history_v1', label: 'Gradebook history' },
+      { key: 'lfi_quality_history_v1', label: 'Quality history' },
+      { key: 'lfi_avp_history_v1',   label: 'AVP history' },
+      { key: 'lfi_cmd_recency_v1',   label: 'Command-palette recency' },
+      { key: 'lfi_admin_tab',        label: 'Admin active tab' },
+      { key: 'lfi_classroom_sub',    label: 'Classroom active sub-tab' },
+      { key: 'lfi_convo_date_filter', label: 'Sidebar date filter' },
+    ];
+    const next: Entry[] = [];
+    for (const k of known) {
+      try {
+        const v = localStorage.getItem(k.key);
+        if (v == null) continue;
+        next.push({ key: k.key, label: k.label, bytes: (k.key.length + v.length) * 2 });
+      } catch { /* storage blocked */ }
+    }
+    next.sort((a, b) => b.bytes - a.bytes);
+    setEntries(next);
+    if (typeof navigator !== 'undefined' && typeof navigator.storage?.estimate === 'function') {
+      navigator.storage.estimate().then(e => setQuota({ used: e.usage, total: e.quota })).catch(() => {});
+    }
+  }, [tick]);
+  const totalBytes = entries.reduce((s, e) => s + e.bytes, 0);
+  const fmtBytes = (n: number): string => {
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+    if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${n} B`;
+  };
+  const max = Math.max(...entries.map(e => e.bytes), 1);
+  return (
+    <div style={{ marginTop: '22px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Storage usage
+        </div>
+        <button onClick={refresh} aria-label='Recompute storage usage' style={{
+          background: 'transparent', border: 'none', color: C.accent,
+          cursor: 'pointer', fontFamily: 'inherit', fontSize: T.typography.sizeXs,
+          padding: '2px 4px',
+        }}>Refresh</button>
+      </div>
+      {entries.length === 0 ? (
+        <div style={{ fontSize: T.typography.sizeXs, color: C.textDim }}>
+          No PlausiDen keys in this browser yet.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          {entries.map(e => {
+            const pct = (e.bytes / max) * 100;
+            return (
+              <div key={e.key} title={e.key} style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
+                <span style={{ flex: '0 0 150px', fontSize: T.typography.sizeXs, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.label}</span>
+                <div style={{ flex: 1, height: '6px', background: C.bgInput, borderRadius: T.radii.xs, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: C.accent }} />
+                </div>
+                <span style={{ flex: '0 0 72px', textAlign: 'right', fontSize: T.typography.sizeXs, fontFamily: T.typography.fontMono, color: C.textMuted }}>
+                  {fmtBytes(e.bytes)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ marginTop: '10px', fontSize: T.typography.sizeXs, color: C.textDim, display: 'flex', justifyContent: 'space-between' }}>
+        <span>App total: <strong style={{ color: C.text, fontFamily: T.typography.fontMono }}>{fmtBytes(totalBytes)}</strong></span>
+        {typeof quota.used === 'number' && typeof quota.total === 'number' && (
+          <span>Browser quota: <strong style={{ color: C.text, fontFamily: T.typography.fontMono }}>
+            {fmtBytes(quota.used)} / {fmtBytes(quota.total)} ({((quota.used / quota.total) * 100).toFixed(1)}%)
+          </strong></span>
+        )}
+      </div>
+    </div>
   );
 };

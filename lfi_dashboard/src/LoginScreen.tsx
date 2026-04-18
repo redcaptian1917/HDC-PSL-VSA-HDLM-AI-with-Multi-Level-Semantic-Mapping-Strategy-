@@ -20,7 +20,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 }) => (
   <div style={{
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    minHeight: '100vh', width: '100%',
+    // c2-411 / BIG #218 mobile: dvh so login input stays above the keyboard.
+    minHeight: '100dvh', width: '100%',
     background: C.bg, padding: isMobile ? T.spacing.xl : T.spacing.xxxl,
     fontFamily: C.font,
   }}>

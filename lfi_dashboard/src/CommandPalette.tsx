@@ -17,6 +17,11 @@ export interface CmdPaletteItem {
   // separator, e.g. '$mod+N', '$mod+Shift+D'. Single-key hints like '?' pass
   // through verbatim. c2-265: formatShortcut now lives in util.ts.
   shortcut?: string;
+  // c2-422 / task 209: extra text scored by the fuzzy matcher but never
+  // rendered. Conversation items populate this with recent-message
+  // excerpts so "find that chat about X" works without X being in the
+  // title.
+  searchBody?: string;
 }
 
 export interface CommandPaletteProps {
@@ -55,12 +60,30 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     if (n <= 0) return 0;
     return Math.min(40, Math.log2(n + 1) * 10);
   };
-  const filtered = items
-    .map(it => ({ it, s: score(it.label) + score(it.hint) * 0.4 + recencyBoost(it.id) }))
+  // c2-403 / task 202: when the query is empty, surface a "Recent" group
+  // at the top with the top-5 most-run commands. Clones the items with
+  // group='Recent' so the grouping render picks them up; the originals
+  // still appear in their natural group below for discoverability.
+  // c2-422 / task 209: body text gets a smaller score weight (0.25) than
+  // hint (0.4) which is smaller than label (1.0). This preserves title-
+  // match precedence while letting a search like "psl" find a chat whose
+  // title is "Monday notes" but whose body mentions PSL.
+  const scored = items
+    .map(it => ({ it, s: score(it.label) + score(it.hint) * 0.4 + score(it.searchBody ?? '') * 0.25 + recencyBoost(it.id) }))
     .filter(x => x.s > 0)
     .sort((a, b) => b.s - a.s)
     .slice(0, 24)
     .map(x => x.it);
+  const filtered = (() => {
+    if (q) return scored;
+    const topRecent = items
+      .filter(it => (recency?.[it.id] ?? 0) > 0)
+      .sort((a, b) => (recency?.[b.id] ?? 0) - (recency?.[a.id] ?? 0))
+      .slice(0, 5)
+      .map(it => ({ ...it, group: 'Recent' }));
+    if (topRecent.length === 0) return scored;
+    return [...topRecent, ...scored];
+  })();
   const runSelected = () => {
     const picked = filtered[index];
     if (!picked) return;
@@ -88,7 +111,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           role='combobox'
           aria-expanded='true'
           aria-controls='lfi-cmd-listbox'
-          aria-activedescendant={filtered[index] ? `lfi-cmd-opt-${filtered[index].id}` : undefined}
+          aria-activedescendant={filtered[index] ? `lfi-cmd-opt-${filtered[index].group}-${filtered[index].id}` : undefined}
           aria-label='Type a command'
           autoComplete='off'
           autoCorrect='off'
@@ -118,8 +141,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           {filtered.map((it, i) => {
             const picked = i === index;
             const prev = i > 0 ? filtered[i - 1].group : null;
+            // c2-403 / task 202: compound key + option id so a Recent-group
+            // clone doesn't collide with the original's id for React + a11y.
+            const rowKey = `${it.group}-${it.id}`;
             return (
-              <div key={it.id}>
+              <div key={rowKey}>
                 {it.group !== prev && (
                   <div role='presentation' style={{
                     padding: '10px 12px 4px', fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
@@ -127,7 +153,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   }}>{it.group}</div>
                 )}
                 <button
-                  id={`lfi-cmd-opt-${it.id}`}
+                  id={`lfi-cmd-opt-${rowKey}`}
                   role='option' aria-selected={picked}
                   onClick={() => { setIndex(i); runSelected(); }}
                   onMouseEnter={() => setIndex(i)}
@@ -147,7 +173,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm, marginLeft: '10px', flexShrink: 0 }}>
                     {it.shortcut && (
-                      <kbd style={{
+                      <kbd className='lfi-shortcut-chip' style={{
                         fontFamily: T.typography.fontMono,
                         fontSize: '10.5px', color: picked ? C.accent : C.textMuted,
                         background: picked ? 'transparent' : C.bgInput,

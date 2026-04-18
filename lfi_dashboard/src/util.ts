@@ -98,6 +98,15 @@ export const IS_MAC: boolean =
 // Convenience for rendering a single-char modifier — e.g. mod() + 'N'.
 export const mod = (): string => (IS_MAC ? '\u2318' : 'Ctrl');
 
+// c2-417: separator between the modifier and the key. Mac's ⌘ glyph reads
+// as a distinct graphic so "⌘K" is unambiguous; "CtrlK" reads as a word.
+// Non-Mac renders with a '+' so users see "Ctrl+K".
+export const modSep = (): string => (IS_MAC ? '' : '+');
+
+// Compose mod+separator+key in one call. Replaces the common pattern
+// `{mod()}{key}` which produced "CtrlK" on non-Mac.
+export const modKey = (key: string): string => `${mod()}${modSep()}${key}`;
+
 // Expand '$mod' placeholders in a shortcut descriptor string. Used by the
 // Command Palette items and anywhere else that stores platform-agnostic
 // shortcut strings in data.
@@ -134,6 +143,31 @@ export const exportConversationMd = (convo: ExportableConversation): void => {
   const a = document.createElement('a');
   a.href = url;
   a.download = `${convo.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40)}.md`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
+
+// c2-395 / task 197: plain-text export. Role prefix + blank line between
+// turns, no markdown. Targets analysis pipelines / diff tools that prefer
+// untagged prose. Uses stripMarkdown on assistant turns so code fences and
+// formatting don't contaminate the output.
+export const exportConversationTxt = (convo: ExportableConversation): void => {
+  let txt = `${convo.title}\nExported: ${new Date().toISOString()}\n${'='.repeat(60)}\n\n`;
+  for (const m of convo.messages) {
+    const ts = new Date(m.timestamp).toLocaleString();
+    const who = m.role === 'user' ? 'You'
+      : m.role === 'assistant' ? 'PlausiDen AI'
+      : m.role === 'system' ? 'System'
+      : m.role === 'web' ? 'Web Search'
+      : m.role;
+    const body = m.role === 'assistant' ? stripMarkdown(m.content) : m.content;
+    txt += `[${who}] ${ts}\n${body}\n\n`;
+  }
+  const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${convo.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40)}.txt`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 };
@@ -179,6 +213,97 @@ ${rows}
   w.document.write(html);
   w.document.close();
   // Wait for layout before firing print.
+  setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 300);
+};
+
+// c2-421 / task 203: print-friendly grade-report export. Same pattern as
+// exportConversationPdf — renders an HTML doc in a new window + triggers
+// the browser's print dialog so the user can "Save as PDF". No library
+// bundled; the browser paginates + fonts it. data is the shape returned
+// by /api/admin/dashboard (overview + score + training + domains), all
+// fields optional so partial backend responses still render cleanly.
+export interface GradeReportData {
+  overview?: { total_facts?: number; total_sources?: number; adversarial_facts?: number; total_training_pairs?: number };
+  quality?: { average?: number; high_quality_count?: number; low_quality_count?: number };
+  training?: { sessions?: number; total_tested?: number; total_correct?: number; pass_rate?: number };
+  score?: { accuracy_score?: number; grade?: string; breakdown?: { quality?: number; adversarial?: number; coverage?: number; training?: number } };
+  domains?: Array<{ domain: string; count: number }>;
+}
+export const exportGradeReportPdf = (data: GradeReportData): void => {
+  const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const fmtNum = (n: number | undefined) =>
+    typeof n === 'number' && isFinite(n) ? n.toLocaleString() : '—';
+  const fmtPct = (n: number | undefined) => {
+    if (typeof n !== 'number' || !isFinite(n)) return '—';
+    const v = n <= 1.5 ? n * 100 : n;
+    return `${v.toFixed(1)}%`;
+  };
+  const grade = data.score?.grade || '—';
+  const accuracy = typeof data.score?.accuracy_score === 'number'
+    ? `${(data.score.accuracy_score * 100).toFixed(1)}%` : '—';
+  const domains = [...(data.domains || [])].sort((a, b) => b.count - a.count);
+  const maxCount = Math.max(...domains.map(d => d.count), 1);
+  const domainRows = domains.slice(0, 25).map(d => {
+    const pct = Math.round((d.count / maxCount) * 100);
+    return `<div class="drow"><span class="dname">${escape(d.domain)}</span>`
+      + `<div class="dbar"><div class="dfill" style="width:${pct}%"></div></div>`
+      + `<span class="dcount">${fmtNum(d.count)}</span></div>`;
+  }).join('');
+  const breakdown = data.score?.breakdown || {};
+  const breakdownRows = (['quality', 'adversarial', 'coverage', 'training'] as const)
+    .map(k => `<tr><td>${k}</td><td class="r">${fmtPct(breakdown[k])}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>PlausiDen grade report</title>
+<style>
+  @page { size: Letter; margin: 0.6in; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #111827; font-size: 11pt; line-height: 1.5; margin: 0; background: #fff; }
+  h1 { font-size: 20pt; margin: 0 0 4pt; }
+  h2 { font-size: 13pt; margin: 20pt 0 6pt; border-bottom: 1pt solid #e5e7eb; padding-bottom: 3pt; }
+  .exported { color: #6b7280; font-size: 9pt; margin-bottom: 18pt; }
+  .grade-hero { display: flex; gap: 20pt; align-items: baseline; margin-bottom: 12pt; }
+  .grade-hero .grade { font-size: 48pt; font-weight: 800; color: #2563eb; line-height: 1; }
+  .grade-hero .accuracy { font-size: 14pt; color: #374151; }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10pt; margin-bottom: 12pt; }
+  .stat { padding: 8pt 10pt; background: #f5f6f8; border-left: 3pt solid #2563eb; }
+  .stat .label { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; }
+  .stat .value { font-size: 14pt; font-weight: 700; margin-top: 2pt; font-variant-numeric: tabular-nums; }
+  table { border-collapse: collapse; width: 100%; font-size: 10pt; }
+  td, th { padding: 4pt 8pt; border-bottom: 1pt solid #e5e7eb; text-align: left; }
+  .r { text-align: right; font-variant-numeric: tabular-nums; }
+  .drow { display: flex; align-items: center; gap: 8pt; margin-bottom: 3pt; }
+  .dname { width: 140pt; font-size: 9pt; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dbar { flex: 1; height: 8pt; background: #f3f4f6; border-radius: 2pt; overflow: hidden; }
+  .dfill { height: 100%; background: linear-gradient(90deg, #2563eb, #8b5cf6); }
+  .dcount { width: 60pt; text-align: right; font-size: 9pt; font-variant-numeric: tabular-nums; color: #6b7280; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style></head><body>
+<h1>Grade Report</h1>
+<div class="exported">PlausiDen AI &middot; Generated ${new Date().toLocaleString()}</div>
+<div class="grade-hero">
+  <div class="grade">${escape(grade)}</div>
+  <div class="accuracy">Accuracy: <strong>${escape(accuracy)}</strong></div>
+</div>
+<h2>Key metrics</h2>
+<div class="stat-grid">
+  <div class="stat"><div class="label">Total facts</div><div class="value">${fmtNum(data.overview?.total_facts)}</div></div>
+  <div class="stat"><div class="label">Sources</div><div class="value">${fmtNum(data.overview?.total_sources)}</div></div>
+  <div class="stat"><div class="label">Training pairs</div><div class="value">${fmtNum(data.overview?.total_training_pairs)}</div></div>
+  <div class="stat"><div class="label">Adversarial</div><div class="value">${fmtNum(data.overview?.adversarial_facts)}</div></div>
+  <div class="stat"><div class="label">Pass rate</div><div class="value">${fmtPct(data.training?.pass_rate)}</div></div>
+  <div class="stat"><div class="label">Tested</div><div class="value">${fmtNum(data.training?.total_tested)}</div></div>
+  <div class="stat"><div class="label">Correct</div><div class="value">${fmtNum(data.training?.total_correct)}</div></div>
+  <div class="stat"><div class="label">Avg quality</div><div class="value">${typeof data.quality?.average === 'number' ? data.quality.average.toFixed(2) : '—'}</div></div>
+</div>
+${breakdownRows ? `<h2>Score breakdown</h2><table><thead><tr><th>Component</th><th class="r">Value</th></tr></thead><tbody>${breakdownRows}</tbody></table>` : ''}
+${domainRows ? `<h2>Top domains (${Math.min(25, domains.length)} of ${domains.length})</h2>${domainRows}` : ''}
+</body></html>`;
+  const w = window.open('', '_blank', 'noopener');
+  if (!w) {
+    alert('PDF export requires popups to be enabled for this site.');
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
   setTimeout(() => { try { w.focus(); w.print(); } catch { /* ignore */ } }, 300);
 };
 

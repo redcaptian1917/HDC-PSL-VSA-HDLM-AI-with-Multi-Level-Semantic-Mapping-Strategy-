@@ -16,14 +16,14 @@ import { TabBar } from './components/TabBar';
 // c2-379 / BIG #180: shared sortable table.
 import { DataTable } from './components';
 import type { Column } from './components';
-import { compactNum, formatRelative } from './util';
+import { compactNum, formatRelative, exportGradeReportPdf } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
 // the AI is the student, training data is the curriculum, evaluation
 // results are the gradebook. Eight sub-sections; for now all draw from
 // /api/admin/dashboard until the classroom-specific endpoints land.
 
-type Sub = 'profile' | 'curriculum' | 'gradebook' | 'lessons' | 'tests' | 'reports' | 'office' | 'library';
+type Sub = 'profile' | 'control' | 'curriculum' | 'gradebook' | 'lessons' | 'tests' | 'reports' | 'office' | 'library';
 
 interface DashboardShape {
   overview?: { total_facts?: number; total_sources?: number; cve_facts?: number; adversarial_facts?: number; total_training_pairs?: number };
@@ -46,6 +46,10 @@ export interface ClassroomViewProps {
 
 const SUBS: Array<{ id: Sub; label: string; hint: string }> = [
   { id: 'profile',    label: 'Student Profile', hint: 'Grade, strengths, weaknesses' },
+  // c2-426: dedicated Control tab. Houses Start/Stop + per-domain status
+  // + live recent-cycle pulse. Second position so it's reachable without
+  // scrolling on narrow viewports.
+  { id: 'control',    label: 'Training Control', hint: 'Start / stop / rotator' },
   { id: 'curriculum', label: 'Curriculum',      hint: 'Training datasets + sizes' },
   { id: 'gradebook',  label: 'Gradebook',       hint: 'Pass/fail + trends' },
   { id: 'lessons',    label: 'Lesson Plans',    hint: 'Active training sessions' },
@@ -112,7 +116,7 @@ const projectHistory = (snaps: GradebookSnapshot[]): Record<string, number[]> =>
 // c2-260 / #122: persist active sub-tab so a reopen lands where the user
 // left off. Validated against the known set to guard against stale strings.
 const CLASSROOM_SUB_KEY = 'lfi_classroom_sub';
-const CLASSROOM_SUBS: readonly Sub[] = ['profile','curriculum','gradebook','lessons','tests','reports','office','library'];
+const CLASSROOM_SUBS: readonly Sub[] = ['profile','control','curriculum','gradebook','lessons','tests','reports','office','library'];
 
 export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop, localEvents = [] }) => {
   const [sub, setSub] = useState<Sub>(() => {
@@ -229,7 +233,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
   // field; Office Hours: only reads localEvents; Library: user is typing in
   // the filter). Keeps background polling from disrupting typing.
   useEffect(() => {
-    const liveTabs: Sub[] = ['profile', 'curriculum', 'gradebook', 'lessons', 'reports'];
+    const liveTabs: Sub[] = ['profile', 'control', 'curriculum', 'gradebook', 'lessons', 'reports'];
     if (!liveTabs.includes(sub)) return;
     const id = setInterval(load, 10000);
     return () => clearInterval(id);
@@ -279,6 +283,23 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                 alignSelf: 'center', fontSize: T.typography.sizeXs, color: C.textDim,
                 marginRight: T.spacing.sm, fontFamily: T.typography.fontMono,
               }}>Updated {formatRelative(lastUpdated)}</span>
+            )}
+            {/* c2-421 / task 203: export the current grade report as a PDF.
+                Uses the already-loaded data — no extra fetch. Hidden when
+                data hasn't arrived yet so users don't get an empty PDF. */}
+            {data && (
+              <button onClick={() => exportGradeReportPdf(data as any)}
+                aria-label='Export grade report as PDF'
+                title='Export grade report as PDF'
+                style={{
+                  alignSelf: 'center', background: 'transparent',
+                  border: `1px solid ${C.borderSubtle}`, color: C.textMuted,
+                  borderRadius: T.radii.sm, cursor: 'pointer',
+                  padding: '4px 10px', marginRight: T.spacing.xs,
+                  fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                  textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+                  fontFamily: 'inherit',
+                }}>PDF</button>
             )}
             <button onClick={load} disabled={loading} aria-label='Refresh classroom data'
               title={loading ? 'Refreshing…' : 'Refresh (auto-refreshes every 10s on live tabs)'}
@@ -457,6 +478,11 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
               </div>
             )}
           </div>
+        )}
+
+        {/* --- Training Control (c2-426) --- */}
+        {sub === 'control' && (
+          <TrainingControlPanel C={C} host={host} isDesktop={isDesktop} dashboardData={data} onDataRefresh={load} />
         )}
 
         {/* --- Curriculum --- */}
@@ -766,6 +792,338 @@ const DomainBars: React.FC<{
           </div>
         );
       })}
+    </div>
+  );
+};
+
+// c2-426: dedicated Training Control panel. Surfaces trainer status +
+// Start/Stop + per-domain sessions + recent-cycle pulse, all in one place
+// so the user doesn't need to jump between /training modal and the
+// Admin Training tab. Polls the 3 training endpoints on mount + every 5s
+// while visible so progress feels live.
+const TrainingControlPanel: React.FC<{
+  C: any; host: string; isDesktop: boolean;
+  dashboardData: DashboardShape | null;
+  onDataRefresh: () => void;
+}> = ({ C, host, dashboardData, onDataRefresh }) => {
+  const [accuracy, setAccuracy] = useState<any | null>(null);
+  const [sessions, setSessions] = useState<any | null>(null);
+  const [busy, setBusy] = useState<null | 'start' | 'stop'>(null);
+  const [toastMsg, setToastMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [nowTick, setNowTick] = useState(0);
+  // c2-427: model_tier selection for Start. Captured client-side so when
+  // the new /api/classroom/lessons/start route lands the body is already
+  // ready. Defaults to Bridge as a middle-ground choice. Persisted per
+  // device so returning users don't have to re-pick.
+  type TierChoice = 'pulse' | 'bridge' | 'bigbrain';
+  const [selectedTier, setSelectedTier] = useState<TierChoice>(() => {
+    try {
+      const v = localStorage.getItem('lfi_training_tier') as TierChoice | null;
+      if (v === 'pulse' || v === 'bridge' || v === 'bigbrain') return v;
+    } catch { /* storage blocked */ }
+    return 'bridge';
+  });
+  useEffect(() => {
+    try { localStorage.setItem('lfi_training_tier', selectedTier); } catch { /* quota */ }
+  }, [selectedTier]);
+
+  const fetchWithTimeout = async <T,>(path: string, ms = 8000): Promise<T> => {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), ms);
+    try {
+      const r = await fetch(`http://${host}:3000${path}`, { signal: ctrl.signal });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return (await r.json()) as T;
+    } finally { clearTimeout(to); }
+  };
+  const refresh = async () => {
+    const [a, s] = await Promise.allSettled([
+      fetchWithTimeout<any>('/api/admin/training/accuracy'),
+      fetchWithTimeout<any>('/api/admin/training/sessions'),
+    ]);
+    if (a.status === 'fulfilled') setAccuracy(a.value);
+    if (s.status === 'fulfilled') setSessions(s.value);
+    onDataRefresh();
+  };
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [host]);
+  // Tick for "last trained X ago" freshness without re-fetching.
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const control = async (action: 'start' | 'stop') => {
+    setBusy(action);
+    setToastMsg(null);
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 10000);
+      // c2-427: body carries model_tier on start. Legacy /api/admin/training/:action
+      // is JSON-body-tolerant (ignores unknown fields); the new
+      // /api/classroom/lessons/start route will read it when wired.
+      const bodyJson = action === 'start' ? JSON.stringify({ model_tier: selectedTier }) : undefined;
+      const r = await fetch(`http://${host}:3000/api/admin/training/${action}`, {
+        method: 'POST', signal: ctrl.signal,
+        headers: bodyJson ? { 'Content-Type': 'application/json' } : undefined,
+        body: bodyJson,
+      });
+      clearTimeout(to);
+      const respBody = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(respBody?.message || `HTTP ${r.status}`);
+      setToastMsg({
+        ok: true,
+        text: respBody?.message || (action === 'start'
+          ? `Trainer started on ${selectedTier}`
+          : 'Trainer stop requested'),
+      });
+      setTimeout(refresh, 500);
+    } catch (e: any) {
+      setToastMsg({ ok: false, text: `Could not ${action}: ${e?.message || e}` });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const trainingState = sessions?.training_state || {};
+  const domainStateEntries: [string, any][] = Object.entries(trainingState);
+  const nowSec = Date.now() / 1000;
+  const anyRecentlyTrained = domainStateEntries.some(([, st]: any) => st?.last_trained && (nowSec - Number(st.last_trained)) < 300);
+  const trainerActive = !!(sessions?.trainer_running) || anyRecentlyTrained;
+
+  // Parse the most recent log line for the pulse indicator.
+  const lastCycle = (() => {
+    const log: string[] | undefined = accuracy?.recent_training_log;
+    if (!Array.isArray(log) || log.length === 0) return null;
+    for (let i = log.length - 1; i >= 0; i--) {
+      const m = log[i].match(/^\[([^\]]+)\] cycle=(\d+) domain=(\w+) (.+)$/);
+      if (m) {
+        const when = Date.parse(m[1]);
+        if (!Number.isNaN(when)) {
+          const tail = m[4].trim();
+          const state = tail.startsWith('batch=') ? 'in progress' : tail === 'done' ? 'done' : tail;
+          return { ts: when, ageSec: Math.max(0, Math.floor((Date.now() - when) / 1000)), cycle: m[2], domain: m[3], state };
+        }
+      }
+    }
+    return null;
+  })();
+  void nowTick; // force re-eval of ageSec each tick
+
+  const totalPairs = dashboardData?.overview?.total_training_pairs ?? (dashboardData?.training_files || []).reduce((s, f) => s + f.pairs, 0);
+  const totalFacts = dashboardData?.overview?.total_facts;
+  const learningSignals = accuracy?.learning_signals;
+  const passRatePct = pctNorm(accuracy?.psl_calibration?.pass_rate) ?? pctNorm(accuracy?.pass_rate);
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.md, marginBottom: T.spacing.md, flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: 0 }}>Training Control</h2>
+        <span aria-live='polite' style={{
+          display: 'inline-flex', alignItems: 'center', gap: '6px',
+          padding: `4px ${T.spacing.sm}`,
+          background: trainerActive ? C.greenBg : C.bgInput,
+          border: `1px solid ${trainerActive ? C.greenBorder : C.borderSubtle}`,
+          color: trainerActive ? C.green : C.textMuted,
+          borderRadius: T.radii.sm,
+          fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+          textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+        }}>
+          <span style={{
+            width: '8px', height: '8px', borderRadius: '50%',
+            background: trainerActive ? C.green : C.textDim,
+            boxShadow: trainerActive ? `0 0 6px ${C.green}` : 'none',
+          }} />
+          {trainerActive ? 'Training active' : 'Trainer idle'}
+        </span>
+      </div>
+      {/* Top-level start/stop controls */}
+      <div style={{
+        display: 'flex', gap: T.spacing.sm, marginBottom: T.spacing.lg, flexWrap: 'wrap',
+        alignItems: 'center',
+      }}>
+        {/* c2-427: model tier picker. Pulse=qwen2.5:0.5b (fast),
+            Bridge=qwen2.5:3b (balanced), BigBrain=qwen2.5-coder:7b (deep).
+            Per backend tier plumbing shipped in #324. Picked once + remembered
+            per device so the user doesn't re-choose each start. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <label htmlFor='training-tier-picker' style={{
+            fontSize: '9px', fontWeight: T.typography.weightBold,
+            color: C.textMuted, textTransform: 'uppercase',
+            letterSpacing: T.typography.trackingLoose,
+          }}>Model for next session</label>
+          <select id='training-tier-picker' value={selectedTier}
+            onChange={(e) => setSelectedTier(e.target.value as TierChoice)}
+            disabled={busy !== null || trainerActive}
+            style={{
+              padding: `7px 28px 7px 12px`,
+              fontSize: T.typography.sizeSm, fontWeight: T.typography.weightSemibold,
+              background: C.bgInput, color: C.text,
+              border: `1px solid ${C.border}`, borderRadius: T.radii.md,
+              cursor: (busy !== null || trainerActive) ? 'not-allowed' : 'pointer',
+              fontFamily: 'inherit',
+              appearance: 'none', WebkitAppearance: 'none',
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath fill='%237f8296' d='M0 2l4 4 4-4z'/%3E%3C/svg%3E")`,
+              backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center',
+            }}>
+            <option value='pulse'>Pulse &middot; qwen2.5:0.5b &middot; fast</option>
+            <option value='bridge'>Bridge &middot; qwen2.5:3b &middot; balanced</option>
+            <option value='bigbrain'>BigBrain &middot; qwen2.5-coder:7b &middot; deep</option>
+          </select>
+        </div>
+        <button onClick={() => control('start')}
+          disabled={busy !== null || trainerActive}
+          aria-label='Start training'
+          style={{
+            padding: `${T.spacing.sm} ${T.spacing.lg}`,
+            fontSize: T.typography.sizeMd, fontWeight: T.typography.weightBold,
+            background: trainerActive ? C.bgInput : C.greenBg,
+            border: `1px solid ${trainerActive ? C.borderSubtle : C.greenBorder}`,
+            color: trainerActive ? C.textDim : C.green,
+            borderRadius: T.radii.md,
+            cursor: (busy !== null || trainerActive) ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit',
+            opacity: busy === 'start' ? 0.6 : 1,
+          }}>{busy === 'start' ? 'Starting…' : 'Start training'}</button>
+        <button onClick={() => control('stop')}
+          disabled={busy !== null || !trainerActive}
+          aria-label='Stop training'
+          style={{
+            padding: `${T.spacing.sm} ${T.spacing.lg}`,
+            fontSize: T.typography.sizeMd, fontWeight: T.typography.weightBold,
+            background: !trainerActive ? 'transparent' : C.redBg,
+            border: `1px solid ${!trainerActive ? C.borderSubtle : C.redBorder}`,
+            color: !trainerActive ? C.textDim : C.red,
+            borderRadius: T.radii.md,
+            cursor: (busy !== null || !trainerActive) ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit',
+            opacity: busy === 'stop' ? 0.6 : 1,
+          }}>{busy === 'stop' ? 'Stopping…' : 'Stop training'}</button>
+        <button onClick={refresh} disabled={busy !== null}
+          aria-label='Refresh training status'
+          style={{
+            padding: `${T.spacing.sm} ${T.spacing.lg}`,
+            fontSize: T.typography.sizeMd, fontWeight: T.typography.weightBold,
+            background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+            color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}>Refresh</button>
+      </div>
+      {toastMsg && (
+        <div role={toastMsg.ok ? 'status' : 'alert'} style={{
+          marginBottom: T.spacing.md, padding: `${T.spacing.sm} ${T.spacing.md}`,
+          background: toastMsg.ok ? C.greenBg : C.redBg,
+          border: `1px solid ${toastMsg.ok ? C.greenBorder : C.redBorder}`,
+          color: toastMsg.ok ? C.green : C.red,
+          borderRadius: T.radii.md, fontSize: T.typography.sizeSm,
+        }}>{toastMsg.text}</div>
+      )}
+      {/* Most recent cycle pulse */}
+      {lastCycle && (
+        <div style={{
+          padding: `${T.spacing.sm} ${T.spacing.md}`, marginBottom: T.spacing.lg,
+          background: lastCycle.ageSec < 300 ? C.greenBg : C.bgInput,
+          border: `1px solid ${lastCycle.ageSec < 300 ? C.greenBorder : C.borderSubtle}`,
+          borderRadius: T.radii.md,
+          display: 'flex', alignItems: 'center', gap: T.spacing.sm, fontSize: T.typography.sizeSm, flexWrap: 'wrap',
+        }}>
+          <span style={{
+            display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%',
+            background: lastCycle.ageSec < 300 ? C.green : C.textDim,
+          }} />
+          <span style={{ color: C.textMuted, fontWeight: T.typography.weightSemibold }}>Most recent cycle</span>
+          <span style={{ color: C.text, fontFamily: T.typography.fontMono }}>#{lastCycle.cycle}</span>
+          <span style={{ color: C.accent, fontWeight: T.typography.weightSemibold }}>{lastCycle.domain}</span>
+          <span style={{ color: C.textMuted }}>{lastCycle.state}</span>
+          <span style={{ marginLeft: 'auto', color: C.textDim, fontSize: T.typography.sizeXs }}>{formatRelative(lastCycle.ts)}</span>
+        </div>
+      )}
+      {/* Summary stats */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: T.spacing.sm, marginBottom: T.spacing.lg,
+      }}>
+        <StatCard C={C} label='Facts' value={typeof totalFacts === 'number' ? compactNum(totalFacts) : '—'} color={C.accent} />
+        <StatCard C={C} label='Training pairs' value={totalPairs ? compactNum(totalPairs) : '—'} color={C.green} />
+        <StatCard C={C} label='Domains' value={String(dashboardData?.domains?.length ?? domainStateEntries.length ?? 0)} color={C.purple} />
+        <StatCard C={C} label='Pass rate' value={passRatePct != null ? `${passRatePct.toFixed(1)}%` : '—'} color={passRatePct != null && passRatePct >= 95 ? C.green : passRatePct != null && passRatePct >= 85 ? C.yellow : C.red} />
+        <StatCard C={C} label='Learning signals' value={typeof learningSignals === 'number' ? compactNum(learningSignals) : '—'} color={C.green} />
+        <StatCard C={C} label='Sessions' value={sessions?.training_state ? String(Object.values(trainingState).reduce((s: number, st: any) => s + (st?.sessions ?? 0), 0)) : '—'} color={C.accent} />
+      </div>
+      {/* Per-domain training status + rotator */}
+      {domainStateEntries.length > 0 && (
+        <div>
+          <div style={{
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+            color: C.textMuted, textTransform: 'uppercase',
+            letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.sm,
+          }}>Per-domain rotator ({domainStateEntries.length})</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {domainStateEntries
+              .sort(([, a]: any, [, b]: any) => (Number(b?.last_trained ?? 0)) - (Number(a?.last_trained ?? 0)))
+              .map(([dom, st]: any) => {
+                const last = Number(st?.last_trained ?? 0);
+                const ageSec = last ? nowSec - last : null;
+                const recent = ageSec != null && ageSec < 300;
+                const sessionsN = st?.sessions ?? 0;
+                return (
+                  <div key={dom} style={{
+                    display: 'flex', alignItems: 'center', gap: T.spacing.sm,
+                    padding: `${T.spacing.sm} ${T.spacing.md}`,
+                    background: recent ? C.greenBg : C.bgInput,
+                    border: `1px solid ${recent ? C.greenBorder : C.borderSubtle}`,
+                    borderRadius: T.radii.md,
+                    fontSize: T.typography.sizeSm,
+                  }}>
+                    <span style={{
+                      display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%',
+                      background: recent ? C.green : C.textDim,
+                    }} />
+                    <span style={{ color: C.text, fontWeight: T.typography.weightSemibold, flex: '0 0 140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dom}</span>
+                    <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono, flex: '0 0 90px' }}>{sessionsN} session{sessionsN === 1 ? '' : 's'}</span>
+                    <span style={{ flex: 1 }} />
+                    {recent && <span style={{ fontSize: T.typography.sizeXs, color: C.green, fontWeight: T.typography.weightBold, textTransform: 'uppercase' }}>LIVE</span>}
+                    <span style={{ color: C.textDim, fontSize: T.typography.sizeXs, fontFamily: T.typography.fontMono }}>
+                      {last ? `${formatRelative(last * 1000)}` : 'never'}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+      {/* Recent training log tail */}
+      {Array.isArray(accuracy?.recent_training_log) && accuracy.recent_training_log.length > 0 && (
+        <div style={{ marginTop: T.spacing.lg }}>
+          <div style={{
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+            color: C.textMuted, textTransform: 'uppercase',
+            letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.sm,
+          }}>Recent training log (last 40)</div>
+          <pre style={{
+            padding: T.spacing.md, background: C.bgInput, borderRadius: T.radii.md,
+            fontSize: T.typography.sizeXs, color: C.textSecondary,
+            fontFamily: T.typography.fontMono,
+            whiteSpace: 'pre-wrap', maxHeight: '260px', overflowY: 'auto',
+            margin: 0, border: `1px solid ${C.borderSubtle}`,
+          }}>{accuracy.recent_training_log.slice(-40).join('\n')}</pre>
+        </div>
+      )}
+      {/* c2-426: configuration placeholder — depends on backend endpoints
+          Claude 1 is still inventorying. Once /api/admin/training/config
+          (or equivalent) lands, this section will expose cadence / batch
+          size / priority / per-domain enable toggles. For now we show a
+          discoverability hint. */}
+      <div style={{
+        marginTop: T.spacing.xl, padding: T.spacing.md,
+        background: C.bgInput, border: `1px dashed ${C.borderSubtle}`,
+        borderRadius: T.radii.md, color: C.textDim, fontSize: T.typography.sizeXs,
+      }}>
+        <strong style={{ color: C.textMuted }}>Configuration</strong> — graphical rotator ordering, per-domain enable/disable, cadence and batch-size knobs land here once the backend endpoints are confirmed. Tracked in the task queue.
+      </div>
     </div>
   );
 };

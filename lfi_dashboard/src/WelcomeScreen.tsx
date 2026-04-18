@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { T } from './tokens';
 
 // Shown in the chat area when there are no messages yet. Six quick-start
@@ -20,16 +20,39 @@ export interface WelcomeScreenProps {
 // backend. Claude 0 recommended simpler, more direct starters that let the
 // AI lean on its RAG/knowledge context. Keep every starter answerable with
 // the facts we've ingested.
-const QUICK_STARTS: { t: string; p: string }[] = [
+// c2-394 / task 196: larger pool, random 6 per mount (seeded in useMemo so
+// re-renders during a single welcome visit stay stable). Reduces "seen
+// these already" repetition for returning users.
+const QUICK_START_POOL: { t: string; p: string }[] = [
   { t: 'Capabilities', p: 'What can you do? List your skills and how you work.' },
   { t: 'Security check', p: 'Help me think through the security of my Linux setup.' },
   { t: 'Analyse my system', p: 'Walk me through interpreting my CPU, RAM, and disk usage.' },
   { t: 'Explain a topic', p: 'What do you know about sovereign AI and local-first systems?' },
   { t: 'Code help', p: 'Help me debug a Rust program. I will paste the error next.' },
   { t: 'Learn something', p: 'Teach me something useful about networking I probably do not know.' },
+  { t: 'Regex help', p: 'Explain a regex I will paste — break it down token by token.' },
+  { t: 'Shell one-liner', p: 'Write a shell one-liner for a task I will describe.' },
+  { t: 'Research a topic', p: 'Give me a structured overview of a topic with citations.' },
+  { t: 'Git diagnosis', p: 'Walk me through fixing a git state I will describe.' },
+  { t: 'Compare options', p: 'Compare two tools / approaches with a pros-and-cons table.' },
+  { t: 'Translate', p: 'Translate text I paste — preserve formatting and tone.' },
 ];
+// Fisher–Yates pick: stable for a given visit, fresh per mount.
+const pickStarters = (pool: typeof QUICK_START_POOL, n: number): typeof QUICK_START_POOL => {
+  const copy = pool.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+};
 
-export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPickPrompt, recentContext }) => (
+export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPickPrompt, recentContext }) => {
+  // useMemo with [] dep array so the random pick is stable across re-renders
+  // of THIS component instance. New mount (e.g. switching to an empty convo)
+  // rolls fresh.
+  const starters = useMemo(() => pickStarters(QUICK_START_POOL, 6), []);
+  return (
   <div style={{ textAlign: 'center', padding: isDesktop ? `72px ${T.spacing.xl} 40px` : `40px ${T.spacing.xl} ${T.spacing.xl}` }}>
     <h1 style={{
       fontSize: isDesktop ? '28px' : T.typography.size3xl,
@@ -91,7 +114,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPi
       gridTemplateColumns: isDesktop ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)',
       gap: '10px', maxWidth: '720px', margin: '0 auto',
     }}>
-      {QUICK_STARTS.map(s => (
+      {starters.map(s => (
         <button key={s.t}
           onClick={() => onPickPrompt(s.p)}
           aria-label={`${s.t}: ${s.p}`}
@@ -115,4 +138,5 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPi
       ))}
     </div>
   </div>
-);
+  );
+};

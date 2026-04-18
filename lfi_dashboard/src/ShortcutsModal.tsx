@@ -26,6 +26,7 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', 'Shift', 'K'], label: 'Open knowledge browser' },
       { keys: ['⌘', 'F'], label: 'Search this conversation (in Chat view)' },
       { keys: ['⌘', 'Shift', 'F'], label: 'Search anywhere (overrides browser find)' },
+      { keys: ['⌘', 'Shift', 'L'], label: 'Jump to Admin → Logs' },
     ],
   },
   {
@@ -48,6 +49,7 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', ','], label: 'Open settings' },
       { keys: ['⌘', 'D'], label: 'Toggle developer mode' },
       { keys: ['⌘', 'Shift', 'D'], label: 'Cycle through themes' },
+      { keys: ['⌘', 'Shift', 'A'], label: 'Toggle auto theme (follow OS)' },
     ],
   },
   // c2-250 / #112: document the sidebar row shortcuts added in c2-247+249
@@ -92,7 +94,7 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ C, onClose }) =>
       <div ref={dialogRef} role='dialog' aria-modal='true' aria-labelledby='scc-shortcuts-title'
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: '100%', maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto',
+          width: '100%', maxWidth: '520px', maxHeight: '85dvh', overflowY: 'auto',
           background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
           padding: T.spacing.xl, boxShadow: T.shadows.modal,
         }}>

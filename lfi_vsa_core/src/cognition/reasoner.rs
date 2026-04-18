@@ -22,22 +22,35 @@ use crate::cognition::knowledge_compiler::KnowledgeCompiler;
 use crate::cognition::router::IntelligenceTier;
 use crate::reasoning_provenance::{TraceArena, TraceId, ConclusionId, InferenceSource};
 
-/// Default model name for each intelligence tier. Each can be overridden
-/// via env var so operators can swap models without a recompile.
+/// Format HDC-retrieved facts as a grounded response — no LLM in the path.
 ///
-/// SUPERSOCIETY: tiers were decorative until #324 — all three hit the same
-/// 7B model. This maps the governor's choice to an actual Ollama model
-/// name, so Pulse is actually fast and BigBrain actually uses the big one.
-pub fn model_for_tier(tier: IntelligenceTier) -> String {
-    match tier {
-        IntelligenceTier::Pulse => std::env::var("PLAUSIDEN_MODEL_PULSE")
-            .unwrap_or_else(|_| "qwen2.5:0.5b".into()),
-        IntelligenceTier::Bridge => std::env::var("PLAUSIDEN_MODEL_BRIDGE")
-            .unwrap_or_else(|_| "qwen2.5:3b".into()),
-        IntelligenceTier::BigBrain => std::env::var("PLAUSIDEN_MODEL_BIGBRAIN")
-            .or_else(|_| std::env::var("PLAUSIDEN_MODEL"))
-            .unwrap_or_else(|_| "qwen2.5-coder:7b".into()),
+/// LFI is post-LLM: the response is built from the rag_context the tiered
+/// governor has already pulled from brain.db (59M+ facts, HDC-grounded). We
+/// show the top matches verbatim with their keys + similarity, so the user
+/// sees exactly what was retrieved and can click through to provenance.
+///
+/// If the retrieval is empty, we say so honestly — no "let me look into that"
+/// stalling phrases that pretend a generator is about to produce something.
+pub fn hdc_retrieval_response(query: &str, rag_context: &[(String, String, f64)]) -> String {
+    if rag_context.is_empty() {
+        return format!(
+            "No HDC match in the knowledge base for \"{}\". Ingest relevant sources \
+             or rephrase the query — I won't fabricate an answer.",
+            crate::truncate_str(query, 80)
+        );
     }
+    let lines: Vec<String> = rag_context.iter()
+        .take(5)
+        .map(|(k, v, score)| {
+            let trimmed = if v.len() > 400 {
+                let cut = &v[..400];
+                cut.rfind(' ').map(|i| &v[..i]).unwrap_or(cut)
+            } else { v.as_str() };
+            format!("[{} · match {:.0}%] {}", k, score * 100.0, trimmed)
+        })
+        .collect();
+    format!("{} matches from the HDC-indexed knowledge base:\n\n{}",
+            rag_context.len().min(5), lines.join("\n\n"))
 }
 
 /// The active cognitive mode.
@@ -1089,38 +1102,22 @@ impl CognitiveCore {
     }
 
     /// Generate a response string based on intent and thought analysis.
-    /// Query local Ollama for a substantive answer with optional RAG context.
-    /// When `rag_context` is provided, relevant facts from brain.db are injected
-    /// into the prompt, grounding the LLM's answer in the knowledge base.
     ///
-    /// SUPERSOCIETY: This is the core intelligence amplification mechanism.
-    /// A 7B model with 51M+ facts as context produces qualitatively different
-    /// answers than the same model without grounding. The RAG context turns
-    /// a generic chatbot into a knowledge-grounded reasoning system.
-    ///
-    /// BUG ASSUMPTION: Ollama may not be running. This must never block startup
-    /// or cause a panic. Timeout is 60s to keep chat responsive.
-    pub fn query_ollama(prompt: &str) -> Option<String> {
-        // Default to BigBrain for standalone callers (tests, CLI utilities).
-        // The tiered path routes through query_ollama_with_context_tier.
-        Self::query_ollama_with_context_model(prompt, &[], &model_for_tier(IntelligenceTier::BigBrain))
+    /// POST-LLM: the response path goes through the HDC/HDLM stack + RAG
+    /// facts pulled from brain.db. No LLM. See `hdc_retrieval_response`.
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    fn _removed_query_ollama_block(prompt: &str, rag_facts: &[(String, String, f64)], model: &str) -> Option<String> {
+        let _ = (prompt, rag_facts, model);
+        None
     }
 
-    /// Backward-compat shim — callers that haven't been tier-plumbed yet
-    /// still pick BigBrain. Migrate them to `query_ollama_with_context_model`
-    /// (#324 follow-up in anywhere outside cognition::reasoner).
-    pub fn query_ollama_with_context(prompt: &str, rag_facts: &[(String, String, f64)]) -> Option<String> {
-        Self::query_ollama_with_context_model(prompt, rag_facts, &model_for_tier(IntelligenceTier::BigBrain))
-    }
-
-    /// Query Ollama with RAG context and an explicit model name — the facts
-    /// are prepended to the prompt so the model can reference them.
-    ///
-    /// BUG ASSUMPTION: the caller has already selected the right model for
-    /// its tier via `model_for_tier`. We do no further gating here — the
-    /// model string is injected directly into the Ollama /api/generate
-    /// payload.
-    pub fn query_ollama_with_context_model(prompt: &str, rag_facts: &[(String, String, f64)], model: &str) -> Option<String> {
+    // (Dead Ollama helper kept below until the file can be shrunk in a
+    // follow-up commit. Body retained only to avoid a 200-line deletion
+    // mixing with the behavioural pivot.)
+    #[doc(hidden)]
+    #[allow(dead_code, unused_variables, unused_mut)]
+    fn _dead_query_ollama_impl(prompt: &str, rag_facts: &[(String, String, f64)], model: &str) -> Option<String> {
         // No manual escaping needed — serde_json handles all escaping properly.
         // AVP-PASS-3: Removed brittle manual string escaping.
 
@@ -1325,16 +1322,7 @@ impl CognitiveCore {
             }
             Some(Intent::Search { query }) => {
                 // Try Ollama for a real answer first
-                if let Some(answer) = Self::query_ollama_with_context_model(query, &self.rag_context, &model_for_tier(self.active_tier)) {
-                    answer
-                } else {
-                    let q = crate::truncate_str(query, 80);
-                    format!(
-                        "Good question — let me look into \"{}\" for you. \
-                         I'll search my knowledge base and get back to you with what I find.",
-                        q
-                    )
-                }
+                hdc_retrieval_response(query, &self.rag_context)
             }
             Some(Intent::PlanTask { goal }) => {
                 let g = crate::truncate_str(goal, 80);
@@ -1355,18 +1343,7 @@ impl CognitiveCore {
                 }
             }
             Some(Intent::Analyze { target }) => {
-                // Try Ollama for substantive analysis
-                let prompt = format!("Analyze this topic thoroughly: {}", target);
-                if let Some(answer) = Self::query_ollama_with_context_model(&prompt, &self.rag_context, &model_for_tier(self.active_tier)) {
-                    answer
-                } else {
-                    let t = crate::truncate_str(target, 80);
-                    format!(
-                        "Let me take a closer look at \"{}\". I'll break down the key aspects \
-                         and share what I find.",
-                        t
-                    )
-                }
+                hdc_retrieval_response(target, &self.rag_context)
             }
             Some(Intent::Improve { target }) => {
                 let t = crate::truncate_str(target, 80);
@@ -1637,17 +1614,7 @@ impl CognitiveCore {
                 if input_lower_pre.starts_with(prefix) {
                     let topic = input_lower_pre[prefix.len()..].trim_end_matches('?').trim();
                     if !topic.is_empty() && topic.len() < 100 {
-                        // Try Ollama for a real, substantive answer
-                        if let Some(answer) = Self::query_ollama_with_context_model(input, &self.rag_context, &model_for_tier(self.active_tier)) {
-                            return answer;
-                        }
-                        // Fallback template if Ollama unavailable
-                        return format!(
-                            "Good question about {}. Let me think about this — \
-                             the short answer depends on context. What angle \
-                             are you most interested in?",
-                            topic
-                        );
+                        return hdc_retrieval_response(input, &self.rag_context);
                     }
                 }
             }
@@ -1949,32 +1916,24 @@ mod tests {
     }
 
     #[test]
-    fn tier_model_map_defaults_differ() {
-        // #324: each tier must pick a distinct model by default — the whole
-        // point of tiers is picking different-size models. If the defaults
-        // ever collapse to the same string, the governor's tier decision is
-        // a no-op again.
-        // Clear any env overrides first so the test is deterministic.
-        std::env::remove_var("PLAUSIDEN_MODEL");
-        std::env::remove_var("PLAUSIDEN_MODEL_PULSE");
-        std::env::remove_var("PLAUSIDEN_MODEL_BRIDGE");
-        std::env::remove_var("PLAUSIDEN_MODEL_BIGBRAIN");
-
-        let pulse = model_for_tier(IntelligenceTier::Pulse);
-        let bridge = model_for_tier(IntelligenceTier::Bridge);
-        let bigbrain = model_for_tier(IntelligenceTier::BigBrain);
-
-        assert_ne!(pulse, bridge, "Pulse and Bridge defaults collapsed");
-        assert_ne!(bridge, bigbrain, "Bridge and BigBrain defaults collapsed");
-        assert_ne!(pulse, bigbrain, "Pulse and BigBrain defaults collapsed");
+    fn hdc_retrieval_response_empty_context() {
+        // No facts retrieved → honest "no data" message, not a fabrication.
+        let out = hdc_retrieval_response("what is the capital of Mars?", &[]);
+        assert!(out.contains("No HDC match"), "empty-ctx response: {}", out);
+        assert!(out.contains("won't fabricate"), "empty-ctx response: {}", out);
     }
 
     #[test]
-    fn tier_model_map_respects_env_override() {
-        // Set a per-tier override; it must win over the default.
-        std::env::set_var("PLAUSIDEN_MODEL_PULSE", "tinyllama:1b");
-        assert_eq!(model_for_tier(IntelligenceTier::Pulse), "tinyllama:1b");
-        std::env::remove_var("PLAUSIDEN_MODEL_PULSE");
+    fn hdc_retrieval_response_formats_matches() {
+        let ctx = vec![
+            ("fact_a".into(), "water boils at 100C at sea level".into(), 0.95),
+            ("fact_b".into(), "pressure affects boiling point".into(), 0.80),
+        ];
+        let out = hdc_retrieval_response("boiling point", &ctx);
+        assert!(out.contains("fact_a"));
+        assert!(out.contains("fact_b"));
+        assert!(out.contains("95%"));
+        assert!(out.contains("water boils"));
     }
 
     #[test]

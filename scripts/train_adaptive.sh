@@ -11,9 +11,16 @@ mkdir -p /var/log/lfi
 cd /root/LFI/lfi_vsa_core
 BIN="$PWD/target/release/ollama_train"
 DB="$HOME/.local/share/plausiden/brain.db"
-MODEL="qwen2.5-coder:7b"
+# #326: env-overridable so the server's lessons/start can route the
+# trainer to the tier-appropriate Ollama model (qwen2.5:0.5b/3b/-coder:7b)
+# and restrict to a domain subset.
+MODEL="${PLAUSIDEN_MODEL:-qwen2.5-coder:7b}"
 
-DOMAINS=(social math code security philosophy biology chemistry physics language psychology sales)
+if [ -n "${PLAUSIDEN_DOMAINS:-}" ]; then
+    IFS=',' read -ra DOMAINS <<< "$PLAUSIDEN_DOMAINS"
+else
+    DOMAINS=(social math code security philosophy biology chemistry physics language psychology sales)
+fi
 
 # Per-domain state file for adaptive scheduling
 STATE_FILE="/var/log/lfi/training_state.json"

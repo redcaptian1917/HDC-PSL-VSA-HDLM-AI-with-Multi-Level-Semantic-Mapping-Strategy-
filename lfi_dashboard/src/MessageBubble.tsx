@@ -161,17 +161,33 @@ export interface UserMessageProps {
   // appears next to the edit button on hover / always on mobile. Parent
   // owns the clipboard path so toast + permission handling stays in App.
   onCopy?: (text: string) => void;
+  // c2-400 / task 185: right-click hook. Parent opens a floating menu at
+  // the event coordinates with role-appropriate actions (copy / edit /
+  // fork). Absent → browser's native context menu fires as normal.
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
+
+// c2-406 / task 216: long-content collapse. Messages over COLLAPSE_AT
+// chars render a preview slice with a Show more toggle so a pasted log
+// doesn't blow the scroll position. State is local — re-mount (Virtuoso
+// recycle) resets to collapsed, which matches user intent.
+const COLLAPSE_AT = 4000;
+const COLLAPSE_PREVIEW = 1500;
 
 // User message bubble with inline edit flow. Parent owns the editing state
 // so cross-message coordination (only one editor open at a time) stays simple.
 export const UserMessage: React.FC<UserMessageProps> = ({
   msg, C, isMobile, maxWidth, editing, editText, setEditText,
-  onBeginEdit, onCancelEdit, onCommitEdit, formatTime, onCopy,
-}) => (
+  onBeginEdit, onCancelEdit, onCommitEdit, formatTime, onCopy, onContextMenu,
+}) => {
+  const [expanded, setExpanded] = React.useState(false);
+  const needsCollapse = !editing && msg.content.length > COLLAPSE_AT && !expanded;
+  const shown = needsCollapse ? msg.content.slice(0, COLLAPSE_PREVIEW) : msg.content;
+  return (
   <div
     onMouseEnter={(e) => { const bar = e.currentTarget.querySelector('.user-msg-actions') as HTMLElement; if (bar) bar.style.opacity = '1'; }}
     onMouseLeave={(e) => { const bar = e.currentTarget.querySelector('.user-msg-actions') as HTMLElement; if (bar) bar.style.opacity = '0'; }}
+    onContextMenu={onContextMenu}
     style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', alignItems: 'flex-end' }}>
     {!editing && (
       <div className='user-msg-actions'
@@ -248,7 +264,20 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         wordBreak: 'break-word',
         border: `1px solid ${C.accentBorder}`,
       }}>
-        {msg.content}
+        {shown}
+        {needsCollapse && <span style={{ color: C.textMuted }}>{'\u2026'}</span>}
+        {msg.content.length > COLLAPSE_AT && (
+          <button onClick={() => setExpanded(v => !v)}
+            style={{
+              display: 'block', marginTop: T.spacing.xs,
+              background: 'transparent', border: 'none',
+              color: C.accent, cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+              padding: 0, textAlign: 'left',
+            }}>
+            {expanded ? 'Show less' : `Show more (${msg.content.length.toLocaleString()} chars)`}
+          </button>
+        )}
         <div title={new Date(msg.timestamp).toLocaleString()}
           style={{ fontSize: '10px', color: C.textMuted, marginTop: '6px', textAlign: 'right' }}>
           {formatTime(msg.timestamp)}
@@ -256,7 +285,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       </div>
     )}
   </div>
-);
+  );
+};
 
 export interface AssistantMessageProps {
   msg: {
@@ -272,6 +302,10 @@ export interface AssistantMessageProps {
   isDesktop: boolean;
   isLast: boolean;
   isThinking: boolean;
+  // c2-393 / task 205: timestamp of the user turn that triggered this
+  // response. When present, renders a "3.4s" duration chip next to the
+  // relative age so users see response latency at a glance.
+  respondToTs?: number;
   showReasoning: boolean;
   developerMode: boolean;
   reasoningExpanded: boolean;
@@ -284,6 +318,8 @@ export interface AssistantMessageProps {
   onFeedbackPositive: () => void;
   onFeedbackNegative: () => void;
   formatTime: (ts: number) => string;
+  // c2-400 / task 185: right-click hook. Same shape as UserMessage's.
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 // Assistant message — the heaviest bubble. Hover-revealed action bar with copy,
@@ -293,8 +329,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   msg, C, isMobile, isDesktop, isLast, isThinking,
   showReasoning, developerMode, reasoningExpanded,
   renderBody, onToggleReasoning, onRegenerate, onCopy,
-  onOpenProvenance, onFollowUpChip, onFeedbackPositive, onFeedbackNegative, formatTime,
+  onOpenProvenance, onFollowUpChip, onFeedbackPositive, onFeedbackNegative, formatTime, respondToTs,
+  onContextMenu,
 }) => {
+  // c2-406 / task 216: same collapse logic as UserMessage. Slicing
+  // markdown mid-fence is safe because the renderer treats unclosed
+  // fences as literal text — worst case the preview ends in an
+  // unclosed ``` which renders as a flat fence until the user expands.
+  const [expanded, setExpanded] = React.useState(false);
+  const needsCollapse = msg.content.length > COLLAPSE_AT && !expanded;
+  const bodyText = needsCollapse ? msg.content.slice(0, COLLAPSE_PREVIEW) : msg.content;
   // Follow-up chips — simple keyword extraction, only on last assistant message
   // when the body is long enough to have meaningful topics.
   const chips: string[] = (() => {
@@ -314,6 +358,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     <div
       onMouseEnter={(e) => { (e.currentTarget.querySelector('.lfi-msg-actions') as HTMLElement)?.style.setProperty('opacity', '1'); }}
       onMouseLeave={(e) => { (e.currentTarget.querySelector('.lfi-msg-actions') as HTMLElement)?.style.setProperty('opacity', '0'); }}
+      onContextMenu={onContextMenu}
       style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{ maxWidth: isDesktop ? '80%' : '96%', width: '100%' }}>
         {/* Response body */}
@@ -326,7 +371,19 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           color: C.text,
           whiteSpace: 'pre-wrap', wordBreak: 'break-word',
         }}>
-          {renderBody(msg.content)}
+          {renderBody(bodyText)}
+          {msg.content.length > COLLAPSE_AT && (
+            <button onClick={() => setExpanded(v => !v)}
+              style={{
+                display: 'block', marginTop: T.spacing.sm,
+                background: 'transparent', border: 'none',
+                color: C.accent, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                padding: 0, textAlign: 'left',
+              }}>
+              {expanded ? 'Show less' : `Show more (${msg.content.length.toLocaleString()} chars)`}
+            </button>
+          )}
           {developerMode && msg.conclusion_id != null && (
             <span title={`Provenance: conclusion #${msg.conclusion_id}`}
               role='button' tabIndex={0}
@@ -433,6 +490,24 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               fontSize: '10px', color: C.textDim, alignSelf: 'center',
               padding: '0 8px',
             }}>{formatRelative(msg.timestamp)}</span>
+          {/* c2-393 / task 205: response-duration chip. Only when we have
+              a user-turn timestamp to diff against and the gap is sane
+              (< 1 hour — larger means session boundaries, not latency). */}
+          {typeof respondToTs === 'number' && msg.timestamp > respondToTs && (msg.timestamp - respondToTs) < 3_600_000 && (() => {
+            const ms = msg.timestamp - respondToTs;
+            const label = ms < 1000
+              ? `${ms}ms`
+              : ms < 60_000
+                ? `${(ms / 1000).toFixed(1)}s`
+                : `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+            return (
+              <span title={`Response took ${label}`}
+                style={{
+                  fontSize: '10px', color: C.textDim, alignSelf: 'center',
+                  padding: '0 8px 0 0', fontFamily: T.typography.fontMono,
+                }}>{label}</span>
+            );
+          })()}
         </div>
         {/* c2-360 / task 88: word count + GPT-style token estimate. Hidden on
             empty / thinking messages so it doesn't flash during streaming.
