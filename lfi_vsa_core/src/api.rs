@@ -3620,6 +3620,120 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Ingestion quality panel (#311) ----
+
+    /// GET /api/library/quality?limit=N
+    ///
+    /// Per-source quality breakdown for the Library tab. Returns one row
+    /// per source with:
+    ///   - fact_count                     (sampled, recent 50k rows)
+    ///   - avg_quality                    (mean of quality_score|confidence)
+    ///   - vetted_ratio                   (0..1)
+    ///   - contradiction_rate             (pending contradictions / sampled count)
+    ///   - provenance_coverage            (rows with a source_provenance_sha256)
+    ///   - trust                          (#293 source_trust row or 0.5)
+    ///
+    /// Paired with #285 marketplace composite score but more granular:
+    /// marketplace gives you the single sortable number, this gives you
+    /// the dimensions behind it so an operator can diagnose WHY a source
+    /// is ranked low.
+    async fn library_quality_handler(
+        State(state): State<Arc<AppState>>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let limit: i64 = params.get("limit")
+            .and_then(|s| s.parse().ok()).unwrap_or(50).min(500);
+
+        let conn = match state.db.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return axum::Json(json!({"error": "db lock"})),
+        };
+
+        // Per-source aggregates over the recent-50k sample (same pattern
+        // as marketplace so response time stays bounded on prod).
+        let mut stmt = match conn.prepare(
+            "WITH sample AS ( \
+               SELECT source, \
+                      COALESCE(quality_score, confidence, 0.5) AS q, \
+                      COALESCE(vetted, 0) AS v, \
+                      CASE WHEN source_provenance_sha256 IS NOT NULL \
+                           AND source_provenance_sha256 != '' \
+                           THEN 1 ELSE 0 END AS has_prov \
+               FROM facts ORDER BY rowid DESC LIMIT 50000 \
+             ) \
+             SELECT s.source, COUNT(*), \
+                    ROUND(AVG(s.q), 4), \
+                    ROUND(AVG(CASE WHEN s.v = 1 THEN 1.0 ELSE 0.0 END), 4), \
+                    ROUND(AVG(CAST(s.has_prov AS REAL)), 4), \
+                    COALESCE(st.trust, 0.5) \
+             FROM sample s \
+             LEFT JOIN source_trust st ON st.source = s.source \
+             WHERE s.source IS NOT NULL AND s.source != '' \
+             GROUP BY s.source \
+             ORDER BY COUNT(*) DESC LIMIT ?1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return axum::Json(json!({"sources": [], "error": "query failed"})),
+        };
+
+        let rows: Vec<(String, i64, f64, f64, f64, f64)> = stmt.query_map(
+            rusqlite::params![limit],
+            |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, f64>(2)?,
+                r.get::<_, f64>(3)?,
+                r.get::<_, f64>(4)?,
+                r.get::<_, f64>(5)?,
+            )),
+        ).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        drop(stmt);
+
+        // Pending contradictions grouped by source — small table, cheap
+        // to walk as a single pass.
+        let mut con_map: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        if let Ok(mut cstmt) = conn.prepare(
+            "SELECT COALESCE(existing_source,''), COUNT(*) \
+             FROM contradictions WHERE resolved_at IS NULL \
+             GROUP BY existing_source"
+        ) {
+            if let Ok(iter) = cstmt.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+            ))) {
+                for row in iter.filter_map(|r| r.ok()) {
+                    con_map.insert(row.0, row.1);
+                }
+            }
+        }
+
+        let items: Vec<serde_json::Value> = rows.into_iter().map(|(
+            source, count, avg_q, vetted_ratio, prov_coverage, trust
+        )| {
+            let pending = con_map.get(&source).copied().unwrap_or(0);
+            let contradiction_rate = if count > 0 {
+                (pending as f64 / count as f64 * 10000.0).round() / 10000.0
+            } else { 0.0 };
+            json!({
+                "source": source,
+                "fact_count": count,
+                "avg_quality": avg_q,
+                "vetted_ratio": vetted_ratio,
+                "provenance_coverage": prov_coverage,
+                "contradiction_rate": contradiction_rate,
+                "pending_contradictions": pending,
+                "trust": trust,
+            })
+        }).collect();
+
+        axum::Json(json!({
+            "sources": items,
+            "count": items.len(),
+            "sample_size": 50_000,
+            "sampled": true,
+        }))
+    }
+
     // ---- Fact corpus marketplace (#285) ----
 
     /// GET /api/corpus/marketplace?limit=N
@@ -4679,6 +4793,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/audit/chain/recent", get(audit_chain_recent_handler))
         .route("/api/audit/chain/verify", get(audit_chain_verify_handler))
         .route("/api/corpus/marketplace", get(corpus_marketplace_handler))
+        .route("/api/library/quality", get(library_quality_handler))
         .route("/api/fsrs/due", get(fsrs_due_handler))
         .route("/api/fsrs/review", post(fsrs_review_handler))
         .route("/api/explain", post(explain_query_handler))
