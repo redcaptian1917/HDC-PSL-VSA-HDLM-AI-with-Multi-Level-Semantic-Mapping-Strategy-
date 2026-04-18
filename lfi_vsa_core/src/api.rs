@@ -63,6 +63,35 @@ pub struct AppState {
     /// fallback. Rebuild lazily on SIGHUP or server restart as the
     /// dialogue_tuples_v1 corpus grows.
     pub speech_act_classifier: Arc<crate::cognition::speech_act::SpeechActClassifier>,
+    /// #307 Per-capability rate limiter. Each capability ("auth",
+    /// "research", "hdc_encode", etc) has its own sliding-window bucket.
+    /// Prevents a single expensive endpoint from saturating the server
+    /// when other capabilities are still within budget.
+    pub rate_limiters: Mutex<std::collections::HashMap<String, std::collections::VecDeque<std::time::Instant>>>,
+}
+
+/// #307 Rate-limit check for a named capability. Returns true when the
+/// caller is under the limit; false when they should be rejected with
+/// HTTP 429.
+///
+/// Sliding window: evicts timestamps older than `window`, then checks
+/// whether `max` remain. Caller pushes the current Instant on success.
+pub fn check_rate_limit(
+    state: &Arc<AppState>, capability: &str, max: usize,
+    window: std::time::Duration,
+) -> bool {
+    let mut guard = state.rate_limiters.lock();
+    let now = std::time::Instant::now();
+    let entry = guard.entry(capability.to_string())
+        .or_insert_with(std::collections::VecDeque::new);
+    while entry.front().map(|t| now.duration_since(*t) > window).unwrap_or(false) {
+        entry.pop_front();
+    }
+    if entry.len() >= max {
+        return false;
+    }
+    entry.push_back(now);
+    true
 }
 
 /// Active training lesson tracked by AppState.lesson_sessions.
@@ -873,6 +902,18 @@ async fn auth_handler(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AuthRequest>,
 ) -> impl IntoResponse {
+    // #307 Per-capability rate limit: 5 auth attempts / 60s to frustrate
+    // brute-forcing the sovereign passphrase. Exceeded attempts are
+    // recorded to the audit chain so the integrity banner flags them.
+    if !check_rate_limit(&state, "auth", 5, std::time::Duration::from_secs(60)) {
+        let _ = state.db.audit_chain_append(
+            "rate_limit", "High", "rest_client",
+            "auth_rate_limited", "POST /api/auth — 5/60s exceeded",
+        );
+        return Json(json!({ "status": "rate_limited",
+                             "reason": "5 auth attempts / 60s" }));
+    }
+
     let mut agent = state.agent.lock();
     let ok = agent.authenticate(&req.key);
     drop(agent); // release before taking DB lock for audit
@@ -1384,6 +1425,15 @@ async fn research_handler(
 ) -> impl IntoResponse {
     if req.query.is_empty() || req.query.len() > 4096 {
         return Json(json!({ "status": "error", "reason": "query must be 1-4096 chars" }));
+    }
+    // #307 Research is expensive (N parallel web searches). Cap at
+    // 10 queries / 300s so a single caller can't lock up the search
+    // engine or burn through upstream quotas.
+    if !check_rate_limit(&state, "research", 10, std::time::Duration::from_secs(300)) {
+        return Json(json!({
+            "status": "rate_limited",
+            "reason": "10 research queries / 300s — wait and retry",
+        }));
     }
     let depth = req.depth.min(5).max(1);
     info!("// AUDIT: Deep research: '{}' depth={}", crate::truncate_str(&req.query, 60), depth);
@@ -2529,6 +2579,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         calibration: Mutex::new(crate::cognition::calibration::CalibrationEngine::new()),
         lesson_sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
         speech_act_classifier,
+        rate_limiters: Mutex::new(std::collections::HashMap::new()),
     });
 
     // --- Image Generation ---
@@ -3669,6 +3720,16 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         State(state): State<Arc<AppState>>,
         Json(body): Json<serde_json::Value>,
     ) -> impl IntoResponse {
+        // #307 Encoding is O(limit × vector cost). Cap at 30 batches
+        // per 60s so a misbehaving caller can't saturate the encode
+        // path. limit itself is already clamped 1..=5000 per call.
+        if !check_rate_limit(&state, "hdc_encode", 30,
+                             std::time::Duration::from_secs(60)) {
+            return axum::Json(json!({
+                "error": "rate_limited",
+                "reason": "30 encode batches / 60s — wait and retry",
+            }));
+        }
         let limit = body.get("limit")
             .and_then(|v| v.as_i64()).unwrap_or(200).clamp(1, 5000);
         let rows = state.db.facts_without_vector(limit);
