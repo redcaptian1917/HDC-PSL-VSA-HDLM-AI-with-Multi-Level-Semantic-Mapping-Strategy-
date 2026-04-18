@@ -144,6 +144,27 @@ fn strip_key_prefix(key: &str, value: &str) -> String {
     }
 }
 
+/// When `rag_context` has matches, lead with shaped HDC retrieval and then
+/// append the structural template the intent-branch produced. When the
+/// retrieval is empty, the template stands alone.
+///
+/// This is the glue that routes every actionable intent (FixBug / Explain /
+/// PlanTask / Improve) through the fact base when it has something to say,
+/// while preserving the step-wise planning output the cognition modules
+/// already compose.
+fn prepend_retrieval_if_any(
+    query: &str,
+    rag_context: &[(String, String, f64)],
+    act: Option<crate::cognition::speech_act::SpeechAct>,
+    template: String,
+) -> String {
+    if rag_context.is_empty() {
+        return template;
+    }
+    let retrieval = hdc_retrieval_response_shaped(query, rag_context, act);
+    format!("{}\n\n---\n\n{}", retrieval, template)
+}
+
 /// Truncate on a word boundary at or before `n` chars. Adds an ellipsis
 /// suffix when truncation actually happened.
 fn word_truncate(s: &str, n: usize) -> String {
@@ -1253,7 +1274,7 @@ impl CognitiveCore {
                 )
             }
             Some(Intent::FixBug { description: _ }) => {
-                if let Some(ref plan) = thought.plan {
+                let template = if let Some(ref plan) = thought.plan {
                     format!(
                         "I see the issue. Here's my debugging plan:\n\n{}",
                         plan.steps.iter().enumerate()
@@ -1262,18 +1283,24 @@ impl CognitiveCore {
                     )
                 } else {
                     "I think I know what's going on here. Let me dig in and fix it.".to_string()
-                }
+                };
+                prepend_retrieval_if_any(input, &self.rag_context,
+                    self.active_speech_act.map(|(a, _)| a), template)
             }
             Some(Intent::Explain { topic }) => {
-                self.derive_expansive_explanation(topic, thought)?
+                // Keep the structural explanation but lead with grounded
+                // retrieval when the fact base has relevant hits.
+                let template = self.derive_expansive_explanation(topic, thought)?;
+                prepend_retrieval_if_any(topic, &self.rag_context,
+                    self.active_speech_act.map(|(a, _)| a), template)
             }
             Some(Intent::Search { query }) => {
-                // Try Ollama for a real answer first
-                hdc_retrieval_response_shaped(query, &self.rag_context, self.active_speech_act.map(|(a, _)| a))
+                hdc_retrieval_response_shaped(query, &self.rag_context,
+                    self.active_speech_act.map(|(a, _)| a))
             }
             Some(Intent::PlanTask { goal }) => {
                 let g = crate::truncate_str(goal, 80);
-                if let Some(ref plan) = thought.plan {
+                let template = if let Some(ref plan) = thought.plan {
                     format!(
                         "Here's how I'd approach \"{}\":\n\n{}",
                         g,
@@ -1287,18 +1314,23 @@ impl CognitiveCore {
                          and break it down into steps.",
                         g
                     )
-                }
+                };
+                prepend_retrieval_if_any(goal, &self.rag_context,
+                    self.active_speech_act.map(|(a, _)| a), template)
             }
             Some(Intent::Analyze { target }) => {
-                hdc_retrieval_response_shaped(target, &self.rag_context, self.active_speech_act.map(|(a, _)| a))
+                hdc_retrieval_response_shaped(target, &self.rag_context,
+                    self.active_speech_act.map(|(a, _)| a))
             }
             Some(Intent::Improve { target }) => {
                 let t = crate::truncate_str(target, 80);
-                format!(
+                let template = format!(
                     "I see some opportunities to improve \"{}\". Let me analyze what's there \
                      now and suggest targeted improvements.",
                     t
-                )
+                );
+                prepend_retrieval_if_any(target, &self.rag_context,
+                    self.active_speech_act.map(|(a, _)| a), template)
             }
             Some(Intent::Adversarial { .. }) => {
                 "I noticed something unusual about that input. For security reasons, \
