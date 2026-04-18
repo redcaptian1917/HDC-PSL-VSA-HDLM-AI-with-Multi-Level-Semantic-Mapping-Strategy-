@@ -3620,6 +3620,89 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Ingest batch control surface (#326) ----
+
+    /// POST /api/ingest/start
+    /// Body: { run_id, corpus, tuples_requested?, pid? }
+    async fn ingest_start_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let run_id = body.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+        let corpus = body.get("corpus").and_then(|v| v.as_str()).unwrap_or("");
+        let req = body.get("tuples_requested").and_then(|v| v.as_i64()).unwrap_or(0);
+        let pid = body.get("pid").and_then(|v| v.as_i64());
+        if run_id.is_empty() || run_id.len() > 128
+            || corpus.is_empty() || corpus.len() > 128 {
+            return axum::Json(json!({"error": "run_id and corpus required (1..=128 chars)"}));
+        }
+        let inserted = state.db.ingest_start(run_id, corpus, req, pid);
+        axum::Json(json!({"started": inserted, "run_id": run_id}))
+    }
+
+    /// POST /api/ingest/progress
+    /// Body: { run_id, ingested, psl_pass_rate? }
+    async fn ingest_progress_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let run_id = body.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+        let ingested = body.get("ingested").and_then(|v| v.as_i64()).unwrap_or(0);
+        let psl = body.get("psl_pass_rate").and_then(|v| v.as_f64());
+        let ok = state.db.ingest_progress(run_id, ingested, psl);
+        axum::Json(json!({"updated": ok, "run_id": run_id}))
+    }
+
+    /// POST /api/ingest/finish
+    /// Body: { run_id, status: completed|stopped|failed, exit_reason? }
+    async fn ingest_finish_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let run_id = body.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+        let status = body.get("status").and_then(|v| v.as_str()).unwrap_or("completed");
+        if !["completed", "stopped", "failed"].contains(&status) {
+            return axum::Json(json!({"error": "status must be completed|stopped|failed"}));
+        }
+        let reason = body.get("exit_reason").and_then(|v| v.as_str());
+        let ok = state.db.ingest_finish(run_id, status, reason);
+        axum::Json(json!({"finished": ok, "run_id": run_id, "status": status}))
+    }
+
+    /// GET /api/ingest/list?limit=N
+    async fn ingest_list_handler(
+        State(state): State<Arc<AppState>>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let limit: i64 = params.get("limit")
+            .and_then(|s| s.parse().ok()).unwrap_or(50).min(500);
+        let rows = state.db.ingest_list(limit);
+        let items: Vec<serde_json::Value> = rows.into_iter().map(|(
+            run_id, corpus, status, req, ingested, psl, started, completed, exit_reason, pid
+        )| json!({
+            "run_id": run_id,
+            "corpus": corpus,
+            "status": status,
+            "tuples_requested": req,
+            "tuples_ingested": ingested,
+            "psl_pass_rate": psl,
+            "started_at": started,
+            "completed_at": completed,
+            "exit_reason": exit_reason,
+            "pid": pid,
+            "progress": if req > 0 {
+                (ingested as f64 / req as f64 * 10000.0).round() / 10000.0
+            } else { 0.0 },
+        })).collect();
+        let running = items.iter()
+            .filter(|v| v["status"].as_str() == Some("running")).count();
+        axum::Json(json!({
+            "batches": items,
+            "count": items.len(),
+            "running": running,
+        }))
+    }
+
     // ---- Ingestion quality panel (#311) ----
 
     /// GET /api/library/quality?limit=N
@@ -4794,6 +4877,10 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/audit/chain/verify", get(audit_chain_verify_handler))
         .route("/api/corpus/marketplace", get(corpus_marketplace_handler))
         .route("/api/library/quality", get(library_quality_handler))
+        .route("/api/ingest/start", post(ingest_start_handler))
+        .route("/api/ingest/progress", post(ingest_progress_handler))
+        .route("/api/ingest/finish", post(ingest_finish_handler))
+        .route("/api/ingest/list", get(ingest_list_handler))
         .route("/api/fsrs/due", get(fsrs_due_handler))
         .route("/api/fsrs/review", post(fsrs_review_handler))
         .route("/api/explain", post(explain_query_handler))

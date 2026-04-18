@@ -220,6 +220,29 @@ impl BrainDb {
             CREATE INDEX IF NOT EXISTS idx_sac_cat ON security_audit_chain(category);
             CREATE INDEX IF NOT EXISTS idx_sac_actor ON security_audit_chain(actor);
 
+            -- #326 Ingestion batch control surface — tracks active +
+            -- historical ingest runs so the UI can show progress, start
+            -- new batches, and stop in-flight ones. Decoupled from the
+            -- Python ingest scripts themselves: scripts register their
+            -- run_id + metadata here; the UI reads from the table.
+            CREATE TABLE IF NOT EXISTS ingest_batches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL UNIQUE,
+                corpus TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                tuples_requested INTEGER DEFAULT 0,
+                tuples_ingested INTEGER DEFAULT 0,
+                psl_pass_rate REAL,
+                started_at TEXT DEFAULT (datetime('now')),
+                completed_at TEXT,
+                exit_reason TEXT,
+                pid INTEGER,
+                notes TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_ingest_status ON ingest_batches(status);
+            CREATE INDEX IF NOT EXISTS idx_ingest_started ON ingest_batches(started_at);
+            CREATE INDEX IF NOT EXISTS idx_ingest_corpus ON ingest_batches(corpus);
+
             -- #293 Per-source trust weights used for cross-source fact
             -- reconciliation. 0.0 = adversarial/untrusted,
             -- 1.0 = fully trusted. Unknown sources default to 0.5 via
@@ -609,6 +632,71 @@ impl BrainDb {
                 let bytes: Vec<u8> = r.get(7)?;
                 bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
             },
+        ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    }
+
+    // ---- Ingest batch registry (#326) ----
+
+    /// Register a new ingest run. Idempotent on run_id — re-registering
+    /// an existing run is a no-op.
+    pub fn ingest_start(&self, run_id: &str, corpus: &str,
+                         tuples_requested: i64, pid: Option<i64>) -> bool {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT OR IGNORE INTO ingest_batches \
+             (run_id, corpus, status, tuples_requested, pid) \
+             VALUES (?1, ?2, 'running', ?3, ?4)",
+            params![run_id, corpus, tuples_requested, pid],
+        ).map(|n| n > 0).unwrap_or(false)
+    }
+
+    /// Report progress on a running ingest.
+    pub fn ingest_progress(&self, run_id: &str, ingested: i64,
+                            psl_pass_rate: Option<f64>) -> bool {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE ingest_batches SET tuples_ingested = ?2, \
+             psl_pass_rate = COALESCE(?3, psl_pass_rate) \
+             WHERE run_id = ?1 AND status = 'running'",
+            params![run_id, ingested, psl_pass_rate],
+        ).map(|n| n > 0).unwrap_or(false)
+    }
+
+    /// Mark an ingest as finished. Sets status (completed / stopped /
+    /// failed) and completed_at.
+    pub fn ingest_finish(&self, run_id: &str, status: &str,
+                          exit_reason: Option<&str>) -> bool {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE ingest_batches \
+             SET status = ?2, completed_at = datetime('now'), \
+                 exit_reason = ?3 \
+             WHERE run_id = ?1",
+            params![run_id, status, exit_reason],
+        ).map(|n| n > 0).unwrap_or(false)
+    }
+
+    /// List recent ingest batches (running first, then by recency).
+    pub fn ingest_list(&self, limit: i64)
+        -> Vec<(String, String, String, i64, i64, Option<f64>,
+                String, Option<String>, Option<String>, Option<i64>)>
+    {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = match conn.prepare(
+            "SELECT run_id, corpus, status, tuples_requested, \
+                    tuples_ingested, psl_pass_rate, started_at, \
+                    completed_at, exit_reason, pid \
+             FROM ingest_batches \
+             ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, \
+                      started_at DESC \
+             LIMIT ?1"
+        ) { Ok(s) => s, Err(_) => return Vec::new() };
+        stmt.query_map(params![limit], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?, r.get::<_, Option<f64>>(5)?,
+            r.get::<_, String>(6)?, r.get::<_, Option<String>>(7)?,
+            r.get::<_, Option<String>>(8)?, r.get::<_, Option<i64>>(9)?,
         ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     }
 
@@ -1943,6 +2031,37 @@ mod tests {
         db.upsert_fact("k", "a", "src1", 0.95);
         db.upsert_fact("k", "b", "src2", 0.4);
         assert_eq!(db.contradiction_pending_count(), 0);
+    }
+
+    #[test]
+    fn ingest_lifecycle_roundtrip() {
+        let db = temp_db();
+        assert!(db.ingest_start("run-abc", "conceptnet", 5000, Some(12345)));
+        // Idempotent: second start on same run_id is a no-op.
+        assert!(!db.ingest_start("run-abc", "conceptnet", 5000, Some(12345)));
+        assert!(db.ingest_progress("run-abc", 1234, Some(0.87)));
+        assert!(db.ingest_finish("run-abc", "completed", Some("reached quota")));
+        let list = db.ingest_list(10);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, "run-abc");
+        assert_eq!(list[0].2, "completed");
+        assert_eq!(list[0].4, 1234);
+        assert!((list[0].5.unwrap_or(0.0) - 0.87).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ingest_list_sorts_running_first() {
+        let db = temp_db();
+        db.ingest_start("old", "c1", 100, None);
+        db.ingest_finish("old", "completed", None);
+        // Small delay not needed — running-first ordering is by status,
+        // not by started_at ordering tie-break.
+        db.ingest_start("new_running", "c2", 200, None);
+        let list = db.ingest_list(10);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].0, "new_running");
+        assert_eq!(list[0].2, "running");
+        assert_eq!(list[1].0, "old");
     }
 
     #[test]
