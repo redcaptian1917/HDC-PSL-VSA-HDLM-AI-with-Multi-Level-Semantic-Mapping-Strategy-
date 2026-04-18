@@ -1592,6 +1592,14 @@ async fn research_handler(
 }
 
 /// GET /api/training/status — training pipeline status from brain.db + log files.
+///
+/// #339 DEPRECATED: LFI is post-LLM; the "training" framing (epochs,
+/// accuracy per domain, loss) belonged to the Ollama-era pipeline.
+/// Response now carries `deprecated: true` + `replacement:
+/// /api/ingest/list`. Clients should migrate to the ingestion-batch
+/// + drift endpoints. Kept for backward-compat with any in-flight
+/// Classroom tab that still polls it — remove once no UI caller
+/// remains.
 async fn training_status_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
@@ -1617,6 +1625,9 @@ async fn training_status_handler(
         .collect();
 
     Json(json!({
+        "deprecated": true,
+        "replacement": "/api/ingest/list + /api/drift/snapshot",
+        "note": "Post-LLM pivot: LFI is not trained; corpora are INGESTED. Use the ingest batch registry for per-run progress and drift/snapshot for aggregate metrics.",
         "facts_in_db": facts_count,
         "training_history": history.iter().map(|(domain, acc, total, correct, ts)| json!({
             "domain": domain, "accuracy": acc, "total": total, "correct": correct, "timestamp": ts,
