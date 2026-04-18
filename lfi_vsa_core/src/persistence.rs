@@ -348,6 +348,13 @@ impl BrainDb {
             }
         }
 
+        // #295 Idempotent column add for the HDC vector cache. SQLite 3.35+
+        // supports O(1) ADD COLUMN when the new column is nullable with no
+        // default — which is exactly what we want. This MUST happen once
+        // at open time; doing it inside set_fact_vector at every call
+        // would re-take the writer lock and hang on a 58M-row table.
+        let _ = conn.execute("ALTER TABLE facts ADD COLUMN hdc_vector BLOB", []);
+
         info!("// PERSISTENCE: Schema migrated");
         Ok(())
     }
@@ -445,6 +452,82 @@ impl BrainDb {
              resolved_value = ?2 WHERE id = ?1",
             params![id, resolved_value],
         ).map(|n| n > 0).unwrap_or(false)
+    }
+
+    // ---- HDC vector cache per fact (#295) ----
+    //
+    // 10_000-dim bipolar vectors encoded via role_binding::concept_vector
+    // are deterministic functions of the fact text. Re-encoding on every
+    // query burns CPU; caching serialized bytes in the facts row is the
+    // cheap option. Bincode gives ~1.25 kB per vector (10_000 bits + a
+    // small length prefix). The column is nullable — facts without a
+    // cache are simply re-encoded on demand.
+
+    /// Store the bincode-serialized bipolar vector for a fact key.
+    /// Caller is responsible for ensuring the vector corresponds to the
+    /// fact's current value (call this after upsert_fact, not before).
+    ///
+    /// BUG ASSUMPTION: migrate() added the hdc_vector column at open
+    /// time. Runtime ALTERs here would re-take the writer lock on every
+    /// call and hang on large tables.
+    pub fn set_fact_vector(&self, key: &str, vector_bytes: &[u8]) -> bool {
+        if key.is_empty() || vector_bytes.is_empty() { return false; }
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE facts SET hdc_vector = ?2 WHERE key = ?1",
+            params![key, vector_bytes],
+        ).map(|n| n > 0).unwrap_or(false)
+    }
+
+    /// Fetch the cached HDC vector bytes for a fact, if any.
+    pub fn get_fact_vector(&self, key: &str) -> Option<Vec<u8>> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.query_row(
+            "SELECT hdc_vector FROM facts WHERE key = ?1",
+            params![key],
+            |r| r.get::<_, Option<Vec<u8>>>(0),
+        ).ok().flatten()
+    }
+
+    /// Sample-based cache coverage for a UI badge.
+    ///
+    /// BUG ASSUMPTION: a full COUNT(*) on a 58M-row prod DB takes minutes,
+    /// which blocks the server. We sample the most recent 5000 rows by
+    /// rowid DESC (rowid is free to scan) and return
+    /// (cached_in_sample, sample_size).
+    ///
+    /// Callers that need the exact count must query the DB directly with
+    /// an offline tool (the prod UI doesn't need the precise number —
+    /// a % coverage gauge is enough).
+    pub fn hdc_cache_stats(&self) -> (i64, i64) {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.query_row(
+            "SELECT \
+               SUM(CASE WHEN hdc_vector IS NOT NULL THEN 1 ELSE 0 END), \
+               COUNT(*) \
+             FROM (SELECT hdc_vector FROM facts ORDER BY rowid DESC LIMIT 5000)",
+            [], |r| Ok((
+                r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                r.get::<_, i64>(1)?,
+            )),
+        ).unwrap_or((0, 0))
+    }
+
+    /// Return up to `limit` fact keys+values that do NOT yet have a cached
+    /// HDC vector. Used by batch encoders to pick off uncached rows.
+    ///
+    /// BUG ASSUMPTION: ORDER BY on non-indexed columns (updated_at,
+    /// quality_score, etc.) forces a full scan even with LIMIT. We order
+    /// by rowid DESC which is free because rowid is the primary index.
+    pub fn facts_without_vector(&self, limit: i64) -> Vec<(String, String)> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = match conn.prepare(
+            "SELECT key, value FROM facts WHERE hdc_vector IS NULL \
+             ORDER BY rowid DESC LIMIT ?1"
+        ) { Ok(s) => s, Err(_) => return Vec::new() };
+        stmt.query_map(params![limit], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+        ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     }
 
     /// #298 Pending contradiction count — useful for a UI badge.
@@ -1619,6 +1702,38 @@ mod tests {
         db.upsert_fact("k", "a", "src1", 0.95);
         db.upsert_fact("k", "b", "src2", 0.4);
         assert_eq!(db.contradiction_pending_count(), 0);
+    }
+
+    #[test]
+    fn hdc_vector_roundtrip() {
+        let db = temp_db();
+        db.upsert_fact("concept:water", "H2O is a compound", "test", 0.9);
+        let payload = vec![0xAB, 0xCD, 0xEF, 0x12, 0x34];
+        assert!(db.set_fact_vector("concept:water", &payload));
+        assert_eq!(db.get_fact_vector("concept:water"), Some(payload));
+    }
+
+    #[test]
+    fn hdc_cache_stats_counts_sample_correctly() {
+        let db = temp_db();
+        db.upsert_fact("a", "x", "test", 0.9);
+        db.upsert_fact("b", "y", "test", 0.9);
+        db.upsert_fact("c", "z", "test", 0.9);
+        db.set_fact_vector("a", &[1, 2, 3]);
+        let (cached_sample, sample_size) = db.hdc_cache_stats();
+        assert_eq!(cached_sample, 1);
+        assert_eq!(sample_size, 3);
+    }
+
+    #[test]
+    fn hdc_facts_without_vector_lists_uncached() {
+        let db = temp_db();
+        db.upsert_fact("cached", "v", "test", 0.9);
+        db.upsert_fact("uncached", "v", "test", 0.9);
+        db.set_fact_vector("cached", &[1]);
+        let rows = db.facts_without_vector(10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "uncached");
     }
 
     #[test]

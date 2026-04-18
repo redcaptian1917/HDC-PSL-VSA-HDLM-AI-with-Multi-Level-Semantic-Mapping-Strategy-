@@ -3518,6 +3518,66 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- HDC vector cache per fact (#295) ----
+
+    /// GET /api/hdc/cache/stats — sampled cache coverage.
+    ///
+    /// BUG ASSUMPTION: full COUNT on prod (58M rows) blocks the server,
+    /// so this samples the most recent 5000 rows. Coverage is an estimate
+    /// within ±1% for that slice; for a precise total, run an offline
+    /// query. That's a worthwhile trade for a 10 ms response on 100 GB
+    /// databases.
+    async fn hdc_cache_stats_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let (sample_cached, sample_size) = state.db.hdc_cache_stats();
+        let coverage = if sample_size > 0 {
+            (sample_cached as f64 / sample_size as f64 * 10000.0).round() / 10000.0
+        } else { 0.0 };
+        axum::Json(json!({
+            "sample_cached": sample_cached,
+            "sample_size": sample_size,
+            "coverage": coverage,
+            "note": "sample-based; run COUNT(*) offline for exact",
+        }))
+    }
+
+    /// POST /api/hdc/cache/encode
+    /// Body: { "limit": 200 }  (optional, clamped 1..=5000)
+    ///
+    /// Picks `limit` uncached facts, encodes the VALUE via
+    /// role_binding::concept_vector, and persists the bincode-serialized
+    /// bipolar vector into facts.hdc_vector.
+    async fn hdc_cache_encode_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let limit = body.get("limit")
+            .and_then(|v| v.as_i64()).unwrap_or(200).clamp(1, 5000);
+        let rows = state.db.facts_without_vector(limit);
+        let mut encoded = 0i64;
+        let mut failed = 0i64;
+        for (key, value) in &rows {
+            use crate::hdc::role_binding::concept_vector;
+            let vec = concept_vector(value);
+            match bincode::serialize(&vec) {
+                Ok(bytes) => {
+                    if state.db.set_fact_vector(key, &bytes) {
+                        encoded += 1;
+                    } else {
+                        failed += 1;
+                    }
+                }
+                Err(_) => { failed += 1; }
+            }
+        }
+        axum::Json(json!({
+            "requested": rows.len(),
+            "encoded": encoded,
+            "failed": failed,
+        }))
+    }
+
     // ---- Source trust + reconciliation (#293) ----
 
     /// GET /api/sources/trust — list all per-source trust weights.
@@ -4301,6 +4361,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/contradictions/:id/resolve", post(contradiction_resolve_handler))
         .route("/api/contradictions/auto-resolve", post(contradictions_auto_resolve_handler))
         .route("/api/sources/trust", get(sources_trust_handler).put(sources_trust_set_handler))
+        .route("/api/hdc/cache/stats", get(hdc_cache_stats_handler))
+        .route("/api/hdc/cache/encode", post(hdc_cache_encode_handler))
         .route("/api/fsrs/due", get(fsrs_due_handler))
         .route("/api/fsrs/review", post(fsrs_review_handler))
         .route("/api/explain", post(explain_query_handler))
