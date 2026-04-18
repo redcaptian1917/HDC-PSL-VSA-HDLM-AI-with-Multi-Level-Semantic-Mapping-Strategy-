@@ -101,9 +101,23 @@ impl IdentityProver {
     }
 
     /// Verify only the password.
+    /// SECURITY: Constant-time comparison via `subtle::ConstantTimeEq`. A
+    /// naive `==` on u64 is usually single-cycle on modern CPUs, but the
+    /// compiler is free to branch-optimise it; `ct_eq` on the byte
+    /// representation guarantees branch-free comparison regardless of
+    /// optimiser choices. Defence in depth for the auth path.
+    ///
+    /// BUG ASSUMPTION: `proof.password_commitment` was produced by
+    /// `Self::hash` on the committed passphrase, so both sides come from
+    /// the same hash function and domain-separation isn't needed here.
+    ///
+    /// AVP-PASS-20: Tier 3 — timing side-channel mitigation.
     pub fn verify_password(proof: &SovereignProof, password: &str) -> bool {
+        use subtle::ConstantTimeEq;
         let hashed = Self::hash(password);
-        let matched = hashed == proof.password_commitment;
+        let matched: bool = hashed.to_le_bytes()
+            .ct_eq(&proof.password_commitment.to_le_bytes())
+            .into();
         if matched {
             debuglog!("IdentityProver: PASSWORD VERIFIED.");
         } else {
