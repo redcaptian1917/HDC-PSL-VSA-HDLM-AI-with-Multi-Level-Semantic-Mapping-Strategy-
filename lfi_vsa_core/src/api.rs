@@ -621,19 +621,38 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                             });
                             // Persist every turn for later review + training data
                             // sourcing. Skip when incognito — per Bible §4.5.
+                            //
+                            // #349 Scrub secrets + PII before the line hits disk.
+                            // chat.jsonl is readable by anything with file-level
+                            // access; if a user pastes an API key, SSN, or
+                            // password, it MUST NOT land in the log unredacted.
+                            // The scanner's redact() is deterministic + regex-
+                            // based — no ML dependency, no network.
                             if !incognito_flag {
+                            use crate::intelligence::secret_scanner::SecretScanner;
+                            let scanner = SecretScanner::new();
+                            let scrubbed_user = scanner.redact(input);
+                            let scrubbed_reply = scanner.redact(&response.text);
+                            let user_had_secret = scrubbed_user != input;
+                            let reply_had_secret = scrubbed_reply != response.text;
                             let log_line = json!({
                                 "ts": std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .map(|d| d.as_secs()).unwrap_or(0),
-                                "user": input,
-                                "reply": response.text,
+                                "user": scrubbed_user,
+                                "reply": scrubbed_reply,
                                 "tier": format!("{:?}", agent.current_tier),
                                 "intent": thought.intent.as_ref().map(|i| format!("{:?}", i)),
                                 "mode": format!("{:?}", thought.mode),
                                 "confidence": thought.confidence,
                                 "conclusion_id": conclusion_id,
+                                "scrubbed": user_had_secret || reply_had_secret,
                             });
+                            if user_had_secret || reply_had_secret {
+                                info!("// SCRUBBER: redacted secrets from chat log \
+                                       (user_hit={} reply_hit={})",
+                                       user_had_secret, reply_had_secret);
+                            }
                             // AVP-PASS-10: graceful degradation — log write failures
                             if let Err(e) = std::fs::create_dir_all("/var/log/lfi") {
                                 warn!("// AUDIT: chat log dir create failed: {}", e);
