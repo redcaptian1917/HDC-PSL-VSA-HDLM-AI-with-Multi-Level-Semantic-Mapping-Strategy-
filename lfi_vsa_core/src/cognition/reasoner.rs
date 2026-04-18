@@ -145,8 +145,15 @@ pub struct CognitiveCore {
     /// SUPERSOCIETY: 51M+ facts ground every Ollama response.
     pub rag_context: Vec<(String, String, f64)>,
     /// Active intelligence tier — set by the agent's governor before each
-    /// call to `respond`. Determines which Ollama model is used (#324).
+    /// call to `respond`. Reserved for Substrate I compute depth policy.
     pub active_tier: IntelligenceTier,
+    /// Classified speech act from the chat input (#345). Set by the chat
+    /// handler via SpeechActClassifier before respond() is invoked. None
+    /// when the classifier isn't available (fresh DB, startup race).
+    /// When Some((act, score)) with score above a floor, respond() uses
+    /// this to route Unknown-intent inputs through HDC retrieval instead
+    /// of the "tell me more" template dead-end.
+    pub active_speech_act: Option<(crate::cognition::speech_act::SpeechAct, f64)>,
 }
 
 impl CognitiveCore {
@@ -165,6 +172,7 @@ impl CognitiveCore {
             compiler: KnowledgeCompiler::new(),
             rag_context: Vec::new(),
             active_tier: IntelligenceTier::Pulse,
+            active_speech_act: None,
             recent_response_hashes: std::collections::VecDeque::with_capacity(50),
         };
         core.seed_intents()?;
@@ -1200,10 +1208,48 @@ impl CognitiveCore {
                 if !self.rag_context.is_empty() {
                     return Ok(hdc_retrieval_response(raw, &self.rag_context));
                 }
+
+                // #345: Layer-5 speech-act classifier runs ahead of respond()
+                // via api.rs chat_handler. When it's confident the input is a
+                // question class (Define/Explain/Why/HowTo/etc.), surface that
+                // framing even without facts, so the fallback is shaped to the
+                // detected intent instead of generic "tell me more".
+                use crate::cognition::speech_act::SpeechAct;
+                let short = crate::truncate_str(raw, 60);
+                if let Some((act, score)) = self.active_speech_act {
+                    if score >= 0.15 {
+                        let framing = match act {
+                            SpeechAct::Define => "a definition",
+                            SpeechAct::Explain => "an explanation",
+                            SpeechAct::Why => "a causal reason",
+                            SpeechAct::HowTo => "instructions",
+                            SpeechAct::Compare => "a comparison",
+                            SpeechAct::Enumerate => "a list",
+                            SpeechAct::WhoQuestion => "a person or entity",
+                            SpeechAct::WhQuestion => "a time or place",
+                            SpeechAct::Summarize => "a summary",
+                            SpeechAct::Translate => "a translation",
+                            SpeechAct::Fix => "a fix",
+                            SpeechAct::Improve => "an improvement",
+                            SpeechAct::Analyze => "an analysis",
+                            SpeechAct::Generate => "generated content",
+                            _ => "",
+                        };
+                        if !framing.is_empty() {
+                            return Ok(format!(
+                                "No HDC match in the knowledge base for \"{}\". \
+                                 Read as a request for {}. Rephrase with more specific \
+                                 terms, or ingest a corpus covering this topic — I won't \
+                                 fabricate an answer.",
+                                short, framing
+                            ));
+                        }
+                    }
+                }
+
                 // REGRESSION-GUARD: user complaint — AI was saying "I'll create
                 // a plan for that" on unknown inputs. Now gives a warm,
                 // conversational fallback instead of a canned template.
-                let short = crate::truncate_str(raw, 60);
                 if raw.split_whitespace().count() <= 4 {
                     format!(
                         "Hmm, I'm not sure I follow — \"{}\". Can you tell me a bit more \

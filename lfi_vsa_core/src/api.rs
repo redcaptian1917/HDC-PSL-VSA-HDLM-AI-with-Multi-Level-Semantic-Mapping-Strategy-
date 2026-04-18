@@ -55,6 +55,14 @@ pub struct AppState {
     /// from the browser. In-memory only — restarting the server orphans the
     /// child processes but they keep running. Persistence ↔ #324 followup.
     pub lesson_sessions: Arc<Mutex<std::collections::HashMap<String, TrainingSession>>>,
+    /// Speech-act classifier built at server startup from the dialogue
+    /// tuple corpus (#345). Classifies incoming chat utterances so the
+    /// Unknown-intent branch knows whether the user is asking for a
+    /// definition / explanation / comparison / etc. instead of routing
+    /// all un-prototype-matched inputs to the generic "tell me more"
+    /// fallback. Rebuild lazily on SIGHUP or server restart as the
+    /// dialogue_tuples_v1 corpus grows.
+    pub speech_act_classifier: Arc<crate::cognition::speech_act::SpeechActClassifier>,
 }
 
 /// Active training lesson tracked by AppState.lesson_sessions.
@@ -343,6 +351,12 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     // 52M+ facts grounding every response through retrieval.
                     let rag_facts = state.db.search_facts(input, 5);
                     agent.rag_context = rag_facts.clone();
+
+                    // #345: Layer-5 speech-act classification. Ahead of the
+                    // cognition pass so the reasoner can re-route an otherwise
+                    // Unknown intent into a grounded / shaped response.
+                    let speech_act_pair = state.speech_act_classifier.classify(input);
+                    agent.reasoner.active_speech_act = Some(speech_act_pair);
 
                     match agent.chat_traced(input) {
                         Ok((response, conclusion_id)) => {
@@ -2143,6 +2157,18 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     }
 
     let knowledge_graph = crate::cognition::knowledge_graph::KnowledgeGraph::new(db.clone());
+    // #345: build the speech-act classifier once at startup. Placeholder if
+    // the dialogue_tuples_v1 corpus is empty (fresh install) — the
+    // build_from_db call falls back to per-label placeholders on empty rows,
+    // so the classifier is always total.
+    let speech_act_classifier = Arc::new({
+        let t = std::time::Instant::now();
+        let c = crate::cognition::speech_act::SpeechActClassifier::build_from_db(&db, 400);
+        info!("// SPEECH-ACT: classifier built in {:.1}s with {} prototypes",
+              t.elapsed().as_secs_f64(), c.prototype_count());
+        c
+    });
+
     let state = Arc::new(AppState {
         tx,
         agent,
@@ -2153,6 +2179,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         experience: Mutex::new(crate::intelligence::experience_learning::ExperienceLearner::new()),
         calibration: Mutex::new(crate::cognition::calibration::CalibrationEngine::new()),
         lesson_sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        speech_act_classifier,
     });
 
     // --- Image Generation ---
