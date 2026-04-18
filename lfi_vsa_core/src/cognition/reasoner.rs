@@ -13,7 +13,6 @@
 // ============================================================
 
 use crate::hdc::vector::BipolarVector;
-use chrono::{Timelike, Datelike};
 use crate::hdc::holographic::HolographicMemory;
 use crate::hdc::error::HdcError;
 use crate::cognition::planner::{Plan, Planner};
@@ -1101,180 +1100,15 @@ impl CognitiveCore {
         })
     }
 
-    /// Generate a response string based on intent and thought analysis.
-    ///
-    /// POST-LLM: the response path goes through the HDC/HDLM stack + RAG
-    /// facts pulled from brain.db. No LLM. See `hdc_retrieval_response`.
-    #[doc(hidden)]
-    #[allow(dead_code)]
-    fn _removed_query_ollama_block(prompt: &str, rag_facts: &[(String, String, f64)], model: &str) -> Option<String> {
-        let _ = (prompt, rag_facts, model);
-        None
-    }
-
-    // (Dead Ollama helper kept below until the file can be shrunk in a
-    // follow-up commit. Body retained only to avoid a 200-line deletion
-    // mixing with the behavioural pivot.)
-    #[doc(hidden)]
-    #[allow(dead_code, unused_variables, unused_mut)]
-    fn _dead_query_ollama_impl(prompt: &str, rag_facts: &[(String, String, f64)], model: &str) -> Option<String> {
-        // No manual escaping needed — serde_json handles all escaping properly.
-        // AVP-PASS-3: Removed brittle manual string escaping.
-
-        // Build RAG context block — inject relevant facts into the prompt
-        let context_block = if !rag_facts.is_empty() {
-            let facts_text: String = rag_facts.iter()
-                .take(5) // Max 5 facts to stay within context window
-                .map(|(_, value, score)| {
-                    // Truncate on word boundary, not byte boundary
-                    let truncated = if value.len() > 500 {
-                        let cut = &value[..500];
-                        cut.rfind(' ').map(|i| &value[..i]).unwrap_or(cut)
-                    } else { value.as_str() };
-                    format!("- [relevance {:.0}%] {}", score * 100.0, truncated)
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "You have access to the following knowledge from your database:\n{}\n\nUse this knowledge to inform your answer where relevant. If the knowledge doesn't apply, answer from your general understanding.\n\n",
-                facts_text
-            )
-        } else {
-            String::new()
-        };
-
-        // BUG ASSUMPTION: time formatting could fail on exotic systems; fallback to empty string
-        let now = chrono::Local::now();
-        let time_context = format!(
-            "Current time: {} ({}). ",
-            now.format("%I:%M %p"),
-            if now.hour() >= 21 || now.hour() < 6 { "nighttime" }
-            else if now.hour() < 12 { "morning" }
-            else if now.hour() < 17 { "afternoon" }
-            else { "evening" }
-        );
-
-        // CONTEXTUAL MEMORY INJECTION: Load user profile + conversation facts
-        // so the AI never forgets who it's talking to or what they care about.
-        let memory_block = {
-            let mut mem = String::new();
-            // Load user profile from database
-            let db_path = crate::persistence::BrainDb::default_path();
-            if let Ok(db) = crate::persistence::BrainDb::open(&db_path) {
-                let profile = db.load_profile();
-                if !profile.is_empty() {
-                    mem.push_str("User profile (remembered from past conversations):\n");
-                    for (key, value, _category) in profile.iter().take(10) {
-                        mem.push_str(&format!("- {}: {}\n", key, value));
-                    }
-                    mem.push('\n');
-                }
-            }
-            mem
-        };
-
-        // SITUATIONAL AWARENESS: Day of week, season, system context
-        let day_name = now.format("%A").to_string();
-        let month = now.month();
-        let season = match month {
-            3..=5 => "spring",
-            6..=8 => "summer",
-            9..=11 => "autumn",
-            _ => "winter",
-        };
-
-        // EMOTION DETECTION: Adapt tone based on user's emotional state
-        let emotion = crate::cognition::emotion_detector::detect_emotion(prompt);
-        let tone_directive = if emotion.primary != crate::cognition::emotion_detector::Emotion::Neutral {
-            format!("\n\nTone guidance (user seems {}): {}\n",
-                emotion.primary.as_str(), emotion.primary.tone_guidance())
-        } else {
-            String::new()
-        };
-
-        // SECURITY: Use serde_json to build the request body instead of string formatting.
-        // This eliminates JSON injection via malformed facts or user input.
-        // AVP-PASS-3: Fixed brittle string escaping that broke on backslashes/quotes in facts.
-        let system_prompt = format!(
-            "You are PlausiDen AI, built by PlausiDen Technologies. You are a sovereign, \
-             knowledgeable AI that runs locally on the user's hardware. You have access to a \
-             database of 59 million verified facts across 87 domains.\n\n\
-             {}\
-             {}It is {} ({}, {}). \n\nRules:\n\
-             - Answer the question directly. No preamble.\n\
-             - If knowledge from your database is provided below, USE IT as your primary source.\n\
-             - Be specific and detailed. Give real examples, real numbers, real names.\n\
-             - If you're not sure, say so honestly. State your confidence level.\n\
-             - Match the tone to the question: technical for technical, casual for casual.\n\
-             - Never say 'As an AI' or 'I don't have feelings'. Just answer like a knowledgeable person.\n\
-             - If you know the user's name, use it occasionally.\n\
-             - Reference the time/day naturally when relevant (don't force it).\n\
-             - Don't repeat the same jokes or phrases across conversations.\n\
-             - When uncertain, offer to look deeper or suggest related topics.\n{}\n{}",
-            memory_block, time_context, day_name, season, now.format("%B %d"), tone_directive, context_block
-        );
-
-        let full_prompt = format!("{}\nQuestion: {}", system_prompt, prompt);
-
-        // Build request body with proper JSON serialization — no manual escaping
-        let request_body = serde_json::json!({
-            "model": model,
-            "prompt": full_prompt,
-            "stream": false,
-            "options": {
-                "temperature": 0.6,
-                "num_predict": 800,
-                "top_p": 0.9
-            }
-        });
-
-        let body_str = serde_json::to_string(&request_body).ok()?;
-
-        let output = std::process::Command::new("curl")
-            .args(&[
-                "-s", "--max-time", "45",
-                "-X", "POST", "http://localhost:11434/api/generate",
-                "-H", "Content-Type: application/json",
-                "-d", &body_str,
-            ])
-            .output();
-
-        // AUDIT FIX #4: Log Ollama errors instead of silently returning None
-        let output = match output {
-            Ok(o) => o,
-            Err(e) => {
-                tracing::warn!("// OLLAMA: curl failed to execute: {}", e);
-                return None;
-            }
-        };
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!("// OLLAMA: curl returned status {}: {}", output.status, stderr.chars().take(200).collect::<String>());
-            return None;
-        }
-
-        let resp = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value = match serde_json::from_str(&resp) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("// OLLAMA: JSON parse failed: {} (first 200 chars: {})", e, resp.chars().take(200).collect::<String>());
-                return None;
-            }
-        };
-        let answer = match parsed.get("response").and_then(|v| v.as_str()) {
-            Some(a) if a.trim().len() >= 10 => a.trim().to_string(),
-            Some(a) => {
-                tracing::debug!("// OLLAMA: response too short ({} chars)", a.len());
-                return None;
-            }
-            None => {
-                tracing::warn!("// OLLAMA: no 'response' field in JSON");
-                return None;
-            }
-        };
-        Some(answer)
-    }
+    // POST-LLM: the prior ~180-line query_ollama HTTP block was deleted
+    // in #338. The chat response path now routes exclusively through
+    // hdc_retrieval_response (module-level). If the LLM baseline is ever
+    // needed for comparison, the history is in git (commits prior to cf20e16).
+    // (Prior ~160-line query_ollama_with_context_model HTTP body deleted
+    // in #338. LFI is post-LLM — the response path routes exclusively
+    // through hdc_retrieval_response at module level. History preserved
+    // in git up to commit cf20e16 if the LLM baseline is ever needed
+    // for comparison / regression analysis.)
 
     fn generate_response(&self, input: &str, thought: &ThoughtResult) -> Result<String, HdcError> {
         debuglog!("CognitiveCore::generate_response: mode={:?}", thought.mode);
