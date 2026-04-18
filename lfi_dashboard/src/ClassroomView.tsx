@@ -13,6 +13,9 @@ import { SkeletonLoader } from './components/SkeletonLoader';
 import { BarChart } from './components/BarChart';
 // c2-351 / task 30: shared WAI-ARIA tablist.
 import { TabBar } from './components/TabBar';
+// c2-379 / BIG #180: shared sortable table.
+import { DataTable } from './components';
+import type { Column } from './components';
 import { compactNum, formatRelative } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
@@ -475,26 +478,33 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
               const filtered = q
                 ? data.training_files.filter(f => f.file.toLowerCase().includes(q))
                 : data.training_files;
-              const sorted = [...filtered].sort((a, b) => {
-                const sign = curricSort.dir === 'asc' ? 1 : -1;
-                if (curricSort.col === 'file') return sign * a.file.localeCompare(b.file);
-                if (curricSort.col === 'pairs') return sign * (a.pairs - b.pairs);
-                return sign * (a.size_mb - b.size_mb);
-              });
-              const toggleSort = (col: 'file' | 'pairs' | 'size') =>
-                setCurricSort(s => s.col === col
-                  ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' }
-                  : { col, dir: col === 'file' ? 'asc' : 'desc' });
-              const arrow = (col: 'file' | 'pairs' | 'size') =>
-                curricSort.col !== col ? '' : curricSort.dir === 'asc' ? ' \u25B2' : ' \u25BC';
-              const ariaSort = (col: 'file' | 'pairs' | 'size'): 'ascending' | 'descending' | 'none' =>
-                curricSort.col !== col ? 'none' : curricSort.dir === 'asc' ? 'ascending' : 'descending';
-              const thBase: React.CSSProperties = {
-                padding: '10px 14px', fontWeight: T.typography.weightBold,
-                color: C.textSecondary, background: C.bgCard,
-                borderBottom: `1px solid ${C.borderSubtle}`, cursor: 'pointer',
-                userSelect: 'none',
-              };
+              // c2-379 / BIG #180: Curriculum table -> DataTable. Sort
+              // state stays lifted (curricSort) so the existing keyboard-
+              // shortcut hook + URL intent remain compatible. Filter is
+              // applied upstream (`filtered`) since it lives in the input
+              // above -- DataTable only sees already-filtered rows.
+              type FRow = { file: string; pairs: number; size_mb: number };
+              const cols: ReadonlyArray<Column<FRow>> = [
+                {
+                  id: 'file', header: 'Dataset', align: 'left',
+                  sortKey: (f) => f.file.toLowerCase(),
+                  accessor: (f) => <span style={{ fontFamily: T.typography.fontMono, color: C.text }}>{f.file}</span>,
+                },
+                {
+                  id: 'pairs', header: 'Pairs', align: 'right',
+                  sortKey: (f) => f.pairs,
+                  accessor: (f) => (
+                    <span style={{ fontFamily: T.typography.fontMono, color: C.accent, fontWeight: T.typography.weightBold }}>
+                      {f.pairs.toLocaleString()}
+                    </span>
+                  ),
+                },
+                {
+                  id: 'size', header: 'Size', align: 'right',
+                  sortKey: (f) => f.size_mb,
+                  accessor: (f) => <span style={{ fontFamily: T.typography.fontMono, color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</span>,
+                },
+              ];
               return (
                 <>
                   <div style={{ marginBottom: T.spacing.md }}>
@@ -519,39 +529,14 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
                       }}>{filtered.length} match{filtered.length === 1 ? '' : 'es'}</span>
                     )}
                   </div>
-                  <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeMd }}>
-                      <thead>
-                        <tr>
-                          <th onClick={() => toggleSort('file')}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort('file'); } }}
-                            tabIndex={0} role='button' aria-sort={ariaSort('file')}
-                            style={{ ...thBase, textAlign: 'left' }}>Dataset{arrow('file')}</th>
-                          <th onClick={() => toggleSort('pairs')}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort('pairs'); } }}
-                            tabIndex={0} role='button' aria-sort={ariaSort('pairs')}
-                            style={{ ...thBase, textAlign: 'right' }}>Pairs{arrow('pairs')}</th>
-                          <th onClick={() => toggleSort('size')}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort('size'); } }}
-                            tabIndex={0} role='button' aria-sort={ariaSort('size')}
-                            style={{ ...thBase, textAlign: 'right' }}>Size{arrow('size')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sorted.length === 0 ? (
-                          <tr><td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: C.textMuted, fontSize: T.typography.sizeSm }}>
-                            No datasets match "{curricFilter}"
-                          </td></tr>
-                        ) : sorted.map(f => (
-                          <tr key={f.file}>
-                            <td style={{ padding: '10px 14px', fontFamily: T.typography.fontMono, color: C.text }}>{f.file}</td>
-                            <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.accent, fontWeight: T.typography.weightBold }}>{f.pairs.toLocaleString()}</td>
-                            <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataTable<FRow> C={C}
+                    rows={filtered as FRow[]}
+                    columns={cols}
+                    rowKey={(f) => f.file}
+                    sort={{ col: curricSort.col === 'size' ? 'size' : curricSort.col, dir: curricSort.dir }}
+                    onSortChange={(next) => setCurricSort({ col: next.col as 'file' | 'pairs' | 'size', dir: next.dir })}
+                    emptyText={q ? `No datasets match "${curricFilter}"` : 'No training files reported.'}
+                    cellFontSize={T.typography.sizeMd} />
                 </>
               );
             })() : (
@@ -1104,31 +1089,42 @@ const LessonsTab: React.FC<{
           <Label color={C.textMuted} mb={T.spacing.md}>
             Active roster (by pairs)
           </Label>
-          <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeSm }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Dataset</th>
-                  <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Pairs</th>
-                  <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Size</th>
-                  <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Share</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...files].sort((a, b) => b.pairs - a.pairs).slice(0, 50).map(f => {
+          {/* c2-379 / BIG #180: Lesson roster -> DataTable. Share column
+              derives from totalPairs so the sortKey computes percentage. */}
+          {(() => {
+            type FRow = { file: string; pairs: number; size_mb: number };
+            const rows = [...files].slice(0, 50) as FRow[];
+            const cols: ReadonlyArray<Column<FRow>> = [
+              {
+                id: 'file', header: 'Dataset', align: 'left',
+                sortKey: (f) => f.file.toLowerCase(),
+                accessor: (f) => <span style={{ fontFamily: T.typography.fontMono, color: C.text }}>{f.file}</span>,
+              },
+              {
+                id: 'pairs', header: 'Pairs', align: 'right',
+                sortKey: (f) => f.pairs,
+                accessor: (f) => <span style={{ fontFamily: T.typography.fontMono, color: C.accent }}>{f.pairs.toLocaleString()}</span>,
+              },
+              {
+                id: 'size', header: 'Size', align: 'right',
+                sortKey: (f) => f.size_mb,
+                accessor: (f) => <span style={{ fontFamily: T.typography.fontMono, color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</span>,
+              },
+              {
+                id: 'share', header: 'Share', align: 'right',
+                sortKey: (f) => totalPairs > 0 ? f.pairs / totalPairs : 0,
+                accessor: (f) => {
                   const share = totalPairs > 0 ? (f.pairs / totalPairs) * 100 : 0;
-                  return (
-                    <tr key={f.file}>
-                      <td style={{ padding: '8px 12px', fontFamily: T.typography.fontMono, color: C.text }}>{f.file}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.accent }}>{f.pairs.toLocaleString()}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.textMuted }}>{f.size_mb.toFixed(1)} MB</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: T.typography.fontMono, color: C.textMuted }}>{share.toFixed(1)}%</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  return <span style={{ fontFamily: T.typography.fontMono, color: C.textMuted }}>{share.toFixed(1)}%</span>;
+                },
+              },
+            ];
+            return (
+              <DataTable<FRow> C={C} rows={rows} columns={cols}
+                rowKey={(f) => f.file}
+                sort={{ col: 'pairs', dir: 'desc' }} />
+            );
+          })()}
         </div>
       )}
     </div>
@@ -1191,37 +1187,49 @@ const OfficeHoursTab: React.FC<{ C: any; events: Array<{ t: number; kind: string
           No feedback captured this session yet. Use 👍 / 👎 on any AI response to populate this log.
         </div>
       ) : (
-        <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: T.typography.sizeSm }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>When</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Rating</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Category</th>
-                <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: T.typography.weightBold, color: C.textSecondary, background: C.bgCard, borderBottom: `1px solid ${C.borderSubtle}` }}>Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {feedback.slice(0, 50).map((e, i) => {
+        /* c2-379 / BIG #180: Office Hours feedback table -> DataTable.
+           Rating sort ranks Positive above Negative when desc. */
+        (() => {
+          type Ev = { t: number; kind: string; data?: { category?: string; msgId?: number } };
+          const rows = feedback.slice(0, 50) as Ev[];
+          const cols: ReadonlyArray<Column<Ev>> = [
+            {
+              id: 'when', header: 'When', align: 'left', width: '110px',
+              sortKey: (e) => e.t,
+              accessor: (e) => (
+                <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>
+                  {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              ),
+            },
+            {
+              id: 'rating', header: 'Rating', align: 'left', width: '110px',
+              sortKey: (e) => e.kind === 'feedback_positive' ? 1 : 0,
+              accessor: (e) => {
                 const isPos = e.kind === 'feedback_positive';
-                const category = e.data?.category || (isPos ? '—' : '—');
-                const msgId = e.data?.msgId != null ? `msg ${e.data.msgId}` : '';
-                return (
-                  <tr key={i}>
-                    <td style={{ padding: '8px 12px', color: C.textMuted, fontFamily: T.typography.fontMono }}>
-                      {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                    <td style={{ padding: '8px 12px', color: isPos ? C.green : C.red, fontWeight: T.typography.weightBold }}>
-                      {isPos ? 'Positive' : 'Negative'}
-                    </td>
-                    <td style={{ padding: '8px 12px', color: C.text }}>{category}</td>
-                    <td style={{ padding: '8px 12px', color: C.textMuted, fontFamily: T.typography.fontMono }}>{msgId}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                return <span style={{ color: isPos ? C.green : C.red, fontWeight: T.typography.weightBold }}>{isPos ? 'Positive' : 'Negative'}</span>;
+              },
+            },
+            {
+              id: 'category', header: 'Category', align: 'left',
+              sortKey: (e) => (e.data?.category || '').toLowerCase(),
+              accessor: (e) => <span style={{ color: C.text }}>{e.data?.category || '\u2014'}</span>,
+            },
+            {
+              id: 'detail', header: 'Detail', align: 'left', sortable: false,
+              accessor: (e) => (
+                <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>
+                  {e.data?.msgId != null ? `msg ${e.data.msgId}` : ''}
+                </span>
+              ),
+            },
+          ];
+          return (
+            <DataTable<Ev> C={C} rows={rows} columns={cols}
+              rowKey={(e) => `${e.t}-${e.kind}`}
+              sort={{ col: 'when', dir: 'desc' }} />
+          );
+        })()
       )}
     </div>
   );
