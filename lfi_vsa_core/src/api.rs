@@ -51,8 +51,16 @@ pub struct AppState {
     pub knowledge_graph: crate::cognition::knowledge_graph::KnowledgeGraph,
 }
 
-/// POST /api/auth body
-#[derive(Deserialize)]
+/// POST /api/auth body.
+///
+/// SECURITY: `key` is the sovereign passphrase. We derive `Zeroize` +
+/// `ZeroizeOnDrop` so the heap-allocated String buffer is overwritten when
+/// the request struct drops, instead of just freeing the allocation with
+/// the passphrase bytes intact. Pairs with constant-time comparison in
+/// IdentityProver::verify_password (see task #304).
+///
+/// AVP-PASS-19: Tier 3 — crypto audit / zeroize coverage.
+#[derive(Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct AuthRequest {
     pub key: String,
 }
@@ -3602,9 +3610,19 @@ async fn security_headers_middleware(
 
 #[cfg(test)]
 mod tests {
-    use super::compute_effective_confidence;
+    use super::{compute_effective_confidence, AuthRequest};
+    use zeroize::Zeroize;
 
     fn approx(a: f64, b: f64, tol: f64) -> bool { (a - b).abs() < tol }
+
+    #[test]
+    fn auth_request_zeroize_clears_passphrase() {
+        let mut req = AuthRequest { key: "super-secret-passphrase".to_string() };
+        assert_eq!(req.key, "super-secret-passphrase");
+        Zeroize::zeroize(&mut req);
+        // After zeroize the String buffer is zero-filled and length is zero.
+        assert_eq!(req.key, "");
+    }
 
     #[test]
     fn decay_fresh_fact_unchanged() {
