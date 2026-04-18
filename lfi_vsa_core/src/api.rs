@@ -1325,40 +1325,6 @@ async fn conversation_switch_handler(
     Json(json!({ "status": "ok", "switched_to": conversation_id }))
 }
 
-/// POST /api/feedback — submit feedback on an AI response.
-/// Supports: thumbs up/down, categories, free text.
-async fn feedback_handler(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<serde_json::Value>,
-) -> impl IntoResponse {
-    let rating = body.get("rating").and_then(|v| v.as_str()).unwrap_or("neutral");
-    let category = body.get("category").and_then(|v| v.as_str()).unwrap_or("none");
-    let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
-    let message_id = body.get("message_id").and_then(|v| v.as_str()).unwrap_or("");
-
-    // Capture as learning signal
-    use crate::intelligence::experience_learning::{LearningSignal, SignalType};
-    let signal_type = match rating {
-        "positive" | "thumbs_up" => SignalType::PositiveFeedback,
-        "negative" | "thumbs_down" => SignalType::Correction,
-        _ => SignalType::FollowUp,
-    };
-
-    state.experience.lock().capture(LearningSignal {
-        signal_type,
-        user_input: format!("FEEDBACK [{}]: {} - {}", category, rating, text),
-        system_response: message_id.to_string(),
-        correction: if rating == "negative" || rating == "thumbs_down" { Some(text.to_string()) } else { None },
-        conversation_id: None,
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs()).unwrap_or(0),
-    });
-
-    info!("// FEEDBACK: {} ({}) on msg {}: {}", rating, category, message_id, &text[..text.len().min(100)]);
-    Json(json!({ "status": "ok", "rating": rating, "category": category }))
-}
-
 /// DELETE /api/conversations/:id — delete a conversation and its messages.
 async fn conversation_delete_handler(
     State(state): State<Arc<AppState>>,
@@ -3216,6 +3182,36 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             Ok(n) => {
                 let id = conn.last_insert_rowid();
                 info!("// FEEDBACK: stored rating={} id={} cid={:?}", rating, id, cid);
+                // Release the db lock before acquiring the experience lock so
+                // the signal capture can't deadlock against another request.
+                drop(conn);
+
+                // #350: also capture as a LearningSignal for the online
+                // experience buffer. DB row is the audit trail; the signal
+                // is what gets folded into future retrievals.
+                use crate::intelligence::experience_learning::{LearningSignal, SignalType};
+                let signal_type = match rating {
+                    "up" => SignalType::PositiveFeedback,
+                    "down" => SignalType::Correction,
+                    "correct" => SignalType::Correction,
+                    _ => SignalType::FollowUp,
+                };
+                let user_input = user_q.unwrap_or("").to_string();
+                let system_response = reply.unwrap_or("").to_string();
+                let correction_text = if rating == "correct" || rating == "down" {
+                    correction.map(|s| s.to_string())
+                } else { None };
+                let conversation_id_owned = conv.map(|s| s.to_string());
+                state.experience.lock().capture(LearningSignal {
+                    signal_type,
+                    user_input,
+                    system_response,
+                    correction: correction_text,
+                    conversation_id: conversation_id_owned,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs()).unwrap_or(0),
+                });
                 axum::Json(json!({"stored": true, "id": id, "rows": n}))
             }
             Err(e) => {
@@ -3795,10 +3791,9 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/conversations", get(conversations_list_handler))
         .route("/api/conversations/sync", post(conversations_sync_handler))
         .route("/api/conversations/switch", post(conversation_switch_handler))
-        // /api/feedback route registered below using the new nested
-        // handler (#350) which stores to user_feedback table. The old
-        // top-level feedback_handler is retained for its experience_learning
-        // capture side-effect but no longer bound to a route.
+        // /api/feedback route registered below. The nested handler stores
+        // to user_feedback AND captures a LearningSignal into the experience
+        // buffer (#350).
         .route("/api/conversations/:id", get(conversation_get_handler).delete(conversation_delete_handler))
         .route("/api/research", post(research_handler))
         .route("/api/training/status", get(training_status_handler))
