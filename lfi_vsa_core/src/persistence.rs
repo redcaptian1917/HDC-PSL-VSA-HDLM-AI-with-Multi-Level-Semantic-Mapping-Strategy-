@@ -203,6 +203,28 @@ impl BrainDb {
 
             CREATE INDEX IF NOT EXISTS idx_prov_run ON training_provenance(run_id);
             CREATE INDEX IF NOT EXISTS idx_prov_domain ON training_provenance(domain);
+
+            -- User feedback (#350): in-conversation training signal.
+            -- rating='up' / 'down' / 'correct'. correction = the response
+            -- the user says LFI SHOULD have given. conclusion_id ties the
+            -- feedback to a specific reasoning trace.
+            CREATE TABLE IF NOT EXISTS user_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                message_id TEXT,
+                conclusion_id INTEGER,
+                user_query TEXT,
+                lfi_reply TEXT,
+                rating TEXT NOT NULL,
+                correction TEXT,
+                comment TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                processed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_feedback_conv ON user_feedback(conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_feedback_rating ON user_feedback(rating);
+            CREATE INDEX IF NOT EXISTS idx_feedback_created ON user_feedback(created_at);
+            CREATE INDEX IF NOT EXISTS idx_feedback_processed ON user_feedback(processed_at);
         ")?;
 
         // REGRESSION-GUARD: facts_fts + sync triggers were historically created

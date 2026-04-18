@@ -2896,6 +2896,128 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    /// POST /api/feedback — user-feedback training signal (#350).
+    ///
+    /// Body: { conversation_id?, message_id?, conclusion_id?, user_query?,
+    ///         lfi_reply?, rating: "up"|"down"|"correct",
+    ///         correction?, comment? }
+    ///
+    /// Stores the feedback in user_feedback for downstream processing by
+    /// the metacognitive calibrator (Mechanism 4) and axiom refinement
+    /// (Mechanism 3). A nightly or on-demand processor will:
+    ///   - "up"       → boost weights of axioms used in the conclusion's trace
+    ///   - "down"     → demote tier of facts retrieved for this turn; log
+    ///                  as calibration outcome (expected_correct=false)
+    ///   - "correct"  → treat `correction` as a high-tier user-provided
+    ///                  fact; ingest as (user_query, user_taught_response,
+    ///                  correction) tuple via role-binding
+    ///
+    /// For now this handler only captures — the processor side is task
+    /// follow-up. Captured signal is the valuable part.
+    async fn feedback_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let rating = body.get("rating").and_then(|v| v.as_str()).unwrap_or("");
+        if !matches!(rating, "up" | "down" | "correct") {
+            return axum::Json(json!({
+                "error": "rating must be 'up', 'down', or 'correct'",
+            }));
+        }
+        let conv = body.get("conversation_id").and_then(|v| v.as_str());
+        let msg = body.get("message_id").and_then(|v| v.as_str());
+        let cid = body.get("conclusion_id").and_then(|v| v.as_i64());
+        let user_q = body.get("user_query").and_then(|v| v.as_str());
+        let reply = body.get("lfi_reply").and_then(|v| v.as_str());
+        let correction = body.get("correction").and_then(|v| v.as_str());
+        let comment = body.get("comment").and_then(|v| v.as_str());
+
+        // SECURITY: correction strings can be long — cap inserted size so a
+        // pathological payload can't bloat the feedback table.
+        fn cap(s: Option<&str>, n: usize) -> Option<String> {
+            s.map(|v| if v.len() > n { v[..n].to_string() } else { v.to_string() })
+        }
+
+        let conn = match state.db.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return axum::Json(json!({"error": "db lock"})),
+        };
+        let ins = conn.execute(
+            "INSERT INTO user_feedback \
+             (conversation_id, message_id, conclusion_id, user_query, \
+              lfi_reply, rating, correction, comment) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                conv,
+                msg,
+                cid,
+                cap(user_q, 4000),
+                cap(reply, 8000),
+                rating,
+                cap(correction, 8000),
+                cap(comment, 2000),
+            ],
+        );
+
+        match ins {
+            Ok(n) => {
+                let id = conn.last_insert_rowid();
+                info!("// FEEDBACK: stored rating={} id={} cid={:?}", rating, id, cid);
+                axum::Json(json!({"stored": true, "id": id, "rows": n}))
+            }
+            Err(e) => {
+                warn!("// FEEDBACK: insert failed: {}", e);
+                axum::Json(json!({"error": "insert failed"}))
+            }
+        }
+    }
+
+    /// GET /api/feedback/recent?limit=N — recent feedback entries for the
+    /// Classroom review view. Defaults 50, cap 500.
+    async fn feedback_recent_handler(
+        State(state): State<Arc<AppState>>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let limit: i64 = params.get("limit")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(50).min(500);
+
+        let conn = match state.db.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return axum::Json(json!({"error": "db lock"})),
+        };
+        let mut stmt = match conn.prepare(
+            "SELECT id, conversation_id, message_id, conclusion_id, \
+                    user_query, lfi_reply, rating, correction, comment, \
+                    created_at, processed_at \
+             FROM user_feedback ORDER BY created_at DESC LIMIT ?1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return axum::Json(json!({"error": "query failed"})),
+        };
+
+        let items: Vec<serde_json::Value> = stmt.query_map(
+            rusqlite::params![limit],
+            |row| {
+                Ok(json!({
+                    "id": row.get::<_, i64>(0).unwrap_or(0),
+                    "conversation_id": row.get::<_, Option<String>>(1).unwrap_or(None),
+                    "message_id": row.get::<_, Option<String>>(2).unwrap_or(None),
+                    "conclusion_id": row.get::<_, Option<i64>>(3).unwrap_or(None),
+                    "user_query": row.get::<_, Option<String>>(4).unwrap_or(None),
+                    "lfi_reply": row.get::<_, Option<String>>(5).unwrap_or(None),
+                    "rating": row.get::<_, String>(6).unwrap_or_default(),
+                    "correction": row.get::<_, Option<String>>(7).unwrap_or(None),
+                    "comment": row.get::<_, Option<String>>(8).unwrap_or(None),
+                    "created_at": row.get::<_, String>(9).unwrap_or_default(),
+                    "processed_at": row.get::<_, Option<String>>(10).unwrap_or(None),
+                }))
+            },
+        ).map(|iter| iter.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+
+        axum::Json(json!({"feedback": items, "count": items.len()}))
+    }
+
     // ---- Knowledge Graph Endpoints ----
 
     /// GET /api/graph/stats — knowledge graph overview
@@ -3420,7 +3542,10 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/conversations", get(conversations_list_handler))
         .route("/api/conversations/sync", post(conversations_sync_handler))
         .route("/api/conversations/switch", post(conversation_switch_handler))
-        .route("/api/feedback", post(feedback_handler))
+        // /api/feedback route registered below using the new nested
+        // handler (#350) which stores to user_feedback table. The old
+        // top-level feedback_handler is retained for its experience_learning
+        // capture side-effect but no longer bound to a route.
         .route("/api/conversations/:id", get(conversation_get_handler).delete(conversation_delete_handler))
         .route("/api/research", post(research_handler))
         .route("/api/training/status", get(training_status_handler))
@@ -3455,6 +3580,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/library/vet", post(library_vet_handler))
         .route("/api/library/trust", get(library_trust_handler))
         .route("/api/library/fact/:key", get(library_fact_handler))
+        .route("/api/feedback", post(feedback_handler))
+        .route("/api/feedback/recent", get(feedback_recent_handler))
         .route("/api/graph/stats", get(graph_stats_handler))
         .route("/api/graph/connections/:fact_key", get(graph_connections_handler))
         .route("/api/graph/traverse/:fact_key", get(graph_traverse_handler))

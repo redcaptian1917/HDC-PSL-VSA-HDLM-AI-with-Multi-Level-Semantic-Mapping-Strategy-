@@ -1411,17 +1411,41 @@ impl CognitiveCore {
            input_lower_pre.ends_with("haha") ||
            input_lower_pre.contains(" funny ")
         {
+            // Expanded pool + actual randomness. User reported hearing the
+            // same 5 jokes over and over. This is a stopgap until the
+            // HDLM Tier-2 renderer can compose novel humor from structural
+            // templates (tasks #343, #344). The pool has 20 variants across
+            // programmer, science, philosophy, and self-deprecating humor.
             let jokes = [
-                "Here's one: Why do programmers prefer dark mode? Because light attracts bugs.",
-                "Okay: I told my computer I needed a break — it won't stop sending me KitKat ads.",
-                "Why don't scientists trust atoms? Because they make up everything.",
-                "There are 10 kinds of people in this world: those who understand binary and those who don't.",
-                "My therapist said 'I think you have a problem with denial.' I said 'No I don't.'",
+                "Why do programmers prefer dark mode? Because light attracts bugs.",
+                "I told my computer I needed a break — it won't stop sending me KitKat ads.",
+                "Why don't scientists trust atoms? They make up everything.",
+                "There are 10 kinds of people: those who understand binary and those who don't.",
+                "My therapist said I have a problem with denial. I said I don't.",
+                "Parallel lines have so much in common — it's a shame they'll never meet.",
+                "I'm reading a book on anti-gravity. It's impossible to put down.",
+                "Why did the bicycle fall over? Because it was two-tired.",
+                "I asked the librarian if they had books about paranoia. She whispered, 'they're right behind you.'",
+                "The past, the present, and the future walked into a bar. It was tense.",
+                "I told my wife she was drawing her eyebrows too high. She looked surprised.",
+                "Why don't skeletons fight each other? They don't have the guts.",
+                "A photon checks into a hotel. Bellhop asks if it has luggage. Photon says, 'no, I'm traveling light.'",
+                "I used to hate facial hair… but then it grew on me.",
+                "What do you call fake spaghetti? An impasta.",
+                "Why did the scarecrow win an award? He was outstanding in his field.",
+                "I'm terrified of elevators. I'm taking steps to avoid them.",
+                "I would tell you a UDP joke but you might not get it.",
+                "How does a penguin build its house? Igloos it together.",
+                "I'd tell you a joke about infinity, but it wouldn't have an end.",
             ];
-            // Deterministic rotation via input length — good enough for variety
-            // without needing an RNG here.
-            let idx = input.len() % jokes.len();
-            return jokes[idx].to_string();
+            // True randomness — thread_rng() is seeded from the OS CSPRNG,
+            // so successive calls within one conversation see different
+            // picks. Also dedup against the last-returned hash via the
+            // existing recent_response_hashes path in respond() so a pick
+            // that just fired doesn't immediately repeat.
+            use rand::seq::SliceRandom;
+            let mut rng = rand::thread_rng();
+            return jokes.choose(&mut rng).copied().unwrap_or(jokes[0]).to_string();
         }
 
         // "what do you think about X" — give an actual take placeholder that
