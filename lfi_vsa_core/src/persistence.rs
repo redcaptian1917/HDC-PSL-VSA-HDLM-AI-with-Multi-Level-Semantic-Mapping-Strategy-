@@ -833,6 +833,101 @@ impl BrainDb {
             .unwrap_or(0)
     }
 
+    /// Summarise the causal / taxonomic neighbourhood of a concept for
+    /// chat responses (#336). Looks up the `concept:<normalized>` key
+    /// in fact_edges and groups results by edge_type.
+    ///
+    /// Returns None if the concept has no edges. Non-empty results are
+    /// shaped as:
+    ///
+    ///   "structured context for X:
+    ///     is a: cat, pet, living thing
+    ///     causes: purring, allergies
+    ///     has prerequisite: food, water"
+    ///
+    /// `per_type_limit` caps how many neighbours appear per predicate.
+    pub fn causal_summary(&self, concept: &str, per_type_limit: usize) -> Option<String> {
+        let norm: String = concept.trim().to_lowercase().split_whitespace()
+            .collect::<Vec<_>>().join(" ");
+        if norm.is_empty() { return None; }
+        let concept_key = format!("concept:{}", norm);
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Outbound: "X --IsA--> category", "X --Causes--> effect", etc.
+        let mut stmt = match conn.prepare(
+            "SELECT edge_type, target_key, strength FROM fact_edges \
+             WHERE source_key = ?1 ORDER BY strength DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return None };
+        let outbound: Vec<(String, String, f64)> = stmt.query_map(
+            rusqlite::params![&concept_key], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, f64>(2)?,
+            ))).map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default();
+
+        // Inbound for reverse questions: "what causes X?"
+        // Only "Causes" + "HasPrerequisite" + "MotivatedByGoal" give useful
+        // reverse-direction answers; skip IsA (too many sub-classes).
+        let mut stmt2 = match conn.prepare(
+            "SELECT edge_type, source_key, strength FROM fact_edges \
+             WHERE target_key = ?1 \
+               AND edge_type IN ('Causes','HasPrerequisite','MotivatedByGoal','CausesDesire') \
+             ORDER BY strength DESC LIMIT 80"
+        ) { Ok(s) => s, Err(_) => return None };
+        let inbound: Vec<(String, String, f64)> = stmt2.query_map(
+            rusqlite::params![&concept_key], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, f64>(2)?,
+            ))).map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default();
+
+        if outbound.is_empty() && inbound.is_empty() { return None; }
+
+        use std::collections::BTreeMap;
+        let mut out_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (et, t, _s) in &outbound {
+            let tgt = t.strip_prefix("concept:").unwrap_or(t).to_string();
+            out_groups.entry(et.clone()).or_default().push(tgt);
+        }
+        let mut in_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (et, s, _w) in &inbound {
+            let src = s.strip_prefix("concept:").unwrap_or(s).to_string();
+            in_groups.entry(et.clone()).or_default().push(src);
+        }
+
+        // Format — use human-readable predicate labels.
+        fn forward_label(et: &str) -> String {
+            match et {
+                "IsA" => "is a".into(),
+                "UsedFor" => "used for".into(),
+                "Causes" => "causes".into(),
+                "HasPrerequisite" => "requires".into(),
+                "HasSubevent" => "involves".into(),
+                "PartOf" => "part of".into(),
+                "MotivatedByGoal" => "motivated by".into(),
+                "CausesDesire" => "makes one want".into(),
+                other => other.to_string(),
+            }
+        }
+        fn reverse_label(et: &str) -> String {
+            match et {
+                "Causes" => "can be caused by".into(),
+                "HasPrerequisite" => "is a prerequisite for".into(),
+                "MotivatedByGoal" => "motivates".into(),
+                "CausesDesire" => "wanted by someone doing".into(),
+                other => other.to_string(),
+            }
+        }
+
+        let mut out = format!("Structured context for \"{}\":\n", norm);
+        for (et, mut xs) in out_groups {
+            xs.truncate(per_type_limit);
+            out.push_str(&format!("- {}: {}\n", forward_label(&et), xs.join(", ")));
+        }
+        for (et, mut xs) in in_groups {
+            xs.truncate(per_type_limit);
+            out.push_str(&format!("- {}: {}\n", reverse_label(&et), xs.join(", ")));
+        }
+        Some(out)
+    }
+
     /// Get edge type distribution.
     pub fn edge_type_stats(&self) -> Vec<(String, i64)> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());

@@ -358,6 +358,35 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     let speech_act_pair = state.speech_act_classifier.classify(input);
                     agent.reasoner.active_speech_act = Some(speech_act_pair);
 
+                    // #336: Causal / taxonomic context from the fact_edges
+                    // DAG. For Define / Why / Explain / HowTo questions, pull
+                    // the grouped predicate neighbourhood for the main query
+                    // concept and prepend it so the user sees the structural
+                    // relations before the free-text retrieval.
+                    let causal_context = {
+                        let act_opt = agent.reasoner.active_speech_act.map(|(a,_)| a);
+                        use crate::cognition::speech_act::SpeechAct;
+                        let want_causal = matches!(act_opt,
+                            Some(SpeechAct::Define) | Some(SpeechAct::Why) |
+                            Some(SpeechAct::Explain) | Some(SpeechAct::HowTo) |
+                            Some(SpeechAct::Compare));
+                        if want_causal {
+                            // Strip common question prefixes so "what is water"
+                            // becomes "water" for the concept-key lookup.
+                            let lower = input.to_lowercase();
+                            let stripped = [
+                                "what is ", "what's ", "whats ", "what are ",
+                                "why does ", "why is ", "why are ", "why do ",
+                                "how do i ", "how to ", "how does ", "how can i ",
+                                "explain ", "describe ", "tell me about ", "compare ",
+                            ].iter().find_map(|p| lower.strip_prefix(p).map(str::to_string));
+                            let query_concept = stripped.as_deref()
+                                .unwrap_or(&lower)
+                                .trim_end_matches('?').trim();
+                            state.db.causal_summary(query_concept, 8)
+                        } else { None }
+                    };
+
                     match agent.chat_traced(input) {
                         Ok((response, conclusion_id)) => {
                             let thought = &response.thought;
@@ -401,9 +430,17 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                             let domain_str = thought.intent.as_ref().map(|i| format!("{:?}", i));
                             let (calibrated_conf, conf_reliable) = state.calibration.lock()
                                 .calibrate(thought.confidence, domain_str.as_deref());
+                            // Compose final content: structured causal context
+                            // (when available) + the HDC retrieval / template.
+                            let final_content = match &causal_context {
+                                Some(cc) if !response.text.is_empty() =>
+                                    format!("{}\n{}", cc, response.text),
+                                Some(cc) => cc.clone(),
+                                None => response.text.clone(),
+                            };
                             let mut payload = json!({
                                 "type": "chat_response",
-                                "content": response.text,
+                                "content": final_content,
                                 "mode": format!("{:?}", thought.mode),
                                 "confidence": calibrated_conf,
                                 "confidence_raw": thought.confidence,
