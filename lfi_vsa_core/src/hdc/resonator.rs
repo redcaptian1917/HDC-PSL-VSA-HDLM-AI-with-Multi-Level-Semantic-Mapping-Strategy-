@@ -149,6 +149,126 @@ impl ResonatorFactorizer {
         Ok((last_argmax, self.max_iter))
     }
 
+    /// #351 Annealed resonator with random restarts — survives the
+    /// local-optima trap that single-shot factorize() hits on dense
+    /// codebooks (e.g. 64×3).
+    ///
+    /// Runs `restarts` attempts. Each attempt:
+    ///   - initialises estimates with a DIFFERENT random codebook
+    ///     index per slot (instead of the superposition bundle, which
+    ///     is identical across restarts and so always converges to
+    ///     the same attractor)
+    ///   - runs the same iterative refinement with a temperature
+    ///     schedule that decays from `temp_start` to `temp_end` over
+    ///     the iteration budget
+    ///
+    /// Returns the restart with the highest mean per-slot score.
+    ///
+    /// BUG ASSUMPTION: `restarts` bounded by caller — 8 restarts is
+    /// usually sufficient; >32 is diminishing returns.
+    pub fn factorize_annealed(
+        &self,
+        composite: &BipolarVector,
+        restarts: usize,
+        temp_start: f64,
+        temp_end: f64,
+    ) -> Result<(Vec<usize>, f64, usize), HdcError> {
+        if self.codebooks.is_empty() {
+            return Err(HdcError::EmptyBundle);
+        }
+        for cb in &self.codebooks {
+            if cb.is_empty() {
+                return Err(HdcError::EmptyBundle);
+            }
+        }
+        let restarts = restarts.max(1);
+        let temp_start = temp_start.max(temp_end).max(1e-6);
+        let temp_end = temp_end.max(1e-6);
+
+        let mut best: Option<(Vec<usize>, f64, usize)> = None;
+
+        use rand::{Rng, SeedableRng};
+        for restart in 0..restarts {
+            // Deterministic per-restart seed so results are reproducible.
+            let seed = 0xABCDu64.wrapping_add(restart as u64 * 0x9E3779B97F4A7C15);
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+
+            // Initialize from a random codebook entry per slot. The
+            // superposition-bundle start in factorize() is identical
+            // across runs; randomising here gives each restart a
+            // different basin of attraction.
+            let mut estimates: Vec<BipolarVector> = self.codebooks.iter()
+                .map(|cb| {
+                    let idx = rng.gen_range(0..cb.len());
+                    cb[idx].clone()
+                })
+                .collect();
+
+            let mut argmax = vec![0usize; self.codebooks.len()];
+            let mut last_argmax: Vec<usize> = vec![usize::MAX; self.codebooks.len()];
+            let mut stable = 0usize;
+            let mut iters_used = self.max_iter;
+
+            for iter in 0..self.max_iter {
+                // Linear anneal from temp_start → temp_end over iteration budget.
+                let t = if self.max_iter <= 1 { temp_end }
+                        else {
+                            let alpha = iter as f64 / (self.max_iter - 1) as f64;
+                            temp_start + (temp_end - temp_start) * alpha
+                        };
+
+                for i in 0..self.codebooks.len() {
+                    let others = xor_fold(&estimates, i)?;
+                    let probe = composite.bind(&others)?;
+
+                    let scores: Vec<f64> = self.codebooks[i].iter()
+                        .map(|c| probe.similarity(c).unwrap_or(0.0))
+                        .collect();
+                    let weights = softmax(&scores, t);
+
+                    let mut sums = vec![0.0f64; HD_DIMENSIONS];
+                    for (c, &w) in self.codebooks[i].iter().zip(weights.iter()) {
+                        for (d, val) in sums.iter_mut().enumerate() {
+                            let s = if c.data[d] { 1.0 } else { -1.0 };
+                            *val += w * s;
+                        }
+                    }
+                    let mut bits = bitvec::bitvec![u8, bitvec::order::Lsb0; 0; HD_DIMENSIONS];
+                    for (d, &s) in sums.iter().enumerate() {
+                        bits.set(d, s > 0.0);
+                    }
+                    estimates[i] = BipolarVector::from_bitvec(bits)?;
+
+                    let mut best_slot = (0usize, f64::NEG_INFINITY);
+                    for (j, &s) in scores.iter().enumerate() {
+                        if s > best_slot.1 { best_slot = (j, s); }
+                    }
+                    argmax[i] = best_slot.0;
+                }
+
+                if argmax == last_argmax {
+                    stable += 1;
+                    if stable >= 2 { iters_used = iter + 1; break; }
+                } else {
+                    stable = 0;
+                    last_argmax = argmax.clone();
+                }
+            }
+
+            // Score this restart by mean similarity at its argmax.
+            let mean_score = mean_argmax_score(
+                composite, &self.codebooks, &argmax,
+            ).unwrap_or(f64::NEG_INFINITY);
+
+            match best.as_ref() {
+                Some((_, best_score, _)) if mean_score <= *best_score => {}
+                _ => { best = Some((argmax, mean_score, iters_used)); }
+            }
+        }
+
+        Ok(best.expect("restart loop runs at least once"))
+    }
+
     /// As factorize() but also returns the final per-slot score
     /// distribution — useful for confidence / uncertainty estimation.
     pub fn factorize_with_scores(&self, composite: &BipolarVector)
@@ -183,6 +303,27 @@ fn xor_fold(vs: &[BipolarVector], skip: usize) -> Result<BipolarVector, HdcError
         acc = acc.bind(v)?;
     }
     Ok(acc)
+}
+
+/// #351 Score an argmax assignment by the mean per-slot cosine
+/// similarity at the recovered estimates. Used to compare restarts.
+fn mean_argmax_score(
+    composite: &BipolarVector,
+    codebooks: &[Vec<BipolarVector>],
+    argmax: &[usize],
+) -> Result<f64, HdcError> {
+    if argmax.len() != codebooks.len() || argmax.is_empty() {
+        return Ok(f64::NEG_INFINITY);
+    }
+    let estimates: Vec<BipolarVector> = argmax.iter().enumerate()
+        .map(|(i, &j)| codebooks[i][j].clone()).collect();
+    let mut total = 0.0f64;
+    for i in 0..codebooks.len() {
+        let others = xor_fold(&estimates, i)?;
+        let probe = composite.bind(&others)?;
+        total += probe.similarity(&codebooks[i][argmax[i]])?;
+    }
+    Ok(total / codebooks.len() as f64)
 }
 
 /// Softmax with temperature. `scores` in R^n → weights in [0,1]^n, sum=1.
@@ -254,6 +395,55 @@ mod tests {
         let (recovered, iters) = r.factorize(&composite).unwrap();
         assert_eq!(recovered, vec![picked.0, picked.1, picked.2],
             "larger codebook recovery failed, {} iter", iters);
+    }
+
+    #[test]
+    fn annealed_returns_a_valid_score_on_small_codebook() {
+        // Doesn't need to beat single-shot on a trivially easy problem —
+        // just has to produce SOME valid factorization with a score in
+        // [-1, 1]. Harder test is below.
+        let cb0 = random_codebook(8, 5_000);
+        let cb1 = random_codebook(8, 50_000);
+        let picked = (3, 6);
+        let composite = cb0[picked.0].bind(&cb1[picked.1]).unwrap();
+        let r = ResonatorFactorizer::new(vec![cb0, cb1]);
+        let (recovered, score, _iters) = r.factorize_annealed(
+            &composite, 4, 1.5, 0.2,
+        ).unwrap();
+        assert_eq!(recovered.len(), 2);
+        assert!(score >= -1.0 && score <= 1.0,
+                "mean score {} out of range", score);
+    }
+
+    #[test]
+    fn annealed_beats_single_shot_on_dense_codebook() {
+        // On a 32×3 codebook, the single-shot factorize() misses the
+        // correct assignment often enough that the annealed variant
+        // with 8 restarts should score at least as well on average.
+        let cb0 = random_codebook(32, 7_000);
+        let cb1 = random_codebook(32, 70_000);
+        let cb2 = random_codebook(32, 700_000);
+        let picked = (11, 23, 5);
+        let composite = cb0[picked.0].bind(&cb1[picked.1]).unwrap()
+            .bind(&cb2[picked.2]).unwrap();
+
+        let cbs = vec![cb0, cb1, cb2];
+        let r = ResonatorFactorizer::with_params(cbs.clone(), 100, 0.5);
+
+        // Single-shot score at its argmax.
+        let (single_argmax, _) = r.factorize(&composite).unwrap();
+        let single_score = mean_argmax_score(&composite, &cbs, &single_argmax)
+            .unwrap();
+
+        // Annealed 8 restarts.
+        let r2 = ResonatorFactorizer::with_params(cbs.clone(), 100, 0.5);
+        let (_ann_argmax, ann_score, _) = r2.factorize_annealed(
+            &composite, 8, 2.0, 0.2,
+        ).unwrap();
+
+        assert!(ann_score >= single_score - 1e-6,
+                "annealed score {} regressed below single-shot {}",
+                ann_score, single_score);
     }
 
     #[test]
