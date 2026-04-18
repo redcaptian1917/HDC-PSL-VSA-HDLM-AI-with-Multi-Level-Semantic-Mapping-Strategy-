@@ -169,6 +169,30 @@ impl BrainDb {
             CREATE INDEX IF NOT EXISTS idx_versions_key ON fact_versions(fact_key);
             CREATE INDEX IF NOT EXISTS idx_versions_time ON fact_versions(created_at);
 
+            -- #298 Contradiction ledger. Row is inserted at ingest time
+            -- when an incoming high-confidence fact for a key disagrees
+            -- with an existing high-confidence fact. Unlike fact_versions
+            -- (which records all changes), this is limited to the subset
+            -- that warrants human / axiom review.
+            CREATE TABLE IF NOT EXISTS contradictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fact_key TEXT NOT NULL,
+                existing_value TEXT NOT NULL,
+                incoming_value TEXT NOT NULL,
+                existing_confidence REAL NOT NULL,
+                incoming_confidence REAL NOT NULL,
+                existing_source TEXT,
+                incoming_source TEXT,
+                resolved_at TEXT,
+                resolved_value TEXT,
+                detected_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_contradictions_key ON contradictions(fact_key);
+            CREATE INDEX IF NOT EXISTS idx_contradictions_detected ON contradictions(detected_at);
+            CREATE INDEX IF NOT EXISTS idx_contradictions_unresolved
+                ON contradictions(fact_key) WHERE resolved_at IS NULL;
+
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 audit_type TEXT NOT NULL,
@@ -305,6 +329,33 @@ impl BrainDb {
         // SAFETY: poisoned mutex means another thread panicked while holding the lock.
         // We recover or return defaults rather than propagating the panic.
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // #298 Contradiction detector: before upsert, check whether the
+        // existing row for this key holds a *different* high-confidence
+        // value. If so, log the disagreement. Bounds:
+        //  - both existing AND incoming confidence must be ≥ 0.7
+        //  - a trivial re-ingest of the same value does NOT fire
+        //  - no-op if the key is new (no existing row)
+        //
+        // Both reads + writes happen inside the same lock; no TOCTOU.
+        let existing: Option<(String, f64, String)> = conn.query_row(
+            "SELECT value, confidence, COALESCE(source,'') FROM facts WHERE key = ?1",
+            params![key],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, String>(2)?)),
+        ).ok();
+        if let Some((ev, ec, es)) = existing.as_ref() {
+            if ev != value && *ec >= 0.7 && confidence >= 0.7 {
+                let _ = conn.execute(
+                    "INSERT INTO contradictions \
+                     (fact_key, existing_value, incoming_value, \
+                      existing_confidence, incoming_confidence, \
+                      existing_source, incoming_source) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![key, ev, value, ec, confidence, es, source],
+                );
+            }
+        }
+
         if let Err(e) = conn.execute(
             "INSERT INTO facts (key, value, source, confidence, updated_at)
              VALUES (?1, ?2, ?3, ?4, datetime('now'))
@@ -313,6 +364,67 @@ impl BrainDb {
         ) {
             warn!("// PERSISTENCE: upsert_fact failed: {}", e);
         }
+    }
+
+    /// #298 List recent unresolved contradictions for review UI.
+    /// BUG ASSUMPTION: unbounded `limit` could OOM with a pathological DB;
+    /// caller MUST cap (API layer does — 500).
+    pub fn recent_contradictions(&self, limit: i64, only_unresolved: bool)
+        -> Vec<(i64, String, String, String, f64, f64, Option<String>, Option<String>,
+                String, Option<String>, Option<String>)>
+    {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let sql = if only_unresolved {
+            "SELECT id, fact_key, existing_value, incoming_value, \
+                    existing_confidence, incoming_confidence, \
+                    existing_source, incoming_source, \
+                    detected_at, resolved_at, resolved_value \
+             FROM contradictions WHERE resolved_at IS NULL \
+             ORDER BY detected_at DESC LIMIT ?1"
+        } else {
+            "SELECT id, fact_key, existing_value, incoming_value, \
+                    existing_confidence, incoming_confidence, \
+                    existing_source, incoming_source, \
+                    detected_at, resolved_at, resolved_value \
+             FROM contradictions ORDER BY detected_at DESC LIMIT ?1"
+        };
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s, Err(_) => return Vec::new(),
+        };
+        stmt.query_map(params![limit], |r| Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, f64>(4)?,
+            r.get::<_, f64>(5)?,
+            r.get::<_, Option<String>>(6)?,
+            r.get::<_, Option<String>>(7)?,
+            r.get::<_, String>(8)?,
+            r.get::<_, Option<String>>(9)?,
+            r.get::<_, Option<String>>(10)?,
+        ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    }
+
+    /// #298 Resolve a flagged contradiction by picking the canonical
+    /// value. The resolver is the caller's responsibility (user UI,
+    /// PSL axiom, metacognitive calibrator). We only persist the verdict.
+    pub fn resolve_contradiction(&self, id: i64, resolved_value: &str) -> bool {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "UPDATE contradictions SET resolved_at = datetime('now'), \
+             resolved_value = ?2 WHERE id = ?1",
+            params![id, resolved_value],
+        ).map(|n| n > 0).unwrap_or(false)
+    }
+
+    /// #298 Pending contradiction count — useful for a UI badge.
+    pub fn contradiction_pending_count(&self) -> i64 {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.query_row(
+            "SELECT COUNT(*) FROM contradictions WHERE resolved_at IS NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0)
     }
 
     pub fn get_all_facts(&self) -> Vec<(String, String, String, f64)> {
@@ -1235,6 +1347,64 @@ mod tests {
         db.upsert_fact("temp", "data", "user", 1.0);
         db.delete_fact("temp");
         assert_eq!(db.get_all_facts().len(), 0);
+    }
+
+    #[test]
+    fn contradiction_logged_when_high_conf_values_disagree() {
+        // #298: existing 0.9 "8" vs incoming 0.95 "9" → logged
+        let db = temp_db();
+        db.upsert_fact("planet_count", "8", "astronomy_a", 0.9);
+        db.upsert_fact("planet_count", "9", "astronomy_b", 0.95);
+        let rows = db.recent_contradictions(10, true);
+        assert_eq!(rows.len(), 1, "expected one contradiction row");
+        assert_eq!(rows[0].1, "planet_count");
+        assert_eq!(rows[0].2, "8"); // existing_value
+        assert_eq!(rows[0].3, "9"); // incoming_value
+        assert_eq!(db.contradiction_pending_count(), 1);
+    }
+
+    #[test]
+    fn contradiction_skipped_when_same_value() {
+        // Trivial re-ingest of the same value is never a contradiction.
+        let db = temp_db();
+        db.upsert_fact("role", "architect", "user", 0.9);
+        db.upsert_fact("role", "architect", "other_user", 0.95);
+        assert_eq!(db.contradiction_pending_count(), 0);
+    }
+
+    #[test]
+    fn contradiction_skipped_when_existing_low_conf() {
+        // Existing < 0.7 → no contradiction, incoming just wins.
+        let db = temp_db();
+        db.upsert_fact("k", "a", "src1", 0.5);
+        db.upsert_fact("k", "b", "src2", 0.95);
+        assert_eq!(db.contradiction_pending_count(), 0);
+    }
+
+    #[test]
+    fn contradiction_skipped_when_incoming_low_conf() {
+        // Incoming < 0.7 → no contradiction, the incoming is too weak to
+        // count as a disagreement against high-confidence existing data.
+        let db = temp_db();
+        db.upsert_fact("k", "a", "src1", 0.95);
+        db.upsert_fact("k", "b", "src2", 0.4);
+        assert_eq!(db.contradiction_pending_count(), 0);
+    }
+
+    #[test]
+    fn contradiction_resolve_round_trip() {
+        let db = temp_db();
+        db.upsert_fact("k", "a", "src1", 0.9);
+        db.upsert_fact("k", "b", "src2", 0.9);
+        let rows = db.recent_contradictions(10, true);
+        assert_eq!(rows.len(), 1);
+        let id = rows[0].0;
+        assert!(db.resolve_contradiction(id, "a"));
+        assert_eq!(db.contradiction_pending_count(), 0);
+        // Resolved row is still visible when only_unresolved=false.
+        let all = db.recent_contradictions(10, false);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].10.as_deref(), Some("a")); // resolved_value
     }
 
     #[test]

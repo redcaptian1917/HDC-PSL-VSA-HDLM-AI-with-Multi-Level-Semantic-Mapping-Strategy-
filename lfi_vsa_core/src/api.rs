@@ -3267,6 +3267,60 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         axum::Json(json!({"feedback": items, "count": items.len()}))
     }
 
+    // ---- Contradiction Ledger (#298) ----
+
+    /// GET /api/contradictions/recent?limit=N&only_unresolved=true
+    async fn contradictions_recent_handler(
+        State(state): State<Arc<AppState>>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let limit: i64 = params.get("limit")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(50).min(500);
+        let only_unresolved = params.get("only_unresolved")
+            .map(|s| s == "true" || s == "1").unwrap_or(true);
+        let rows = state.db.recent_contradictions(limit, only_unresolved);
+        let items: Vec<serde_json::Value> = rows.into_iter().map(|(
+            id, key, ev, iv, ec, ic, es, is_, detected, resolved, resolved_val
+        )| json!({
+            "id": id,
+            "fact_key": key,
+            "existing_value": ev,
+            "incoming_value": iv,
+            "existing_confidence": ec,
+            "incoming_confidence": ic,
+            "existing_source": es,
+            "incoming_source": is_,
+            "detected_at": detected,
+            "resolved_at": resolved,
+            "resolved_value": resolved_val,
+        })).collect();
+        axum::Json(json!({
+            "contradictions": items,
+            "count": items.len(),
+            "pending": state.db.contradiction_pending_count(),
+        }))
+    }
+
+    /// POST /api/contradictions/:id/resolve
+    /// Body: { "resolved_value": "..." }
+    async fn contradiction_resolve_handler(
+        State(state): State<Arc<AppState>>,
+        Path(id): Path<i64>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let resolved = body.get("resolved_value")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if resolved.is_empty() || resolved.len() > 8000 {
+            return axum::Json(json!({
+                "error": "resolved_value must be 1..8000 chars",
+            }));
+        }
+        let ok = state.db.resolve_contradiction(id, resolved);
+        axum::Json(json!({ "resolved": ok, "id": id }))
+    }
+
     // ---- Knowledge Graph Endpoints ----
 
     /// GET /api/graph/stats — knowledge graph overview
@@ -3830,6 +3884,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/library/fact/:key", get(library_fact_handler))
         .route("/api/feedback", post(feedback_handler))
         .route("/api/feedback/recent", get(feedback_recent_handler))
+        .route("/api/contradictions/recent", get(contradictions_recent_handler))
+        .route("/api/contradictions/:id/resolve", post(contradiction_resolve_handler))
         .route("/api/graph/stats", get(graph_stats_handler))
         .route("/api/graph/connections/:fact_key", get(graph_connections_handler))
         .route("/api/graph/traverse/:fact_key", get(graph_traverse_handler))
