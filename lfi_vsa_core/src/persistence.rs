@@ -193,6 +193,18 @@ impl BrainDb {
             CREATE INDEX IF NOT EXISTS idx_contradictions_unresolved
                 ON contradictions(fact_key) WHERE resolved_at IS NULL;
 
+            -- #293 Per-source trust weights used for cross-source fact
+            -- reconciliation. 0.0 = adversarial/untrusted,
+            -- 1.0 = fully trusted. Unknown sources default to 0.5 via
+            -- the trust_of() helper. Populated on-demand by the
+            -- reconciliation pass and by the trust API.
+            CREATE TABLE IF NOT EXISTS source_trust (
+                source TEXT PRIMARY KEY,
+                trust REAL NOT NULL DEFAULT 0.5,
+                notes TEXT,
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
             -- #337 FSRS fact review scheduler persistence.
             -- Keyed by fact_key so every fact can be independently
             -- scheduled. State fields match FsrsCard in
@@ -442,6 +454,112 @@ impl BrainDb {
             "SELECT COUNT(*) FROM contradictions WHERE resolved_at IS NULL",
             [], |r| r.get(0),
         ).unwrap_or(0)
+    }
+
+    // ---- Source trust + cross-source reconciliation (#293) ----
+    //
+    // Trust is the cheap, first-pass reconciliation signal. When a
+    // contradiction fires at ingest (#298), `auto_resolve_contradictions`
+    // walks unresolved rows and picks the value whose source has the
+    // higher trust — provided the margin exceeds `min_margin`. Ties
+    // (or margins below the threshold) stay unresolved for human or
+    // axiom-driven review.
+
+    /// Trust of a single source, falling back to 0.5 (unknown) when the
+    /// row is missing. Never returns a negative number or NaN.
+    pub fn source_trust(&self, source: &str) -> f64 {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.query_row(
+            "SELECT trust FROM source_trust WHERE source = ?1",
+            params![source], |r| r.get::<_, f64>(0),
+        ).ok()
+         .filter(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0)
+         .unwrap_or(0.5)
+    }
+
+    /// Upsert a source trust row. `trust` is clamped to [0, 1] — callers
+    /// passing out-of-range values get the clamped value silently.
+    pub fn set_source_trust(&self, source: &str, trust: f64, notes: Option<&str>) {
+        if source.is_empty() { return; }
+        let clamped = trust.clamp(0.0, 1.0);
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = conn.execute(
+            "INSERT INTO source_trust (source, trust, notes, updated_at) \
+             VALUES (?1, ?2, ?3, datetime('now')) \
+             ON CONFLICT(source) DO UPDATE SET \
+             trust=?2, notes=?3, updated_at=datetime('now')",
+            params![source, clamped, notes],
+        );
+    }
+
+    /// List all known source trust weights.
+    pub fn list_source_trust(&self) -> Vec<(String, f64, Option<String>, String)> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = match conn.prepare(
+            "SELECT source, trust, notes, updated_at FROM source_trust \
+             ORDER BY trust DESC, source ASC"
+        ) { Ok(s) => s, Err(_) => return Vec::new() };
+        stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, f64>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, String>(3)?,
+        ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    }
+
+    /// Resolve every unresolved contradiction whose source-trust margin
+    /// exceeds `min_margin` (default 0.2). Returns (resolved, skipped).
+    ///
+    /// BUG ASSUMPTION: source_trust lookups are synchronous inside the
+    /// main lock; a huge contradictions table (>10k rows) will slow this
+    /// down. Intended to be called manually or on a schedule, not inline
+    /// with ingest.
+    pub fn auto_resolve_contradictions(&self, min_margin: f64) -> (i64, i64) {
+        let margin = min_margin.clamp(0.05, 0.5);
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = match conn.prepare(
+            "SELECT id, existing_value, incoming_value, \
+                    COALESCE(existing_source, ''), COALESCE(incoming_source, '') \
+             FROM contradictions WHERE resolved_at IS NULL"
+        ) { Ok(s) => s, Err(_) => return (0, 0) };
+        let rows: Vec<(i64, String, String, String, String)> = stmt.query_map(
+            [], |r| Ok((
+                r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?, r.get::<_, String>(4)?,
+            )),
+        ).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        drop(stmt);
+
+        let mut resolved = 0i64;
+        let mut skipped = 0i64;
+        for (id, ev, iv, es, is_) in rows {
+            // Inline trust lookup — we hold the conn lock already so a
+            // separate `source_trust()` call would deadlock.
+            let es_trust: f64 = conn.query_row(
+                "SELECT trust FROM source_trust WHERE source = ?1",
+                params![&es], |r| r.get(0),
+            ).ok().filter(|v: &f64| v.is_finite()).unwrap_or(0.5);
+            let is_trust: f64 = conn.query_row(
+                "SELECT trust FROM source_trust WHERE source = ?1",
+                params![&is_], |r| r.get(0),
+            ).ok().filter(|v: &f64| v.is_finite()).unwrap_or(0.5);
+            let diff = is_trust - es_trust;
+            let chosen = if diff >= margin { Some(iv.as_str()) }
+                         else if -diff >= margin { Some(ev.as_str()) }
+                         else { None };
+            match chosen {
+                Some(val) => {
+                    let _ = conn.execute(
+                        "UPDATE contradictions SET resolved_at = datetime('now'), \
+                         resolved_value = ?2 WHERE id = ?1",
+                        params![id, val],
+                    );
+                    resolved += 1;
+                }
+                None => { skipped += 1; }
+            }
+        }
+        (resolved, skipped)
     }
 
     // ---- FSRS card persistence (#337) ----
@@ -1501,6 +1619,72 @@ mod tests {
         db.upsert_fact("k", "a", "src1", 0.95);
         db.upsert_fact("k", "b", "src2", 0.4);
         assert_eq!(db.contradiction_pending_count(), 0);
+    }
+
+    #[test]
+    fn source_trust_default_is_half() {
+        let db = temp_db();
+        assert!((db.source_trust("nonexistent") - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn source_trust_set_and_get() {
+        let db = temp_db();
+        db.set_source_trust("wikidata", 0.85, Some("vetted"));
+        assert!((db.source_trust("wikidata") - 0.85).abs() < 1e-9);
+        db.set_source_trust("wikidata", 2.5, None); // clamped
+        assert!((db.source_trust("wikidata") - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn source_trust_listing_sorted_desc() {
+        let db = temp_db();
+        db.set_source_trust("low", 0.1, None);
+        db.set_source_trust("high", 0.9, None);
+        db.set_source_trust("mid", 0.5, None);
+        let rows = db.list_source_trust();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].0, "high");
+        assert_eq!(rows[2].0, "low");
+    }
+
+    #[test]
+    fn auto_resolve_prefers_high_trust() {
+        let db = temp_db();
+        db.upsert_fact("planet_count", "8", "astronomy_solid", 0.9);
+        db.upsert_fact("planet_count", "9", "astronomy_spam", 0.95);
+        db.set_source_trust("astronomy_solid", 0.9, None);
+        db.set_source_trust("astronomy_spam", 0.3, None);
+        let (resolved, _skipped) = db.auto_resolve_contradictions(0.2);
+        assert_eq!(resolved, 1);
+        let all = db.recent_contradictions(10, false);
+        assert_eq!(all.len(), 1);
+        // existing source has higher trust → resolved_value = existing "8"
+        assert_eq!(all[0].10.as_deref(), Some("8"));
+    }
+
+    #[test]
+    fn auto_resolve_skips_similar_trust() {
+        let db = temp_db();
+        db.upsert_fact("k", "a", "src1", 0.9);
+        db.upsert_fact("k", "b", "src2", 0.9);
+        db.set_source_trust("src1", 0.6, None);
+        db.set_source_trust("src2", 0.65, None); // 0.05 margin
+        let (resolved, skipped) = db.auto_resolve_contradictions(0.2);
+        assert_eq!(resolved, 0);
+        assert_eq!(skipped, 1);
+        assert_eq!(db.contradiction_pending_count(), 1);
+    }
+
+    #[test]
+    fn auto_resolve_uses_default_trust_for_unknown_sources() {
+        // Both sources at default 0.5 → no margin → skipped.
+        let db = temp_db();
+        db.upsert_fact("k", "a", "unknown1", 0.9);
+        db.upsert_fact("k", "b", "unknown2", 0.9);
+        let (resolved, skipped) = db.auto_resolve_contradictions(0.2);
+        assert_eq!(resolved, 0);
+        assert_eq!(skipped, 1);
     }
 
     #[test]

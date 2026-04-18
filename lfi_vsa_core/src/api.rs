@@ -3518,6 +3518,65 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Source trust + reconciliation (#293) ----
+
+    /// GET /api/sources/trust — list all per-source trust weights.
+    async fn sources_trust_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let rows = state.db.list_source_trust();
+        let items: Vec<serde_json::Value> = rows.into_iter()
+            .map(|(source, trust, notes, updated_at)| json!({
+                "source": source,
+                "trust": trust,
+                "notes": notes,
+                "updated_at": updated_at,
+            })).collect();
+        axum::Json(json!({"sources": items, "count": items.len()}))
+    }
+
+    /// PUT /api/sources/trust
+    /// Body: { "source": "...", "trust": 0.85, "notes": "..." }
+    async fn sources_trust_set_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let source = body.get("source")
+            .and_then(|v| v.as_str()).unwrap_or("").trim();
+        let trust = body.get("trust")
+            .and_then(|v| v.as_f64()).unwrap_or(0.5);
+        let notes = body.get("notes").and_then(|v| v.as_str());
+        if source.is_empty() || source.len() > 128 {
+            return axum::Json(json!({"error": "source must be 1..=128 chars"}));
+        }
+        state.db.set_source_trust(source, trust, notes);
+        let final_trust = state.db.source_trust(source);
+        axum::Json(json!({
+            "source": source,
+            "trust": final_trust,
+            "notes": notes,
+        }))
+    }
+
+    /// POST /api/contradictions/auto-resolve
+    /// Body: { "min_margin": 0.2 }  (optional, clamped [0.05, 0.5])
+    async fn contradictions_auto_resolve_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let min_margin = body.get("min_margin")
+            .and_then(|v| v.as_f64()).unwrap_or(0.2);
+        let (resolved, skipped) = state.db.auto_resolve_contradictions(min_margin);
+        info!("// RECONCILE: auto-resolved {} / skipped {} (margin={:.2})",
+              resolved, skipped, min_margin);
+        axum::Json(json!({
+            "resolved": resolved,
+            "skipped": skipped,
+            "margin": min_margin,
+            "remaining_pending": state.db.contradiction_pending_count(),
+        }))
+    }
+
     // ---- FSRS fact review scheduler (#337) ----
 
     /// GET /api/fsrs/due?limit=N&target_r=0.9
@@ -4240,6 +4299,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/feedback/recent", get(feedback_recent_handler))
         .route("/api/contradictions/recent", get(contradictions_recent_handler))
         .route("/api/contradictions/:id/resolve", post(contradiction_resolve_handler))
+        .route("/api/contradictions/auto-resolve", post(contradictions_auto_resolve_handler))
+        .route("/api/sources/trust", get(sources_trust_handler).put(sources_trust_set_handler))
         .route("/api/fsrs/due", get(fsrs_due_handler))
         .route("/api/fsrs/review", post(fsrs_review_handler))
         .route("/api/explain", post(explain_query_handler))
