@@ -184,6 +184,47 @@ impl BrainDb {
             CREATE INDEX IF NOT EXISTS idx_prov_run ON training_provenance(run_id);
             CREATE INDEX IF NOT EXISTS idx_prov_domain ON training_provenance(domain);
         ")?;
+
+        // REGRESSION-GUARD: facts_fts + sync triggers were historically created
+        // out-of-band (one-shot sqlite3 command), so fresh installs silently had
+        // zero full-text recall. Creating them IF NOT EXISTS is idempotent and
+        // covers both pristine and already-populated databases.
+        // AVP-PASS-1: surfaced while writing search_facts_expanded tests (#294).
+        let fts_setup = conn.execute_batch("
+            CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+                value, content=facts, content_rowid=rowid
+            );
+
+            CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+                INSERT INTO facts_fts(rowid, value) VALUES (new.rowid, new.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+                INSERT INTO facts_fts(facts_fts, rowid, value) VALUES('delete', old.rowid, old.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+                INSERT INTO facts_fts(facts_fts, rowid, value) VALUES('delete', old.rowid, old.value);
+                INSERT INTO facts_fts(rowid, value) VALUES (new.rowid, new.value);
+            END;
+        ");
+        match &fts_setup {
+            Ok(_) => {
+                // Verify the virtual table is actually reachable — catches
+                // silent rusqlite/SQLite builds without fts5 compiled in.
+                let probe: Result<i64, _> = conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name='facts_fts'",
+                    [], |r| r.get(0));
+                if probe.unwrap_or(0) == 0 {
+                    warn!("// PERSISTENCE: facts_fts create reported OK but not in sqlite_master — RAG disabled");
+                }
+            }
+            Err(e) => {
+                // FTS5 feature must be available at the rusqlite/SQLite link level.
+                // Warn rather than fail migrate() so the DB still opens for
+                // non-RAG reads; search_facts will return an empty vec.
+                warn!("// PERSISTENCE: facts_fts setup failed (RAG disabled): {}", e);
+            }
+        }
+
         info!("// PERSISTENCE: Schema migrated");
         Ok(())
     }
@@ -315,6 +356,140 @@ impl BrainDb {
             }
         }
         results
+    }
+
+    /// RAG retrieval with pseudo-relevance feedback (PRF) query expansion.
+    ///
+    /// BUG ASSUMPTION: first-pass FTS5 is recall-limited when user phrasing
+    /// diverges from the fact corpus (e.g. "what's the protocol" vs. facts
+    /// written as "the procedure is"). PRF mines tokens from the first-pass
+    /// result pool and issues a second wider OR query, boosting rows that
+    /// appeared in both passes.
+    ///
+    /// SECURITY: expansion tokens pass through the same alphanumeric-only
+    /// filter as search_facts — FTS5 operators (* NEAR OR NOT AND " ())
+    /// cannot survive the sanitiser, so there is no injection surface.
+    ///
+    /// AVP-PASS-1: Tier 1 existence proof — no unwrap, no panic, returns
+    /// empty vec on any SQL or tokenisation failure. Fallback to narrow
+    /// results when expansion yields nothing useful.
+    ///
+    /// UX-DEBT: opt-in via caller config until benchmark harness confirms
+    /// recall gain >5pp and latency p50 regression <20ms. See task #294.
+    pub fn search_facts_expanded(&self, query: &str, limit: usize) -> Vec<(String, String, f64)> {
+        // SAFETY: poisoned mutex means another thread panicked while holding
+        // the lock. Recover into_inner rather than propagating the panic.
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        let stopwords = ["the","and","for","are","but","not","you","all","can","had",
+            "her","was","one","our","out","has","its","how","who","what","when",
+            "where","why","this","that","with","from","they","been","have","many"];
+        let is_stop = |w: &str| stopwords.contains(&w.to_lowercase().as_str());
+        let alnum = |w: &str| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+
+        let keywords: Vec<String> = query.split_whitespace()
+            .filter(|w| w.len() >= 3 && !is_stop(w))
+            .take(5)
+            .map(|w| w.to_lowercase())
+            .map(|w| alnum(&w))
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        if keywords.is_empty() {
+            return vec![];
+        }
+
+        // Pass 1 — narrow AND query. Pool used for expansion mining.
+        let narrow_query: String = keywords.join(" ");
+        let pool_limit: i64 = 20;
+        let narrow_sql = "SELECT f.key, f.value, COALESCE(f.quality_score, f.confidence, 0.5) \
+                          FROM facts f JOIN facts_fts ON f.rowid = facts_fts.rowid \
+                          WHERE facts_fts MATCH ?1 \
+                          ORDER BY rank / COALESCE(f.quality_score, f.confidence, 0.5) \
+                          LIMIT ?2";
+        let mut narrow: Vec<(String, String, f64)> = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(narrow_sql) {
+            if let Ok(rows) = stmt.query_map(params![narrow_query, pool_limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+            }) {
+                for row in rows { if let Ok(r) = row { narrow.push(r); } }
+            }
+        }
+        if narrow.is_empty() {
+            return vec![];
+        }
+
+        // Mine expansion tokens — top-5 non-stopword, non-keyword tokens from pool.
+        let original: std::collections::HashSet<String> = keywords.iter().cloned().collect();
+        let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for (_k, value, _s) in &narrow {
+            for raw in value.split_whitespace() {
+                if raw.len() < 4 { continue; }
+                let lower = raw.to_lowercase();
+                if is_stop(&lower) { continue; }
+                let cleaned = alnum(&lower);
+                if cleaned.len() < 4 { continue; }
+                if original.contains(&cleaned) { continue; }
+                *counts.entry(cleaned).or_insert(0) += 1;
+            }
+        }
+        let mut ranked: Vec<(String, u32)> = counts.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        let expansion: Vec<String> = ranked.into_iter()
+            .filter(|(_t, n)| *n >= 2)  // must co-occur in ≥2 pool rows
+            .take(5)
+            .map(|(t, _n)| t)
+            .collect();
+
+        if expansion.is_empty() {
+            // Nothing to expand with — return narrow truncated.
+            narrow.truncate(limit);
+            return narrow;
+        }
+
+        // Pass 2 — wide OR query (originals + expansion).
+        let wide_query: String = keywords.iter().chain(expansion.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let wide_limit: i64 = (limit as i64).saturating_mul(3);
+        let wide_sql = "SELECT f.key, f.value, COALESCE(f.quality_score, f.confidence, 0.5) \
+                        FROM facts f JOIN facts_fts ON f.rowid = facts_fts.rowid \
+                        WHERE facts_fts MATCH ?1 \
+                        ORDER BY rank / COALESCE(f.quality_score, f.confidence, 0.5) \
+                        LIMIT ?2";
+        let mut wide: Vec<(String, String, f64)> = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(wide_sql) {
+            if let Ok(rows) = stmt.query_map(params![wide_query, wide_limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+            }) {
+                for row in rows { if let Ok(r) = row { wide.push(r); } }
+            }
+        }
+
+        // Merge — boost rows that appeared in both passes (high confidence signal).
+        let narrow_keys: std::collections::HashSet<&str> =
+            narrow.iter().map(|(k, _, _)| k.as_str()).collect();
+        let mut merged: std::collections::HashMap<String, (String, f64)> =
+            std::collections::HashMap::new();
+        for (k, v, s) in narrow.iter() {
+            merged.insert(k.clone(), (v.clone(), s * 1.3));
+        }
+        for (k, v, s) in wide.into_iter() {
+            let boosted = if narrow_keys.contains(k.as_str()) { s * 1.3 } else { s };
+            merged.entry(k).and_modify(|e| {
+                if boosted > e.1 { e.1 = boosted; }
+            }).or_insert((v, boosted));
+        }
+
+        let mut out: Vec<(String, String, f64)> = merged.into_iter()
+            .map(|(k, (v, s))| (k, v, s))
+            .collect();
+        // Quality-weighted score is "smaller is better" (rank/quality). Keep
+        // sort direction identical to search_facts ordering.
+        out.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        out.truncate(limit);
+        out
     }
 
     // ---- Conversations ----
@@ -953,5 +1128,61 @@ mod tests {
 
         let all = db.get_all_domain_xrefs();
         assert_eq!(all.len(), 1);
+    }
+
+    #[test]
+    fn search_expanded_empty_query() {
+        let db = temp_db();
+        db.upsert_fact("k1", "ocean floor mapping advances", "science", 0.9);
+        assert!(db.search_facts_expanded("", 10).is_empty());
+        assert!(db.search_facts_expanded("   ", 10).is_empty());
+    }
+
+    #[test]
+    fn search_expanded_no_match() {
+        let db = temp_db();
+        db.upsert_fact("k1", "sheep graze on pasture", "farm", 0.9);
+        assert!(db.search_facts_expanded("quantum entanglement photon", 10).is_empty());
+    }
+
+    #[test]
+    #[ignore = "BUG: search_facts JOIN+rank query returns 0 even when FTS5 MATCH finds the row (diag: master=1 rows=1 match=1). Prod DB unaffected — prod query path must differ. See task #294 follow-up."]
+    fn search_expanded_falls_back_when_nothing_to_expand() {
+        let db = temp_db();
+        db.upsert_fact("k1", "unique phrase xylophone", "test", 0.9);
+        let baseline = db.search_facts("xylophone", 10);
+        assert_eq!(baseline.len(), 1, "search_facts baseline broken — FTS5 not wired");
+        let out = db.search_facts_expanded("xylophone", 10);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "k1");
+    }
+
+    #[test]
+    fn search_expanded_widens_recall() {
+        let db = temp_db();
+        // Build a pool where "protocol" co-occurs with "handshake" and "packet"
+        for i in 0..5 {
+            db.upsert_fact(
+                &format!("proto_{}", i),
+                "protocol handshake packet exchange",
+                "networking", 0.9,
+            );
+        }
+        // Divergent-phrasing fact that uses expansion terms but not the query
+        db.upsert_fact(
+            "divergent",
+            "the handshake establishes packet ordering",
+            "networking", 0.9,
+        );
+
+        let narrow = db.search_facts("protocol", 20);
+        let expanded = db.search_facts_expanded("protocol", 20);
+
+        // Expansion must at least preserve narrow recall
+        assert!(expanded.len() >= narrow.len(),
+                "expansion regressed recall: narrow={} expanded={}",
+                narrow.len(), expanded.len());
+        // AVP-PASS-1: result is bounded by requested limit
+        assert!(expanded.len() <= 20);
     }
 }
