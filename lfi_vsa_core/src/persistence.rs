@@ -14,6 +14,10 @@ use tracing::{info, warn};
 
 pub struct BrainDb {
     pub conn: Mutex<Connection>,
+    /// Absolute path to the DB file. Captured at open time so
+    /// `read_only()` can spawn additional read-only connections
+    /// to the same file without re-parsing env/XDG paths.
+    path: std::path::PathBuf,
 }
 
 impl BrainDb {
@@ -53,7 +57,7 @@ impl BrainDb {
              PRAGMA page_size=8192;\
              PRAGMA wal_autocheckpoint=0;"
         )?;
-        let db = Self { conn: Mutex::new(conn) };
+        let db = Self { conn: Mutex::new(conn), path: path.to_path_buf() };
         db.migrate()?;
         info!("// PERSISTENCE: SQLite opened at {} (WAL, 30s busy_timeout, 256MB cache, 8GB mmap)", path.display());
         Ok(db)
@@ -655,6 +659,41 @@ impl BrainDb {
                 bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
             },
         ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    }
+
+    // ---- Read-replica / read-only connection (#320) ----
+    //
+    // Analytics queries (full-table GROUP BY, long scans) serialise
+    // behind the writer mutex today. WAL mode allows concurrent
+    // readers at the SQLite layer; this helper exposes that.
+    //
+    // Each call opens a fresh read-only connection to the same DB
+    // file with lightweight pragmas tuned for read-heavy passes:
+    //   - query_only=ON enforces read-only at the engine level (any
+    //     stray write attempt errors out instead of corrupting)
+    //   - cache_size reuses the same 256 MB heap cache as the writer
+    //   - busy_timeout gives WAL checkpoints time to finish
+    //
+    // Callers are expected to drop the connection promptly. For a
+    // long-running analytics pool, wrap this in an Arc<Mutex<Vec<..>>>.
+
+    /// Open a read-only connection to the same database. Returns an
+    /// rusqlite::Error if the file can't be opened — analytics callers
+    /// should fall back to state.db.conn in that case.
+    pub fn read_only(&self) -> Result<Connection, rusqlite::Error> {
+        let conn = Connection::open_with_flags(
+            &self.path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.execute_batch(
+            "PRAGMA query_only=ON;\
+             PRAGMA busy_timeout=30000;\
+             PRAGMA cache_size=-262144;\
+             PRAGMA temp_store=MEMORY;\
+             PRAGMA mmap_size=8589934592;"
+        )?;
+        Ok(conn)
     }
 
     // ---- Capability tokens (#303) ----
@@ -2177,6 +2216,37 @@ mod tests {
         db.upsert_fact("k", "a", "src1", 0.95);
         db.upsert_fact("k", "b", "src2", 0.4);
         assert_eq!(db.contradiction_pending_count(), 0);
+    }
+
+    #[test]
+    fn read_only_connection_reads_existing_rows() {
+        let db = temp_db();
+        db.upsert_fact("k1", "v1", "test", 0.9);
+        let ro = db.read_only().expect("failed to open RO connection");
+        let v: String = ro.query_row(
+            "SELECT value FROM facts WHERE key = ?1",
+            rusqlite::params!["k1"], |r| r.get(0),
+        ).expect("read failed");
+        assert_eq!(v, "v1");
+    }
+
+    #[test]
+    fn read_only_connection_rejects_writes() {
+        let db = temp_db();
+        db.upsert_fact("k1", "v1", "test", 0.9);
+        let ro = db.read_only().expect("failed to open RO connection");
+        // Any write through the read-only conn must error out.
+        let attempted = ro.execute(
+            "UPDATE facts SET value = 'tampered' WHERE key = ?1",
+            rusqlite::params!["k1"],
+        );
+        assert!(attempted.is_err(), "RO conn should reject writes");
+        // The primary conn still reads the original value.
+        let v: String = db.conn.lock().unwrap().query_row(
+            "SELECT value FROM facts WHERE key = ?1",
+            rusqlite::params!["k1"], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(v, "v1");
     }
 
     #[test]
