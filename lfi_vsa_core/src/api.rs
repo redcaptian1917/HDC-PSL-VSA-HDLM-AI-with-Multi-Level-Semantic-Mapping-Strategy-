@@ -407,9 +407,12 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                         let lower_once = input.to_lowercase();
                         let prefix_gate = [
                             "what ", "why ", "how ", "explain ", "describe ",
-                            "tell me about ", "compare ",
+                            "tell me ", "compare ",
                         ].iter().any(|p| lower_once.starts_with(p));
-                        let want_causal = act_gate || prefix_gate;
+                        // #352: a follow-up ("tell me more about them",
+                        // "what about it") is always a causal question —
+                        // its subject is in the topic stack.
+                        let want_causal = act_gate || prefix_gate || looks_like_followup;
                         if want_causal {
                             // Strip common question prefixes so "what is water"
                             // becomes "water" for the concept-key lookup, then
@@ -447,45 +450,70 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                             }
                             // Try full cleaned phrase first; fall back to the
                             // last token (heuristic head noun) when the full
-                            // phrase has no edges.
+                            // phrase has no edges. #352: when the primary is
+                            // weak (e.g. pronoun "them" matched "is a: film")
+                            // AND this is a follow-up, prefer the topic stack.
+                            //
+                            // BUG ASSUMPTION: final_concept may be a pronoun
+                            // ("them", "it", "they") whose causal_summary
+                            // returns a real but irrelevant edge. is_weak
+                            // filters those out so the topic stack wins.
+                            fn is_weak(summary: &str) -> bool {
+                                // Body = everything after the header line.
+                                // Count comma-separated entries across all
+                                // predicate groups. Weak if < 3 total, since a
+                                // real multi-anchored concept has many more.
+                                let entries: usize = summary.lines().skip(1)
+                                    .filter_map(|ln| ln.strip_prefix("- "))
+                                    .map(|tail| tail.split_once(": ")
+                                        .map(|(_, xs)| xs.split(',').count())
+                                        .unwrap_or(0))
+                                    .sum();
+                                entries < 3
+                            }
                             let primary = state.db.causal_summary(&final_concept, 8);
-                            if primary.is_some() {
+                            let primary_strong = primary.as_ref()
+                                .map_or(false, |s| !is_weak(s));
+                            let out = if primary_strong {
                                 primary
-                            } else if let Some(last_token) = final_concept.rsplit_once(' ')
-                                .map(|(_, last)| last.to_string())
-                                .and_then(|last| state.db.causal_summary(&last, 8))
-                            {
-                                Some(last_token)
-                            } else if looks_like_followup {
-                                // #341 follow-up: pull the prior user
-                                // utterance from workspace and try to extract
-                                // a concept from that. Lets "and how do they
-                                // form" (following a volcano question) still
-                                // hit volcano's edges.
-                                let ws = agent.workspace.broadcast();
-                                let prior = ws.iter()
-                                    .find(|e| e.source_module == "dialogue_user"
-                                              && e.salience >= 0.5);
-                                prior.and_then(|e| {
-                                    let p_lower = e.label.to_lowercase();
-                                    let p_stripped = [
-                                        "what is ", "what's ", "whats ",
-                                        "why does ", "why is ", "why do ",
-                                        "how do i ", "how to ", "how does ",
-                                        "explain ", "describe ", "tell me about ",
-                                    ].iter().find_map(|pfx| p_lower.strip_prefix(pfx).map(str::to_string))
-                                        .unwrap_or(p_lower);
-                                    let p_clean = p_stripped
-                                        .trim_end_matches('?').trim()
-                                        .trim_start_matches("a ")
-                                        .trim_start_matches("an ")
-                                        .trim_start_matches("the ")
-                                        .to_string();
-                                    state.db.causal_summary(&p_clean, 8)
-                                        .or_else(|| p_clean.rsplit_once(' ')
-                                            .and_then(|(_, last)| state.db.causal_summary(last, 8)))
-                                })
-                            } else { None }
+                            } else {
+                                // Primary is missing or weak. Try alternatives.
+                                let stack_fallback = if looks_like_followup {
+                                    // #352 topic stack: inherit the most recent
+                                    // non-follow-up concept. Fixes chains like
+                                    //   "what is a volcano"  → push volcano
+                                    //   "how do they form"   → pull volcano
+                                    //   "tell me more"       → still volcano
+                                    //   "what eats them"     → still volcano
+                                    //                          (even though
+                                    //                          "them" has a
+                                    //                          weak IsA edge)
+                                    agent.topic_stack.back().cloned()
+                                        .and_then(|t| state.db.causal_summary(&t, 8)
+                                            .or_else(|| t.rsplit_once(' ')
+                                                .and_then(|(_, last)| state.db.causal_summary(last, 8))))
+                                } else { None };
+                                let last_token_fallback = final_concept.rsplit_once(' ')
+                                    .map(|(_, last)| last.to_string())
+                                    .and_then(|last| state.db.causal_summary(&last, 8));
+                                // Follow-up → prefer topic stack (that's the
+                                // whole point). Otherwise last-token head-noun.
+                                // Finally, weak primary is better than nothing.
+                                stack_fallback.or(last_token_fallback).or(primary)
+                            };
+
+                            // #352 topic stack maintenance: when this turn is
+                            // NOT a follow-up AND we extracted a real concept,
+                            // push it. Keep depth ≤ 8 by popping the oldest.
+                            if !looks_like_followup && !final_concept.is_empty() {
+                                if !agent.topic_stack.back().map_or(false, |t| t == &final_concept) {
+                                    agent.topic_stack.push_back(final_concept.clone());
+                                    while agent.topic_stack.len() > 8 {
+                                        agent.topic_stack.pop_front();
+                                    }
+                                }
+                            }
+                            out
                         } else { None }
                     };
 

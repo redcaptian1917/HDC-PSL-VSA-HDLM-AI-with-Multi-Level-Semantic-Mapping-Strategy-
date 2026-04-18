@@ -54,6 +54,13 @@ pub struct LfiAgent {
     pub causal_graph: crate::cognition::causal::CausalGraph,
     /// Global Workspace — capacity-bounded attention bottleneck.
     pub workspace: crate::cognition::global_workspace::GlobalWorkspace,
+    /// Topic stack — the most-recent non-follow-up concepts the user
+    /// has asked about. Follow-up turns ("tell me more about them",
+    /// "how do they work") pull from the head of this stack when their
+    /// own input doesn't contain a fresh concept. Depth capped at 8.
+    /// Each entry is the cleaned concept text used for causal_summary.
+    /// Populated by the api chat handler after each turn.
+    pub topic_stack: std::collections::VecDeque<String>,
     /// Grokking phase monitor — detects memorization→cleanup transitions.
     pub grok_monitor: crate::cognition::grokking_monitor::GrokMonitor,
     /// Commitment registry — cross-cutting commit-reveal fabric.
@@ -145,6 +152,7 @@ impl LfiAgent {
             rag_context: Vec::new(),
             causal_graph: crate::cognition::causal::CausalGraph::new(),
             workspace: crate::cognition::global_workspace::GlobalWorkspace::standard(),
+            topic_stack: std::collections::VecDeque::with_capacity(8),
             grok_monitor: crate::cognition::grokking_monitor::GrokMonitor::new(100),
             commitments: crate::crypto_commitment::CommitmentRegistry::new(),
         })
