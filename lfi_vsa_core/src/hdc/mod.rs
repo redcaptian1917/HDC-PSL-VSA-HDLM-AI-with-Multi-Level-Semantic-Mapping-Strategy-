@@ -28,6 +28,7 @@ pub mod encoder_protection;
 pub mod tier_weighted_bundle;
 pub mod tensor_train;
 pub mod role_binding;
+pub mod resonator;
 #[cfg(test)]
 mod proptest_vector;
 
