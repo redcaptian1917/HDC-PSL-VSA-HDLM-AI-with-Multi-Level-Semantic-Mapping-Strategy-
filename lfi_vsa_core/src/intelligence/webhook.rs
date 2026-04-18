@@ -76,19 +76,28 @@ impl WebhookEvent {
 // Webhook Configuration
 // ============================================================
 
-#[derive(Debug, Clone)]
+/// WebhookConfig carries a shared HMAC secret. #322 zeroize sweep: the
+/// `secret` field is wrapped in `SecretString` so it's zeroized on drop
+/// and can't be accidentally logged. Inner access via `.expose_secret()`
+/// at the signing boundary only.
+#[derive(Debug, Clone, zeroize::ZeroizeOnDrop)]
 pub struct WebhookConfig {
     /// Destination URL.
+    #[zeroize(skip)]
     pub url: String,
-    /// Shared secret for HMAC signing.
+    /// Shared secret for HMAC signing — zeroized on drop.
     pub secret: String,
     /// Only deliver events at or above this severity.
+    #[zeroize(skip)]
     pub min_severity: String,
     /// Event type filter (empty = all).
+    #[zeroize(skip)]
     pub event_types: Vec<String>,
     /// Max retries before giving up.
+    #[zeroize(skip)]
     pub max_retries: u32,
     /// Initial backoff in milliseconds.
+    #[zeroize(skip)]
     pub initial_backoff_ms: u64,
 }
 

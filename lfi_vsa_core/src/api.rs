@@ -161,7 +161,12 @@ pub struct AuditRequest {
 }
 
 /// POST /api/opsec/scan body — submits text for PII / sensitive-data scanning.
-#[derive(Deserialize)]
+///
+/// #322 Zeroize sweep: the caller is submitting text they SUSPECT of
+/// carrying secrets — the whole point of calling the opsec scanner.
+/// Derive `ZeroizeOnDrop` so once the request handler finishes, the
+/// heap buffer is overwritten rather than just freed.
+#[derive(Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct OpsecRequest {
     pub text: String,
 }
