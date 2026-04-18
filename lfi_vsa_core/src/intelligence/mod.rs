@@ -66,6 +66,7 @@ pub mod correction_trainer;
 pub mod poison_detector;
 pub mod active_learner;
 pub mod rag_trainer;
+pub mod semantic_search;
 
 pub use data_connector::{DataSourceRegistry, DataSourceConfig, SourceType, IngestResult, ColumnMapping};
 pub use reward_model::{RewardClassifier, TrainingPair, ClassificationResult, QualityTier, BatchStats};
