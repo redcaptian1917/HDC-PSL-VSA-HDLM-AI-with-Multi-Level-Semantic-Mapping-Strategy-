@@ -38,6 +38,7 @@ pub mod depth_adapter;
 pub mod context_awareness;
 pub mod prompt_optimizer;
 pub mod self_critique;
+pub mod chain_verifier;
 
 pub use knowledge_graph::{KnowledgeGraph, EdgeType, FactEdge, Subgraph, GraphStats};
 pub use emotion_detector::{detect_emotion, Emotion, EmotionAnalysis};
