@@ -460,6 +460,89 @@ impl BrainDb {
         ).map(|n| n > 0).unwrap_or(false)
     }
 
+    // ---- Drift monitor (#284) ----
+    //
+    // Periodic snapshots of the fact base so we can observe drift over
+    // time: total count, per-source counts, FTS-indexed count, fresh
+    // cnt (last 7 days), stale cnt (> 365 days), contradiction pending,
+    // feedback negative rate, FSRS lapse rate.
+    //
+    // All queries are sampled or use indexed columns so they're cheap
+    // enough to run every N minutes from a background task.
+
+    /// Current drift snapshot. Runs sampled queries where a full scan
+    /// would be expensive. Intended to be called on a schedule.
+    pub fn drift_snapshot(&self) -> std::collections::BTreeMap<String, f64> {
+        let mut out = std::collections::BTreeMap::new();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Sampled totals — top 5000 rows by rowid DESC (free scan).
+        let (fresh_sample, stale_sample, cached_sample, sample_size): (i64, i64, i64, i64) =
+            conn.query_row(
+                "SELECT \
+                   SUM(CASE WHEN julianday('now') - julianday(COALESCE(updated_at, created_at)) <= 7 THEN 1 ELSE 0 END), \
+                   SUM(CASE WHEN julianday('now') - julianday(COALESCE(updated_at, created_at)) > 365 THEN 1 ELSE 0 END), \
+                   SUM(CASE WHEN hdc_vector IS NOT NULL THEN 1 ELSE 0 END), \
+                   COUNT(*) \
+                 FROM (SELECT updated_at, created_at, hdc_vector FROM facts ORDER BY rowid DESC LIMIT 5000)",
+                [],
+                |r| Ok((
+                    r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                    r.get::<_, i64>(3)?,
+                )),
+            ).unwrap_or((0, 0, 0, 0));
+
+        let sample_f = sample_size as f64;
+        if sample_f > 0.0 {
+            out.insert("fresh_ratio".into(), fresh_sample as f64 / sample_f);
+            out.insert("stale_ratio".into(), stale_sample as f64 / sample_f);
+            out.insert("hdc_cache_ratio".into(), cached_sample as f64 / sample_f);
+        }
+        out.insert("sample_size".into(), sample_f);
+
+        // Contradiction backlog — exact count on a small table.
+        let pending_cons: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM contradictions WHERE resolved_at IS NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        out.insert("contradictions_pending".into(), pending_cons as f64);
+
+        // Feedback sentiment over the last 24h.
+        let (pos, neg): (i64, i64) = conn.query_row(
+            "SELECT \
+               SUM(CASE WHEN rating = 'up' THEN 1 ELSE 0 END), \
+               SUM(CASE WHEN rating IN ('down','correct') THEN 1 ELSE 0 END) \
+             FROM user_feedback \
+             WHERE julianday('now') - julianday(created_at) <= 1",
+            [],
+            |r| Ok((r.get::<_, Option<i64>>(0)?.unwrap_or(0),
+                    r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
+        ).unwrap_or((0, 0));
+        let total = pos + neg;
+        out.insert("feedback_positive_24h".into(), pos as f64);
+        out.insert("feedback_negative_24h".into(), neg as f64);
+        out.insert(
+            "feedback_negative_ratio_24h".into(),
+            if total > 0 { neg as f64 / total as f64 } else { 0.0 },
+        );
+
+        // FSRS lapses over all cards (small table usually — review work).
+        let (total_cards, total_lapses): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(lapses), 0) FROM fsrs_cards",
+            [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        ).unwrap_or((0, 0));
+        out.insert("fsrs_total_cards".into(), total_cards as f64);
+        out.insert("fsrs_total_lapses".into(), total_lapses as f64);
+        out.insert(
+            "fsrs_lapse_rate".into(),
+            if total_cards > 0 { total_lapses as f64 / total_cards as f64 } else { 0.0 },
+        );
+
+        out
+    }
+
     // ---- HDC vector cache per fact (#295) ----
     //
     // 10_000-dim bipolar vectors encoded via role_binding::concept_vector

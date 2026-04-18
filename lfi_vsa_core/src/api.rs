@@ -3537,6 +3537,21 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Drift monitor (#284) ----
+
+    /// GET /api/drift/snapshot — current drift metrics for the fact base.
+    /// Cheap to call every minute from a UI polling loop.
+    async fn drift_snapshot_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let snap = state.db.drift_snapshot();
+        let mut map = serde_json::Map::new();
+        for (k, v) in snap.into_iter() {
+            map.insert(k, json!(v));
+        }
+        axum::Json(serde_json::Value::Object(map))
+    }
+
     // ---- HDC vector cache per fact (#295) ----
 
     /// GET /api/hdc/cache/stats — sampled cache coverage.
@@ -4382,6 +4397,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/sources/trust", get(sources_trust_handler).put(sources_trust_set_handler))
         .route("/api/hdc/cache/stats", get(hdc_cache_stats_handler))
         .route("/api/hdc/cache/encode", post(hdc_cache_encode_handler))
+        .route("/api/drift/snapshot", get(drift_snapshot_handler))
         .route("/api/fsrs/due", get(fsrs_due_handler))
         .route("/api/fsrs/review", post(fsrs_review_handler))
         .route("/api/explain", post(explain_query_handler))
