@@ -30,6 +30,7 @@ pub use spaced_repetition::{SpacedRepetitionScheduler, ReviewCard};
 pub mod grokking_monitor;
 pub mod fsrs_scheduler;
 pub mod knowledge_graph;
+pub mod speech_act;
 
 pub mod emotion_detector;
 pub mod conversation_summarizer;
