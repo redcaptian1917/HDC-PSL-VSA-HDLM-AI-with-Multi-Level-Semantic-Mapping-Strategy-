@@ -5549,26 +5549,13 @@ ${cmdList}
         );
       })()}
 
-      {/* ========== ADMIN CONSOLE MODAL (c0-017) ========== */}
-      {showAdmin && (
-        // Local error boundary: if any Admin panel throws (bad shape from
-        // /api/admin/dashboard, unexpected field, etc.) we only lose the
-        // modal's contents, not the whole chat UI.
-        <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}
-          inlineMode label="AdminModal"
-          onReset={() => { setShowAdmin(false); setAdminInitialTab('dashboard'); }}>
-          <AdminModal
-            C={C}
-            host={host}
-            factsCount={kg.facts}
-            sourcesCount={kg.sources}
-            localEvents={localEvents}
-            initialTab={adminInitialTab}
-            isMobile={isMobile}
-            onClose={() => { setShowAdmin(false); setAdminInitialTab('dashboard'); }}
-          />
-        </AppErrorBoundary>
-      )}
+      {/* ========== ADMIN CONSOLE ==========
+          User ask 2026-04-19: Admin no longer renders here as a
+          fixed-position modal overlay. It renders inline in the views
+          section below (alongside classroom/fleet/library/auditorium),
+          replacing the chat pane when showAdmin is true. This block is
+          kept as an empty placeholder so the comment-order remains
+          searchable via "ADMIN CONSOLE". */}
 
       {/* ========== ACTIVITY / LOGS MODAL ========== */}
       {showActivity && (
@@ -7382,6 +7369,31 @@ ${cmdList}
             </AppErrorBoundary>
           </React.Suspense>
         )}
+        {/* User ask 2026-04-19: Admin renders inline here as a sibling
+            view of Classroom/Fleet/etc. Shows only when showAdmin is
+            true; the chat pane below hides (display:none) in that case
+            so admin has the full viewport. */}
+        {showAdmin && (
+          <React.Suspense fallback={
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMuted }}>
+              Loading admin…
+            </div>
+          }>
+            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent} inlineMode label="AdminView"
+              onReset={() => { setShowAdmin(false); setAdminInitialTab('dashboard'); }}>
+              <AdminModal
+                C={C}
+                host={host}
+                factsCount={kg.facts}
+                sourcesCount={kg.sources}
+                localEvents={localEvents}
+                initialTab={adminInitialTab}
+                isMobile={isMobile}
+                onClose={() => { setShowAdmin(false); setAdminInitialTab('dashboard'); }}
+              />
+            </AppErrorBoundary>
+          </React.Suspense>
+        )}
         <main id='main-content' role='main' aria-label='Chat'
           aria-busy={isThinking || undefined}
           onDragOver={(e) => {
@@ -7429,7 +7441,11 @@ ${cmdList}
             }
           }}
           style={{
-          flex: 1, display: activeView === 'chat' ? 'flex' : 'none', flexDirection: 'column',
+          flex: 1,
+          // Chat pane hides when any other view is active, including
+          // admin (which renders inline above, not as a modal anymore).
+          display: (activeView === 'chat' && !showAdmin) ? 'flex' : 'none',
+          flexDirection: 'column',
           overflow: 'hidden', minWidth: 0, position: 'relative',
         }}>
           {/* c2-370 / task 84: drag-and-drop overlay. Absolute-positioned

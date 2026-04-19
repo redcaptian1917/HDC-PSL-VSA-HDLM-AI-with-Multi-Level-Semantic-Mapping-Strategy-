@@ -309,8 +309,25 @@ const UI_ERROR_PATH = '/api/diag/ui-error';
 const recentUiErrors = new Map<string, number>();
 const UI_ERROR_DEDUP_MS = 5000;
 
+// Once we see a connection refused / network error we set this flag
+// with a 15s cooldown so a storm of failing fetches doesn't trigger
+// its own storm of failing ui-error POSTs. Reset when a successful
+// report goes through.
+let backendReportOfflineUntil = 0;
+
 export function reportUiError(r: UiErrorReport): void {
   if (typeof window === 'undefined') return;
+  const now0 = Date.now();
+  // Skip the POST entirely if we recently saw a connection failure —
+  // otherwise every failing fetch creates a failing /api/diag/ui-error
+  // POST, flooding the console.
+  if (now0 < backendReportOfflineUntil) return;
+  // If the caller's message screams "backend offline", don't bother
+  // POSTing — just set the suppression window.
+  if (/Failed to fetch|NetworkError|ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_NAME_NOT_RESOLVED|net::/i.test(r.message || '')) {
+    backendReportOfflineUntil = now0 + 15000;
+    return;
+  }
   const key = `${r.source}|${(r.message || '').slice(0, 200)}`;
   const now = Date.now();
   const last = recentUiErrors.get(key) || 0;
@@ -343,7 +360,12 @@ export function reportUiError(r: UiErrorReport): void {
     body,
     signal: ctrl.signal,
     keepalive: true,   // let browsers flush on page-unload
-  }).catch(() => { /* silent — never break caller */ })
+  }).then(() => { backendReportOfflineUntil = 0; })
+    .catch(() => {
+      // If the POST itself fails, activate the suppression window so
+      // the next error doesn't create another failing POST.
+      backendReportOfflineUntil = Date.now() + 15000;
+    })
     .finally(() => clearTimeout(tid));
 }
 

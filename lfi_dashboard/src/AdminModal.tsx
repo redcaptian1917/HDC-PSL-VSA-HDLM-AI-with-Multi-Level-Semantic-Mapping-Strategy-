@@ -322,24 +322,39 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       const m = String(e?.message || e || 'fetch failed');
       // Distinguish AbortError from real HTTP errors so the user knows
       // "backend is busy" vs "endpoint returned 500".
-      const friendly = m.includes('abort') || m.includes('aborted')
+      // User ask 2026-04-19: "tabs take a long time" — when the backend
+      // is fully down (ERR_CONNECTION_REFUSED / Failed to fetch), the
+      // previous auto-retry (1s + 3s) added 4s of waiting before the
+      // user saw the final error. For definite backend-offline errors
+      // we skip the retry entirely and show the error instantly.
+      const isConnRefused = /Failed to fetch|NetworkError|ERR_CONNECTION_REFUSED|ERR_CONNECTION_RESET|ERR_NAME_NOT_RESOLVED|net::/i.test(m)
+        || (e?.name === 'TypeError' && m.includes('fetch'));
+      const friendly = isConnRefused
+        ? 'Backend unreachable — plausiden-server is offline on this host. Start it on your LFI machine and click Refresh.'
+        : (m.includes('abort') || m.includes('aborted'))
         ? 'Backend is busy — request timed out after 10s. It may be running a long DB transaction (e.g. WAL checkpoint). Click Refresh to retry.'
         : m.startsWith('HTTP') ? `${m} — backend returned an error. Is the route registered?` : m;
-      // Auto-retry with backoff: 2 attempts before surfacing the error. Scheduled
-      // timer is cancelled if the user switches tabs or manually refreshes.
-      const attempts = (autoRetryAttemptsRef.current[t] || 0) + 1;
-      autoRetryAttemptsRef.current[t] = attempts;
-      if (attempts <= 2) {
-        const delay = attempts === 1 ? 1000 : 3000;
-        setErr(x => ({ ...x, [t]: `${friendly} — auto-retrying (${attempts}/2 in ${delay / 1000}s)` }));
-        const timerId = window.setTimeout(() => {
-          delete autoRetryTimersRef.current[t];
-          loadTab(t);
-        }, delay);
-        autoRetryTimersRef.current[t] = timerId;
-      } else {
+      if (isConnRefused) {
         setErr(x => ({ ...x, [t]: friendly }));
         autoRetryAttemptsRef.current[t] = 0;
+      } else {
+        // Auto-retry with backoff: 2 attempts before surfacing the error.
+        // Scheduled timer is cancelled if the user switches tabs or
+        // manually refreshes.
+        const attempts = (autoRetryAttemptsRef.current[t] || 0) + 1;
+        autoRetryAttemptsRef.current[t] = attempts;
+        if (attempts <= 2) {
+          const delay = attempts === 1 ? 1000 : 3000;
+          setErr(x => ({ ...x, [t]: `${friendly} — auto-retrying (${attempts}/2 in ${delay / 1000}s)` }));
+          const timerId = window.setTimeout(() => {
+            delete autoRetryTimersRef.current[t];
+            loadTab(t);
+          }, delay);
+          autoRetryTimersRef.current[t] = timerId;
+        } else {
+          setErr(x => ({ ...x, [t]: friendly }));
+          autoRetryAttemptsRef.current[t] = 0;
+        }
       }
     } finally {
       clearTimeout(to);
@@ -461,24 +476,25 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const sortArrow = (active: boolean, dir: 'asc' | 'desc') =>
     active ? (dir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
 
+  // User ask 2026-04-19: Admin was a fullscreen modal overlay with a
+  // backdrop that covered the current view. They wanted Admin to
+  // "use the window its in" like Classroom/Fleet — a true sibling view
+  // instead of a popup. Outer wrapper is now a simple flex column
+  // filling its parent (the view slot) with no fixed position, no
+  // backdrop, no click-outside-close. The close button in the header
+  // is still wired to onClose for navigation back to chat.
   return (
-    <div onClick={onClose}
-      role='presentation'
+    <div
+      role='region' aria-label='Admin console'
       style={{
-        position: 'fixed', inset: 0, zIndex: T.z.modal + 40,
-        background: C.overlayBg,
-        display: 'flex', alignItems: 'stretch', justifyContent: 'center',
-        // c2-433 mobile: zero backdrop padding on mobile so the admin
-        // body fills the viewport. Desktop keeps the 16-24px gutter.
-        padding: isMobile ? 0 : T.spacing.lg,
+        flex: 1, display: 'flex', alignItems: 'stretch',
+        background: C.bg, minWidth: 0, minHeight: 0,
       }}>
-      <div ref={dialogRef} role='dialog' aria-modal='true' aria-labelledby='scc-admin-title'
-        onClick={(e) => e.stopPropagation()}
+      <div ref={dialogRef} role='region' aria-labelledby='scc-admin-title'
         style={{
-          width: '100%', maxWidth: '1240px', height: '100%',
-          background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
+          width: '100%', height: '100%',
+          background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
-          boxShadow: T.shadows.modal,
         }}>
         {/* Header */}
         <div style={{
