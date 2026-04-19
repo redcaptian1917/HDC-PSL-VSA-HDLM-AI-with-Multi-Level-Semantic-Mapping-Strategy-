@@ -647,6 +647,34 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 }}>{label}</span>
             );
           })()}
+          {/* c2-433 / #357 + Tier 5 #38 provenance-lite: count distinct
+              facts + distinct sources surfaced in the response text.
+              Desktop-only — mobile users see the same info via each
+              individual [fact:KEY] chip. Provides an at-a-glance trust
+              signal (5 facts · 3 sources = well-grounded vs 1 fact · 1
+              source = leaning hard on one claim). Hidden when no
+              citations present. */}
+          {!isMobile && !isThinking && msg.content && (() => {
+            const factRegex = /\[(?:fact|k):([A-Za-z0-9_\-:]{1,80})\]/g;
+            const factKeys = new Set<string>();
+            let m: RegExpExecArray | null;
+            while ((m = factRegex.exec(msg.content)) !== null) factKeys.add(m[1]);
+            if (factKeys.size === 0) return null;
+            const sourceRegex = /[\(\[]source:\s*([^,\)\]]+),\s*similarity/gi;
+            const sources = new Set<string>();
+            while ((m = sourceRegex.exec(msg.content)) !== null) sources.add(m[1].trim().toLowerCase());
+            return (
+              <span title={sources.size > 0
+                ? `${factKeys.size} cited fact${factKeys.size === 1 ? '' : 's'} from ${sources.size} distinct source${sources.size === 1 ? '' : 's'} — click any chip inline for ancestry`
+                : `${factKeys.size} cited fact${factKeys.size === 1 ? '' : 's'} — click any chip inline for ancestry`}
+                style={{
+                  fontSize: '10px', color: C.textDim, alignSelf: 'center',
+                  padding: '0 8px 0 0', fontFamily: T.typography.fontMono, flexShrink: 0,
+                }}>
+                {factKeys.size}f{sources.size > 0 ? ` · ${sources.size}s` : ''}
+              </span>
+            );
+          })()}
         </div>
         {/* c2-360 / task 88 / c2-433 #339 vocab sweep: word + char counts on
             assistant messages. Hidden on empty / thinking messages so it
