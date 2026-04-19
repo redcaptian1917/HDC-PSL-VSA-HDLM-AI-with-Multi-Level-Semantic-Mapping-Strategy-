@@ -214,10 +214,13 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({ C, isMobile, open, ste
   };
 
   // Spotlight uses four dim panels around the rect so the cutout stays
-  // crisp and click-through to the target (if a step wants live interaction
-  // with it, e.g. highlight a button). Falls back to a single full-screen
-  // dim panel when there's no target.
-  const dim = 'rgba(0,0,0,0.68)';
+  // crisp and click-through to the target. When there's no target,
+  // use a MUCH lighter dim (0.32 vs 0.68) so the underlying content is
+  // still legible — previously the user read the 68%-dimmed view as
+  // a blank page.
+  const dimFocused = 'rgba(0,0,0,0.68)';
+  const dimAmbient = 'rgba(0,0,0,0.32)';
+  const dim = rect ? dimFocused : dimAmbient;
   const dimPanels: React.CSSProperties[] = rect
     ? [
         { position: 'fixed', top: 0, left: 0, right: 0, height: rect.top, background: dim, zIndex: T.z.modal + 150 },

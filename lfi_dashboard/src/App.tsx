@@ -6307,11 +6307,18 @@ ${cmdList}
             return (
               <button key={item.id} onClick={() => {
                 item.act();
-                if (item.id === 'admin') setDiagUnseenErrors(0);
+                if (item.id === 'admin') {
+                  // If there are unseen diag errors, jump straight to the
+                  // Diag tab so the user can SEE what the red dot is
+                  // about. Without this the dot is a mystery notification
+                  // with no discoverable landing page.
+                  if (diagUnseenErrors > 0) setAdminInitialTab('diag');
+                  setDiagUnseenErrors(0);
+                }
               }}
                 aria-current={isActive ? 'page' : undefined}
                 title={badge !== null ? `${item.label} — ${badge} pending contradiction${badge === 1 ? '' : 's'}`
-                  : adminErrDot ? `${item.label} — ${diagUnseenErrors} unseen error${diagUnseenErrors === 1 ? '' : 's'} in diag`
+                  : adminErrDot ? `${diagUnseenErrors} unseen error${diagUnseenErrors === 1 ? '' : 's'} in the diagnostic log — click to view`
                   : `${item.label} (${mod()}${item.mod})`}
                 style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',

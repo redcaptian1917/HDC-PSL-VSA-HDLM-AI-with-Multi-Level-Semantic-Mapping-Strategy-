@@ -126,7 +126,7 @@ export const AuditoriumView: React.FC<AuditoriumViewProps> = ({ C, host, isDeskt
   };
 
   return (
-    <div style={{
+    <div data-tour='auditorium-root' style={{
       flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0,
       background: C.bg, color: C.text, overflow: 'hidden',
       animation: 'lfi-fadein 0.18s ease-out',
