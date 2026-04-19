@@ -2275,6 +2275,115 @@ impl BrainDb {
         Some(out)
     }
 
+    /// #356 Prose variant of causal_summary.
+    ///
+    /// Instead of a structured bullet list, composes proper English
+    /// sentences via per-predicate templates + discourse connectives.
+    /// Every fact-derived clause carries a [concept:filler] marker
+    /// so the frontend can render a clickable chip per claim.
+    ///
+    /// Example output for "volcano":
+    ///   A volcano is a land topographical feature [concept:land_topographical_feature]
+    ///   and a mountain [concept:mountain]. It is part of Earth's
+    ///   geology [concept:geology]. It can cause eruptions
+    ///   [concept:eruption].
+    pub fn causal_summary_prose(&self, concept: &str, per_type_limit: usize)
+        -> Option<String>
+    {
+        let norm: String = concept.trim().to_lowercase().split_whitespace()
+            .collect::<Vec<_>>().join(" ");
+        if norm.is_empty() { return None; }
+        let concept_key = format!("concept:{}", norm);
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = match conn.prepare(
+            "SELECT edge_type, target_key, strength FROM fact_edges \
+             WHERE source_key = ?1 ORDER BY strength DESC LIMIT 200"
+        ) { Ok(s) => s, Err(_) => return None };
+        let outbound: Vec<(String, String)> = stmt.query_map(
+            params![&concept_key], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+            ))).map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default();
+        drop(stmt);
+        if outbound.is_empty() { return None; }
+
+        use std::collections::BTreeMap;
+        let mut groups: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (et, t) in outbound {
+            let tgt = t.strip_prefix("concept:").unwrap_or(&t).to_string();
+            groups.entry(et).or_default().push((t, tgt));
+        }
+
+        // Sentence template per predicate. The template takes the
+        // subject + a list of (key, filler) pairs and returns prose.
+        fn sentence(
+            pred: &str, subj: &str, fillers: &[(String, String)], cap: usize,
+        ) -> String {
+            let limited: Vec<&(String, String)> = fillers.iter().take(cap).collect();
+            let article = article_for(subj);
+            let chips: Vec<String> = limited.iter().map(|(k, f)| {
+                // Fact-style chip pointing at the concept: row.
+                format!("{} [fact:{}]", f, k)
+            }).collect();
+            let list = match chips.len() {
+                0 => return String::new(),
+                1 => chips[0].clone(),
+                2 => format!("{} and {}", chips[0], chips[1]),
+                _ => {
+                    let (last, rest) = chips.split_last().unwrap();
+                    format!("{}, and {}", rest.join(", "), last)
+                }
+            };
+            match pred {
+                "IsA" => format!("{} {} is a {}.", article, subj, list),
+                "UsedFor" => format!("It is used for {}.", list),
+                "Causes" => format!("It can cause {}.", list),
+                "HasPrerequisite" => format!("It requires {}.", list),
+                "HasSubevent" => format!("It involves {}.", list),
+                "PartOf" => format!("It is part of {}.", list),
+                "CapableOf" => format!("It is capable of {}.", list),
+                "HasProperty" => format!("It has the property of being {}.", list),
+                "MotivatedByGoal" => format!("It is motivated by {}.", list),
+                "CausesDesire" => format!("It makes one want {}.", list),
+                _ => format!("Related ({}): {}.", pred, list),
+            }
+        }
+
+        // `article_for` picks a / an / "" based on leading vowel.
+        fn article_for(word: &str) -> &'static str {
+            let first = word.chars().next().unwrap_or(' ').to_ascii_lowercase();
+            if matches!(first, 'a' | 'e' | 'i' | 'o' | 'u') { "An" }
+            else if first.is_alphabetic() { "A" }
+            else { "The" }
+        }
+
+        // Compose. First sentence uses the subject; subsequent use "It"
+        // via the templates (see above). IsA is special — lands first
+        // if present so the subject gets introduced.
+        let mut sentences: Vec<String> = Vec::new();
+        if let Some(xs) = groups.remove("IsA") {
+            sentences.push(sentence("IsA", &norm, &xs, per_type_limit));
+        }
+        // Order the rest by a fixed priority so prose reads naturally.
+        const PRIORITY: &[&str] = &[
+            "HasProperty", "UsedFor", "CapableOf", "PartOf", "HasSubevent",
+            "Causes", "HasPrerequisite", "MotivatedByGoal", "CausesDesire",
+        ];
+        for pred in PRIORITY {
+            if let Some(xs) = groups.remove(*pred) {
+                let s = sentence(pred, &norm, &xs, per_type_limit);
+                if !s.is_empty() { sentences.push(s); }
+            }
+        }
+        // Any remaining predicates at the end, alphabetical.
+        for (pred, xs) in groups {
+            let s = sentence(&pred, &norm, &xs, per_type_limit);
+            if !s.is_empty() { sentences.push(s); }
+        }
+        if sentences.is_empty() { return None; }
+        Some(sentences.join(" "))
+    }
+
     /// Get edge type distribution.
     pub fn edge_type_stats(&self) -> Vec<(String, i64)> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());

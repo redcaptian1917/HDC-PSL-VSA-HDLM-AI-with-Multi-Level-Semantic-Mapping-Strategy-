@@ -513,35 +513,35 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                     .sum();
                                 entries < 3
                             }
-                            let primary = state.db.causal_summary(&final_concept, 8);
-                            let primary_strong = primary.as_ref()
+                            // #356 Prose-first: use causal_summary_prose for
+                            // fluent sentences; keep causal_summary as the
+                            // weakness-check oracle (its bullet format is
+                            // what is_weak knows how to count) and as a
+                            // fallback when the prose generator can't
+                            // compose (e.g., inbound-only edges).
+                            let primary_struct = state.db.causal_summary(&final_concept, 8);
+                            let primary_strong = primary_struct.as_ref()
                                 .map_or(false, |s| !is_weak(s));
+                            let resolve_prose = |concept: &str| -> Option<String> {
+                                state.db.causal_summary_prose(concept, 8)
+                                    .or_else(|| state.db.causal_summary(concept, 8))
+                            };
                             let out = if primary_strong {
-                                primary
+                                resolve_prose(&final_concept)
                             } else {
                                 // Primary is missing or weak. Try alternatives.
                                 let stack_fallback = if looks_like_followup {
-                                    // #352 topic stack: inherit the most recent
-                                    // non-follow-up concept. Fixes chains like
-                                    //   "what is a volcano"  → push volcano
-                                    //   "how do they form"   → pull volcano
-                                    //   "tell me more"       → still volcano
-                                    //   "what eats them"     → still volcano
-                                    //                          (even though
-                                    //                          "them" has a
-                                    //                          weak IsA edge)
                                     agent.topic_stack.back().cloned()
-                                        .and_then(|t| state.db.causal_summary(&t, 8)
+                                        .and_then(|t| resolve_prose(&t)
                                             .or_else(|| t.rsplit_once(' ')
-                                                .and_then(|(_, last)| state.db.causal_summary(last, 8))))
+                                                .and_then(|(_, last)| resolve_prose(last))))
                                 } else { None };
                                 let last_token_fallback = final_concept.rsplit_once(' ')
                                     .map(|(_, last)| last.to_string())
-                                    .and_then(|last| state.db.causal_summary(&last, 8));
-                                // Follow-up → prefer topic stack (that's the
-                                // whole point). Otherwise last-token head-noun.
-                                // Finally, weak primary is better than nothing.
-                                stack_fallback.or(last_token_fallback).or(primary)
+                                    .and_then(|last| resolve_prose(&last));
+                                stack_fallback
+                                    .or(last_token_fallback)
+                                    .or_else(|| primary_struct.clone())
                             };
 
                             // #352 topic stack maintenance: when this turn is
