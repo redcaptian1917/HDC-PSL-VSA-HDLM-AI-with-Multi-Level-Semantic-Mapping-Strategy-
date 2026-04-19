@@ -139,6 +139,10 @@ const CLASSROOM_SUB_KEY = 'lfi_classroom_sub';
 const CLASSROOM_SUBS: readonly Sub[] = ['profile','control','curriculum','gradebook','lessons','tests','reports','office','library','ledger','drift','runs'];
 
 export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop, localEvents = [], onOpenFactKey, initialSub }) => {
+  // c2-433 mobile-fix: compact paddings/tabs when not on desktop. Tablet
+  // falls in between — treat anything sub-desktop as mobile for density,
+  // the TabBar scrolls horizontally either way.
+  const isMobile = !isDesktop;
   const [sub, setSub] = useState<Sub>(() => {
     try {
       const stored = localStorage.getItem(CLASSROOM_SUB_KEY) as Sub | null;
@@ -298,7 +302,8 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
     }}>
       {/* Sub-nav — WAI-ARIA tablist with arrow-key navigation. */}
       <TabBar<Sub> C={C} label='Classroom sections'
-        padding='0 24px'
+        padding={isMobile ? '0 12px' : '0 24px'}
+        compact={isMobile}
         background={C.bgCard}
         tabs={SUBS.map(s => ({ id: s.id, label: s.label, title: s.hint }))}
         active={sub}
@@ -357,7 +362,7 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
 
       {/* Body */}
       <div role='tabpanel' aria-label={sub}
-        style={{ flex: 1, overflowY: 'auto', padding: T.spacing.xl, maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
+        style={{ flex: 1, overflowY: 'auto', padding: isMobile ? T.spacing.md : T.spacing.xl, maxWidth: '1200px', width: '100%', margin: '0 auto' }}>
         {err && (
           <ErrorAlert C={C} message={err} onRetry={load} retrying={loading} mb={T.spacing.lg} />
         )}

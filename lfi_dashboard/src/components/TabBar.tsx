@@ -43,12 +43,14 @@ export interface TabBarProps<T extends string> {
    *  flex:1 spacer. Used for refresh buttons, stale indicators,
    *  etc. */
   rightContent?: React.ReactNode;
+  /** Compact mode shrinks per-tab padding and font for narrow viewports. */
+  compact?: boolean;
 }
 
 export function TabBar<T extends string>({
   C, label, tabs, active, onChange,
   padding = '0 24px', background, weight = T.typography.weightSemibold,
-  rightContent,
+  rightContent, compact = false,
 }: TabBarProps<T>): JSX.Element {
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const idx = tabs.findIndex(t => t.id === active);
@@ -73,7 +75,9 @@ export function TabBar<T extends string>({
           tabIndex={active === t.id ? 0 : -1}
           title={t.title}
           style={{
-            padding: '14px 16px', fontSize: T.typography.sizeMd, fontWeight: weight,
+            padding: compact ? '10px 10px' : '14px 16px',
+            fontSize: compact ? T.typography.sizeSm : T.typography.sizeMd,
+            fontWeight: weight,
             background: 'transparent', border: 'none', cursor: 'pointer',
             color: active === t.id ? C.accent : C.textMuted,
             borderBottom: `2px solid ${active === t.id ? C.accent : 'transparent'}`,

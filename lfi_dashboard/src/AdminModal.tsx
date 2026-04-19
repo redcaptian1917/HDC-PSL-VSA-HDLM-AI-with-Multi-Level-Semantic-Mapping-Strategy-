@@ -403,7 +403,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         {/* Header */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px 22px', borderBottom: `1px solid ${C.borderSubtle}`,
+          padding: isMobile ? '10px 12px' : '14px 22px',
+          borderBottom: `1px solid ${C.borderSubtle}`,
+          gap: T.spacing.sm, flexWrap: 'wrap',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.md }}>
             <svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke={C.accent} strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
@@ -468,7 +470,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               aria-expanded={chainExpanded}
               style={{
                 display: 'flex', alignItems: 'center', gap: T.spacing.sm,
-                padding: '6px 22px', fontSize: T.typography.sizeXs,
+                padding: isMobile ? '6px 12px' : '6px 22px',
+                fontSize: T.typography.sizeXs,
                 background: `${C.green}15`, color: C.green,
                 borderBottom: `1px solid ${C.borderSubtle}`,
                 border: 'none', borderTopLeftRadius: 0, borderTopRightRadius: 0,
@@ -501,7 +504,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               aria-expanded={chainExpanded}
               style={{
                 display: 'flex', alignItems: 'center', gap: T.spacing.md,
-                padding: '10px 22px', fontSize: T.typography.sizeSm,
+                padding: isMobile ? '10px 12px' : '10px 22px',
+                fontSize: T.typography.sizeSm,
                 background: C.redBg, color: C.red,
                 borderBottom: `1px solid ${C.redBorder}`,
                 border: 'none', borderTopLeftRadius: 0, borderTopRightRadius: 0,
@@ -541,7 +545,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             row narrow. */}
         {chainVerify && chainExpanded && (
           <div style={{
-            padding: '8px 22px',
+            padding: isMobile ? '8px 12px' : '8px 22px',
             borderBottom: `1px solid ${C.borderSubtle}`,
             background: C.bgInput, maxHeight: '220px', overflowY: 'auto',
           }}>
@@ -655,7 +659,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
         {/* Tab bar — WAI-ARIA tablist with arrow-key navigation. */}
         <TabBar<AdminTab> C={C} label='Admin sections'
-          padding='0 22px'
+          padding={isMobile ? '0 12px' : '0 22px'}
+          compact={isMobile}
           weight={T.typography.weightBold}
           tabs={[
             { id: 'dashboard', label: 'Dashboard' },
@@ -674,7 +679,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           onChange={setTab} />
 
         {/* Body */}
-        <div role='tabpanel' aria-label={tab} style={{ flex: 1, overflowY: 'auto', padding: '20px 22px' }}>
+        <div role='tabpanel' aria-label={tab} style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '14px 12px' : '20px 22px' }}>
           {/* ---------- Dashboard ---------- */}
           {tab === 'dashboard' && (
             <div>
