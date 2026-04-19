@@ -1551,7 +1551,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   background: C.bgInput, border: `1px dashed ${C.borderSubtle}`,
                   borderRadius: T.radii.md, color: C.textMuted, fontSize: T.typography.sizeMd, textAlign: 'center',
                 }}>
-                  {loading === 'logs' ? 'Loading server log…' : 'Server /api/admin/logs endpoint not available yet — showing client events only.'}
+                  {loading === 'logs'
+                    ? 'Loading server log…'
+                    : 'Server log not available — showing this session\'s client-side UI events below. (Backend /api/admin/logs route not yet mounted.)'}
                 </div>
               )}
               {/* Client-side event log (fallback / supplement) */}
