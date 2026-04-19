@@ -178,6 +178,9 @@ interface SubstrateStats {
   ram_total_mb?: number;
   ram_used_mb?: number;
   cpu_temp_c: number;
+  /** Optional — populated when backend telemetry ships cpu_usage_pct.
+   *  Scale 0..100. UI shows "—" when missing. */
+  cpu_usage_pct?: number;
   vsa_orthogonality: number;
   axiom_pass_rate: number;
   is_throttled: boolean;
@@ -543,7 +546,7 @@ const SovereignCommandConsole: React.FC = () => {
   const [qosReport, setQosReport] = useState<QosReport | null>(null);
   const [adminLoading, setAdminLoading] = useState('');
   const [stats, setStats] = useState<SubstrateStats>({
-    ram_available_mb: 0, cpu_temp_c: 0, vsa_orthogonality: 0.02,
+    ram_available_mb: 0, cpu_temp_c: 0, cpu_usage_pct: undefined, vsa_orthogonality: 0.02,
     axiom_pass_rate: 1.0, is_throttled: false, logic_density: 0
   });
 
@@ -3616,9 +3619,30 @@ ${cmdList}
   const ramFmt = formatRam(stats.ram_available_mb); // kept for legacy header
   const ramLabel = ramTotal > 0 ? `${ramUsedFmt.value}/${ramTotalFmt.value}` : ramUsedFmt.value;
   const ramUnit = ramTotal > 0 ? ramTotalFmt.unit : ramUsedFmt.unit;
+  // CPU Usage tiering — green < 70, yellow 70-90, red ≥ 90.
+  const cpuPct = typeof stats.cpu_usage_pct === 'number' && isFinite(stats.cpu_usage_pct)
+    ? Math.max(0, Math.min(100, stats.cpu_usage_pct)) : null;
+  const cpuPctColor = cpuPct == null ? C.textMuted
+    : cpuPct >= 90 ? C.red
+    : cpuPct >= 70 ? C.yellow
+    : C.green;
+  const cpuPctBg = cpuPct == null ? C.bgInput
+    : cpuPct >= 90 ? C.redBg
+    : cpuPct >= 70 ? (C.yellowBg || `${C.yellow}18`)
+    : C.greenBg;
+  const cpuPctBorder = cpuPct == null ? C.borderSubtle
+    : cpuPct >= 90 ? C.redBorder
+    : cpuPct >= 70 ? (C.yellowBorder || `${C.yellow}55`)
+    : C.greenBorder;
   const telemetryCards = [
     { label: 'RAM', value: ramLabel, unit: ramUnit, color: C.accent, bg: C.accentBg, border: C.accentBorder },
-    { label: 'CPU', value: `${stats.cpu_temp_c.toFixed(0)}`, unit: '\u00B0C', color: stats.cpu_temp_c > 65 ? C.red : C.green, bg: stats.cpu_temp_c > 65 ? C.redBg : C.greenBg, border: stats.cpu_temp_c > 65 ? C.redBorder : C.greenBorder },
+    // Relabelled 'CPU' → 'CPU Temp' so it isn't confused with the new
+    // CPU Usage card right next to it.
+    { label: 'CPU Temp', value: `${stats.cpu_temp_c.toFixed(0)}`, unit: '\u00B0C', color: stats.cpu_temp_c > 65 ? C.red : C.green, bg: stats.cpu_temp_c > 65 ? C.redBg : C.greenBg, border: stats.cpu_temp_c > 65 ? C.redBorder : C.greenBorder },
+    // CPU Usage: percent from stats.cpu_usage_pct (backend forward-compat).
+    // Shows — when backend hasn't shipped it yet; otherwise NN% with
+    // tiered color.
+    { label: 'CPU Usage', value: cpuPct == null ? '—' : `${cpuPct.toFixed(0)}`, unit: cpuPct == null ? '' : '%', color: cpuPctColor, bg: cpuPctBg, border: cpuPctBorder },
     // Facts uses compactNum so "56.4M" reads cleanly; raw `${kg.facts}` was 8+ digits and ran off the card on narrow sidebars.
     { label: 'Facts', value: kg.facts ? compactNum(kg.facts) : '—', unit: '', color: C.purple, bg: C.purpleBg, border: C.purpleBorder },
     // Prefer Sources over Concepts — concepts_count always returns 0 (backend in-memory store is small); sources_count is a real metric that moves as the agent ingests.
