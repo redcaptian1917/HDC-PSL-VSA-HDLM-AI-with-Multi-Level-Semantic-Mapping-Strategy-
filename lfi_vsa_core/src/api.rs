@@ -3682,6 +3682,39 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Tuple extraction pipeline (#329) ----
+
+    /// POST /api/tuples/extract
+    /// Body: { limit: 1..=5000 } — default 500
+    /// Scans recent un-tupled facts, extracts (subj, pred, obj) where
+    /// the text fits one of the known patterns, persists to
+    /// facts_tuples. Idempotent via UNIQUE(subj, pred, obj).
+    async fn tuples_extract_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let limit = body.get("limit")
+            .and_then(|v| v.as_i64()).unwrap_or(500).clamp(1, 5000);
+        let (extracted, scanned, patterns) = state.db.extract_tuples_batch(limit);
+        let pattern_counts: serde_json::Value = patterns.into_iter()
+            .map(|(k, v)| (k, json!(v)))
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+        axum::Json(json!({
+            "extracted": extracted,
+            "scanned": scanned,
+            "patterns": pattern_counts,
+            "total_tuples": state.db.tuple_count(),
+        }))
+    }
+
+    /// GET /api/tuples/count — quick count for a UI badge.
+    async fn tuples_count_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        axum::Json(json!({"total_tuples": state.db.tuple_count()}))
+    }
+
     // ---- Domain-gap scheduler (#308) ----
 
     /// GET /api/ingest/gaps?limit=N
@@ -5070,6 +5103,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/ingest/finish", post(ingest_finish_handler))
         .route("/api/ingest/list", get(ingest_list_handler))
         .route("/api/ingest/gaps", get(ingest_gaps_handler))
+        .route("/api/tuples/extract", post(tuples_extract_handler))
+        .route("/api/tuples/count", get(tuples_count_handler))
         .route("/api/capability/tokens",
                get(capability_token_list_handler)
                .post(capability_token_issue_handler))

@@ -12,6 +12,64 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{info, warn};
 
+/// #329 SPO extractor — pulls (subject, predicate, object, pattern) from
+/// free-form fact text. Two patterns:
+///   1. Bracketed predicate: "X [Predicate] Y" (ConceptNet style)
+///   2. Triple with common predicate verb: "X is|are|has|causes Y"
+///      — requires a known predicate word in the middle
+///      of a 3..8 word string, short subject/object on either side.
+fn extract_spo(text: &str) -> Option<(String, String, String, &'static str)> {
+    let t = text.trim();
+    if t.is_empty() { return None; }
+
+    // Pattern 1: "subject [Predicate] object" (ConceptNet export format).
+    if let Some(open) = t.find('[') {
+        if let Some(close) = t[open..].find(']').map(|i| open + i) {
+            let subj = t[..open].trim();
+            let pred = t[open+1..close].trim();
+            let obj = t[close+1..].trim();
+            if !subj.is_empty() && !pred.is_empty() && !obj.is_empty()
+                && subj.len() <= 80 && pred.len() <= 40 && obj.len() <= 120 {
+                return Some((subj.to_string(), pred.to_string(),
+                             obj.to_string(), "bracketed"));
+            }
+        }
+    }
+
+    // Pattern 2: common predicate verbs. Only fires on short 3–8 token
+    // sentences so "water is a compound of ..." doesn't mis-segment.
+    let words: Vec<&str> = t.split_whitespace().collect();
+    if words.len() < 3 || words.len() > 12 { return None; }
+    const PRED_VERBS: &[(&str, &str)] = &[
+        ("is a", "IsA"), ("is an", "IsA"), ("are a", "IsA"), ("are an", "IsA"),
+        ("has a", "HasA"), ("have a", "HasA"),
+        ("causes", "Causes"), ("cause", "Causes"),
+        ("requires", "HasPrerequisite"),
+        ("used for", "UsedFor"), ("uses", "UsedFor"),
+        ("part of", "PartOf"),
+    ];
+    let lower = t.to_lowercase();
+    for (pv, canonical) in PRED_VERBS {
+        if let Some(pos) = lower.find(pv) {
+            let subj = t[..pos].trim();
+            let obj_start = pos + pv.len();
+            if obj_start > t.len() { continue; }
+            let obj = t[obj_start..].trim()
+                .trim_end_matches('.').trim_end_matches(',')
+                .trim();
+            if !subj.is_empty() && !obj.is_empty()
+                && subj.len() <= 80 && obj.len() <= 120
+                && subj.split_whitespace().count() <= 4
+                && obj.split_whitespace().count() <= 8 {
+                return Some((subj.to_string(), canonical.to_string(),
+                             obj.to_string(), "verb"));
+            }
+        }
+    }
+
+    None
+}
+
 pub struct BrainDb {
     pub conn: Mutex<Connection>,
     /// Absolute path to the DB file. Captured at open time so
@@ -818,6 +876,94 @@ impl BrainDb {
             r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
             r.get::<_, i64>(6)?,
         ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+    }
+
+    // ---- Tuple extraction pipeline (#329) ----
+    //
+    // Converts existing fact rows (string value) into SPO tuples
+    // (subject, predicate, object) the role-binding encoder can
+    // consume. Two patterns are matched; anything else is skipped.
+    //
+    //   Pattern 1: "subject predicate object" (3-word trigrams where
+    //              the middle word is a known predicate verb).
+    //   Pattern 2: "subject is-a object" / "subject Causes object"
+    //              / "subject UsedFor object" — structured
+    //              [Predicate] bracket markers.
+    //
+    // Successful extractions are written to facts_tuples (schema
+    // added here). Raw rows without parseable structure are NOT
+    // deleted — they stay in `facts` for FTS retrieval. This is
+    // additive.
+
+    /// Extract tuples from a batch of recent facts. Returns
+    /// (extracted, total_scanned, patterns_matched). Scans bounded
+    /// by `limit` so the handler can be called incrementally.
+    pub fn extract_tuples_batch(&self, limit: i64) -> (i64, i64, std::collections::BTreeMap<String, i64>) {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Ensure destination table exists (idempotent).
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS facts_tuples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT NOT NULL,
+                source_fact_key TEXT,
+                source TEXT,
+                confidence REAL DEFAULT 0.5,
+                extracted_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(subject, predicate, object)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tuples_subject ON facts_tuples(subject);
+            CREATE INDEX IF NOT EXISTS idx_tuples_predicate ON facts_tuples(predicate);
+            CREATE INDEX IF NOT EXISTS idx_tuples_object ON facts_tuples(object);"
+        );
+
+        // Fetch a batch of un-extracted rows (rowid DESC is free).
+        let mut stmt = match conn.prepare(
+            "SELECT key, value FROM facts \
+             WHERE value IS NOT NULL AND length(value) BETWEEN 5 AND 500 \
+             ORDER BY rowid DESC LIMIT ?1"
+        ) { Ok(s) => s, Err(_) => return (0, 0, Default::default()) };
+
+        let rows: Vec<(String, String)> = stmt.query_map(
+            params![limit],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        ).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        drop(stmt);
+
+        let total = rows.len() as i64;
+        let mut patterns = std::collections::BTreeMap::new();
+        let mut extracted = 0i64;
+
+        for (key, value) in rows {
+            if let Some((subj, pred, obj, pattern)) = extract_spo(&value) {
+                let inserted = conn.execute(
+                    "INSERT OR IGNORE INTO facts_tuples \
+                     (subject, predicate, object, source_fact_key, confidence) \
+                     VALUES (?1, ?2, ?3, ?4, 0.7)",
+                    params![subj, pred, obj, key],
+                ).unwrap_or(0);
+                if inserted > 0 {
+                    extracted += 1;
+                    *patterns.entry(pattern.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        (extracted, total, patterns)
+    }
+
+    /// Count tuples in the extraction destination table.
+    pub fn tuple_count(&self) -> i64 {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS facts_tuples (id INTEGER)", []
+        ); // safety net if extract hasn't run yet
+        conn.query_row(
+            "SELECT COUNT(*) FROM facts_tuples", [],
+            |r| r.get::<_, i64>(0),
+        ).unwrap_or(0)
     }
 
     // ---- Domain-gap-driven ingest scheduler (#308) ----
@@ -2319,6 +2465,47 @@ mod tests {
             rusqlite::params!["k1"], |r| r.get(0),
         ).unwrap();
         assert_eq!(v, "v1");
+    }
+
+    #[test]
+    fn extract_spo_bracketed_pattern() {
+        let r = extract_spo("water [IsA] compound");
+        let (s, p, o, kind) = r.expect("bracketed should parse");
+        assert_eq!(s, "water");
+        assert_eq!(p, "IsA");
+        assert_eq!(o, "compound");
+        assert_eq!(kind, "bracketed");
+    }
+
+    #[test]
+    fn extract_spo_verb_pattern() {
+        let r = extract_spo("fire causes smoke");
+        let (s, p, o, kind) = r.expect("verb should parse");
+        assert_eq!(s, "fire");
+        assert_eq!(p, "Causes");
+        assert_eq!(o, "smoke");
+        assert_eq!(kind, "verb");
+    }
+
+    #[test]
+    fn extract_spo_skips_long_text() {
+        // Too long — exceeds the 12-word budget in verb pattern.
+        let long = "the quick brown fox jumps over the lazy dog and causes a lot of surprise in the barnyard around dawn";
+        assert!(extract_spo(long).is_none());
+    }
+
+    #[test]
+    fn extract_tuples_batch_persists() {
+        let db = temp_db();
+        db.upsert_fact("f1", "water [IsA] compound", "test", 0.9);
+        db.upsert_fact("f2", "fire causes smoke", "test", 0.9);
+        db.upsert_fact("f3", "unrelated free-form prose with no triple", "test", 0.9);
+        let (extracted, scanned, patterns) = db.extract_tuples_batch(10);
+        assert_eq!(scanned, 3);
+        assert_eq!(extracted, 2);
+        assert!(patterns.contains_key("bracketed"));
+        assert!(patterns.contains_key("verb"));
+        assert_eq!(db.tuple_count(), 2);
     }
 
     #[test]
