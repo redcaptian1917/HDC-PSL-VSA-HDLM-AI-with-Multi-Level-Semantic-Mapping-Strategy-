@@ -4589,6 +4589,115 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
          format!("doc '{}' not found", stem)).into_response()
     }
 
+    // ---- Privacy dashboard (#380) ----
+    //
+    // GET /api/privacy/report — summarizes what LFI knows about the
+    // user. Pulls from user_profile (identity + preferences), the
+    // feedback table (thumbs-up/down history count), the paste/url
+    // ingest audit trail, and the most recent chat turn's facts_used.
+    // Operator directive: 'I want to see exactly what LFI has on me'
+    // without having to hand-inspect brain.db.
+
+    async fn privacy_report_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let (profile, ui_prefs, feedback_count, trainer_count, adv_count, recent_chat) = {
+            let conn = match state.db.conn.lock() {
+                Ok(c) => c,
+                Err(_) => return axum::Json(json!({"ok": false, "error": "db lock"})),
+            };
+
+            // 1. Identity + preferences the user has told LFI (or which
+            // auto-learn extracted from chat). Category != ui_pref so
+            // cosmetic settings don't bloat the personal summary.
+            let mut profile = Vec::new();
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT key, value, category, learned_at FROM user_profile \
+                 WHERE category != 'ui_pref' ORDER BY learned_at DESC LIMIT 200"
+            ) {
+                profile = stmt.query_map([], |r| Ok(json!({
+                    "key": r.get::<_, String>(0).unwrap_or_default(),
+                    "value": r.get::<_, String>(1).unwrap_or_default(),
+                    "category": r.get::<_, String>(2).unwrap_or_default(),
+                    "learned_at": r.get::<_, String>(3).unwrap_or_default(),
+                }))).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+            }
+
+            // 2. UI prefs — separately tagged so the user can tell them
+            // apart from substantive personal data.
+            let mut ui_prefs = Vec::new();
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT key, value, learned_at FROM user_profile \
+                 WHERE category = 'ui_pref' ORDER BY learned_at DESC"
+            ) {
+                ui_prefs = stmt.query_map([], |r| Ok(json!({
+                    "key": r.get::<_, String>(0).unwrap_or_default(),
+                    "value": r.get::<_, String>(1).unwrap_or_default(),
+                    "set_at": r.get::<_, String>(2).unwrap_or_default(),
+                }))).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+            }
+
+            // 3. Aggregate counts — thumbs-up/down, trainer sessions,
+            // adversarial corrections.
+            let feedback_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM user_feedback", [], |r| r.get(0),
+            ).unwrap_or(0);
+            let trainer_count: i64 = conn.query_row(
+                "SELECT COUNT(DISTINCT conversation_id) FROM user_feedback \
+                 WHERE conversation_id LIKE 'trainer_%'", [], |r| r.get(0),
+            ).unwrap_or(0);
+            let adv_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM facts WHERE source='adversarial'",
+                [], |r| r.get(0),
+            ).unwrap_or(0);
+
+            // 4. Recent chat turns — from chat.jsonl (ts + user + reply),
+            // capped at 20 so the payload stays small.
+            let mut recent_chat: Vec<serde_json::Value> = Vec::new();
+            let chat_path = lfi_log_path("chat.jsonl");
+            if let Ok(body) = std::fs::read_to_string(chat_path.as_str()) {
+                let lines: Vec<&str> = body.lines().collect();
+                let start = lines.len().saturating_sub(20);
+                for l in &lines[start..] {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+                        recent_chat.push(json!({
+                            "ts": v["ts"],
+                            "user": crate::truncate_str(
+                                v["user"].as_str().unwrap_or(""), 200),
+                            "reply": crate::truncate_str(
+                                v["reply"].as_str().unwrap_or(""), 300),
+                            "scrubbed": v["scrubbed"],
+                        }));
+                    }
+                }
+            }
+
+            (profile, ui_prefs, feedback_count, trainer_count, adv_count, recent_chat)
+        };
+
+        // Rights surface. Plain-language, no legalese.
+        let rights = json!({
+            "local_first": "Everything on this page lives on your machine. Nothing has been uploaded.",
+            "export": "GET /api/provenance/export and /api/chat-log give you raw JSONL copies.",
+            "delete_profile_row": "PUT /api/profile/{key} with {\"value\": null}. Disappears from retrieval and from this report.",
+            "wipe_chat_history": "POST /api/chat-log/clear (not yet authenticated — coming).",
+            "source_of_truth": "brain.db at ~/.local/share/plausiden/brain.db. Back it up with POST /api/backup/brain.",
+        });
+
+        axum::Json(json!({
+            "ok": true,
+            "identity_and_preferences": profile,
+            "ui_prefs": ui_prefs,
+            "feedback_given": {
+                "total_feedbacks": feedback_count,
+                "trainer_sessions": trainer_count,
+                "adversarial_examples_from_you": adv_count,
+            },
+            "recent_chat_turns": recent_chat,
+            "your_rights": rights,
+        }))
+    }
+
     // ---- AVP-2 status surface (#403 Auditorium tab) ----
     //
     // The UI's Auditorium view polls /api/avp/status for the 6-tier / 36-pass
@@ -6969,6 +7078,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/diag/ui-error", post(ui_error_handler))
         .route("/api/diag/ui-errors", get(ui_errors_list_handler))
         .route("/api/backup/brain", post(backup_brain_handler))
+        .route("/api/privacy/report", get(privacy_report_handler))
         .route("/api/trainer/turn", post(trainer_turn_handler))
         .route("/api/trainer/sessions", get(trainer_sessions_handler))
         .route("/api/capability/tokens",
