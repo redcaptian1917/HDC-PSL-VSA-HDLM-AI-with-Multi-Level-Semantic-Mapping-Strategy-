@@ -41,6 +41,7 @@ import { markSend, markFirstFrame, markResponse, markRendered, type TurnTrace } 
 import { useHistoryDialog } from './useHistoryDialog';
 import { useModalFocus } from './useModalFocus';
 import { TourOverlay, type TourStep } from './TourOverlay';
+import { usePageVisible } from './usePageVisible';
 import { useToastQueue } from './useToastQueue';
 import { useFeedbackModals } from './useFeedbackModals';
 import { useChatSearch } from './useChatSearch';
@@ -1319,7 +1320,12 @@ ${cmdList}
     };
 
     load();
-    const id = window.setInterval(load, 30_000);
+    // #354: only tick when the tab is visible. document.hidden flips on
+    // tab-switch / screen-off; we'd waste polls otherwise.
+    const id = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      load();
+    }, 30_000);
     return () => { cancelled = true; window.clearInterval(id); };
   }, []);
 
@@ -1482,9 +1488,13 @@ ${cmdList}
   // stays balanced. Ordering mirrors Escape-key precedence in the key handler.
   // Tri-state connection chip tick: re-renders every 5s so the derived
   // connHealth (green/yellow/red) flips when frames go stale. Cheap — one
-  // state increment, no fetches.
+  // state increment, no fetches. #354: skip when tab hidden — conn state
+  // can wait until the user is looking.
   useEffect(() => {
-    const id = window.setInterval(() => setConnTick(t => t + 1), 5000);
+    const id = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      setConnTick(t => t + 1);
+    }, 5000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -2351,9 +2361,16 @@ ${cmdList}
   // Three polling hooks — see ./usePolls.ts for the fetch logic. Each manages
   // its own interval + abort handling; parent just reads the state they return.
   const host = getHost();
-  const { kg, lastOk: kgLastOk, lastError: kgLastError, latencyMs } = useStatusPoll(host, isAuthenticated);
-  const quality = useQualityPoll(host, isAuthenticated);
-  const sysInfo = useSysInfoPoll(host, isAuthenticated);
+  // #354 stability pass: pause all polls when the tab is hidden. A user
+  // walking away or sending the page to background no longer burns
+  // /api/status requests + drains battery. Immediate re-fetch fires on
+  // return because the `active` boolean dep flips true and the poll's
+  // useEffect re-runs.
+  const pageVisible = usePageVisible();
+  const pollActive = isAuthenticated && pageVisible;
+  const { kg, lastOk: kgLastOk, lastError: kgLastError, latencyMs } = useStatusPoll(host, pollActive);
+  const quality = useQualityPoll(host, pollActive);
+  const sysInfo = useSysInfoPoll(host, pollActive);
 
   // ---- Conversations (Claude/ChatGPT/Gemini-style sidebar state) ----
   type Conversation = {
@@ -5322,9 +5339,13 @@ ${cmdList}
       {showShortcuts && <ShortcutsModal C={C} onClose={() => setShowShortcuts(false)}
         onOpenUserGuide={() => { setShowShortcuts(false); setAdminInitialTab('docs'); setShowAdmin(true); }} />}
       {/* #352 interactive walkthrough. Desktop: spotlight next to target.
-          Mobile: tooltip pinned to bottom, swipe to navigate. Steps
-          hook into setShowTeach/setActiveView/setShowAdmin to pre-open
-          the surface each step discusses. */}
+          Mobile: tooltip pinned to bottom, swipe to navigate. Wrapped in
+          an inline error boundary so a step-render crash closes the tour
+          instead of white-screening the app (#354 stability). */}
+      {showTour && (
+        <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}
+          inlineMode label="TourOverlay"
+          onReset={() => setShowTour(false)}>
       <TourOverlay C={C} isMobile={isMobile} open={showTour}
         onClose={() => {
           setShowTour(false);
@@ -5380,6 +5401,8 @@ ${cmdList}
             body: <>That's the tour. Everything needed to use + train LFI is one click from anywhere. Re-run from <kbd>Cmd/Ctrl+K</kbd> → "Start guided tour" any time.</>,
           },
         ] as TourStep[]} />
+        </AppErrorBoundary>
+      )}
 
       {/* ========== SETTINGS MODAL ========== */}
       {showSettings && (
