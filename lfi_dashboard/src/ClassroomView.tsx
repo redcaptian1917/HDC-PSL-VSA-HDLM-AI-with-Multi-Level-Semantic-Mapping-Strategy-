@@ -1130,6 +1130,14 @@ const TrainingControlPanel: React.FC<{
           }}>{accuracy.recent_training_log.slice(-40).join('\n')}</pre>
         </div>
       )}
+      {/* c0-ask-3 / #406 + #407: quick-ingest surface for paste text +
+          URL fetch. Two small forms posting to /api/ingest/paste and
+          /api/ingest/url respectively. Response shape is shared:
+          { ok, ingested_count, skipped, title, source, tag,
+            secrets_scrubbed, sample_keys[] }. Toast shows
+          "Ingested N facts from X". Secrets scrubbed server-side; 200KB
+          paste cap; http/https only for URL with 15s fetch timeout. */}
+      <QuickIngestCard C={C} host={host} />
       {/* c2-428 / #339 pivot placeholder — /api/ingest/* routes land here
           once Claude 0 ships them. Surface will expose: corpus selection,
           decomposer choice (HDC / PSL / tuple-extraction pipeline),
@@ -1143,6 +1151,174 @@ const TrainingControlPanel: React.FC<{
         borderRadius: T.radii.md, color: C.textDim, fontSize: T.typography.sizeXs,
       }}>
         <strong style={{ color: C.textMuted }}>Configuration</strong> — corpus selection, decomposer choice, per-domain priority, and batch-size knobs land here once <code style={{ fontFamily: T.typography.fontMono, color: C.accent }}>/api/ingest/*</code> is live. Tracked in the task queue.
+      </div>
+    </div>
+  );
+};
+
+// c0-ask-3 / #406 + #407: paste + URL quick-ingest. Two tiny POST forms
+// sharing a response-toast surface. Self-contained so the Classroom
+// ingestion tab stays readable.
+const QuickIngestCard: React.FC<{ C: any; host: string }> = ({ C, host }) => {
+  const [mode, setMode] = useState<'paste' | 'url'>('paste');
+  const [pasteTitle, setPasteTitle] = useState('');
+  const [pasteBody, setPasteBody] = useState('');
+  const [pasteSource, setPasteSource] = useState('paste');
+  const [pasteTag, setPasteTag] = useState('');
+  const [urlValue, setUrlValue] = useState('');
+  const [urlTag, setUrlTag] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 7000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const submit = async () => {
+    setBusy(true);
+    setToast(null);
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 20000);
+      let res: Response;
+      if (mode === 'paste') {
+        if (!pasteBody.trim()) throw new Error('Paste body is empty');
+        res = await fetch(`http://${host}:3000/api/ingest/paste`, {
+          method: 'POST', signal: ctrl.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: pasteTitle.trim() || 'Pasted text',
+            body: pasteBody,
+            source: pasteSource.trim() || 'paste',
+            tag: pasteTag.trim() || undefined,
+          }),
+        });
+      } else {
+        if (!/^https?:\/\//i.test(urlValue.trim())) throw new Error('URL must start with http:// or https://');
+        res = await fetch(`http://${host}:3000/api/ingest/url`, {
+          method: 'POST', signal: ctrl.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: urlValue.trim(),
+            tag: urlTag.trim() || undefined,
+          }),
+        });
+      }
+      clearTimeout(to);
+      const j: any = await res.json().catch(() => ({}));
+      if (!res.ok || j?.ok === false) {
+        throw new Error(j?.error || j?.message || `HTTP ${res.status}`);
+      }
+      const count = j?.ingested_count ?? 0;
+      const title = j?.title || (mode === 'paste' ? pasteTitle || 'paste' : urlValue);
+      setToast({ ok: true, text: `Ingested ${count} fact${count === 1 ? '' : 's'} from "${title}"${j?.skipped ? ` (${j.skipped} skipped)` : ''}` });
+      if (mode === 'paste') { setPasteTitle(''); setPasteBody(''); setPasteTag(''); }
+      else { setUrlValue(''); setUrlTag(''); }
+    } catch (e: any) {
+      setToast({ ok: false, text: `Ingest failed: ${e?.message || e}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tabBtn = (k: 'paste' | 'url', label: string): React.CSSProperties => ({
+    padding: `${T.spacing.xs} ${T.spacing.md}`,
+    background: mode === k ? C.accent : 'transparent',
+    color: mode === k ? C.bg : C.textSecondary,
+    border: `1px solid ${mode === k ? C.accent : C.borderSubtle}`,
+    borderRadius: T.radii.md,
+    fontSize: T.typography.sizeSm,
+    fontWeight: 500,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  });
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: T.spacing.sm,
+    background: C.bgCard, color: C.text,
+    border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
+    fontSize: T.typography.sizeSm, fontFamily: 'inherit',
+    boxSizing: 'border-box',
+  };
+
+  return (
+    <div style={{
+      marginTop: T.spacing.xl, padding: T.spacing.md,
+      background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+      borderRadius: T.radii.md,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm, marginBottom: T.spacing.sm }}>
+        <strong style={{ color: C.text, fontSize: T.typography.sizeMd }}>Quick ingest</strong>
+        <span style={{ color: C.textDim, fontSize: T.typography.sizeXs }}>— paste text or fetch a URL into the fact base</span>
+      </div>
+      <div style={{ display: 'flex', gap: T.spacing.xs, marginBottom: T.spacing.sm }}>
+        <button type="button" style={tabBtn('paste', 'Paste text')} onClick={() => setMode('paste')} aria-pressed={mode === 'paste'}>Paste text</button>
+        <button type="button" style={tabBtn('url', 'From URL')} onClick={() => setMode('url')} aria-pressed={mode === 'url'}>From URL</button>
+      </div>
+      {mode === 'paste' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.xs }}>
+          <input
+            style={inputStyle} type="text" placeholder="Title (optional)"
+            value={pasteTitle} onChange={e => setPasteTitle(e.target.value)}
+            aria-label="Paste title"
+          />
+          <textarea
+            style={{ ...inputStyle, minHeight: '120px', fontFamily: T.typography.fontMono, resize: 'vertical' }}
+            placeholder="Paste text here — each sentence becomes a fact at 0.75 confidence. Up to 200KB; 10–1000 chars per sentence; 2000 sentences max."
+            value={pasteBody} onChange={e => setPasteBody(e.target.value)}
+            aria-label="Paste body"
+          />
+          <div style={{ display: 'flex', gap: T.spacing.xs }}>
+            <input
+              style={{ ...inputStyle, flex: 1 }} type="text" placeholder="Source tag (default: paste)"
+              value={pasteSource} onChange={e => setPasteSource(e.target.value)}
+              aria-label="Paste source tag"
+            />
+            <input
+              style={{ ...inputStyle, flex: 1 }} type="text" placeholder="Topic tag (optional)"
+              value={pasteTag} onChange={e => setPasteTag(e.target.value)}
+              aria-label="Paste topic tag"
+            />
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.xs }}>
+          <input
+            style={inputStyle} type="url" placeholder="https://example.com/page"
+            value={urlValue} onChange={e => setUrlValue(e.target.value)}
+            aria-label="URL to fetch"
+          />
+          <input
+            style={inputStyle} type="text" placeholder="Topic tag (optional)"
+            value={urlTag} onChange={e => setUrlTag(e.target.value)}
+            aria-label="URL topic tag"
+          />
+          <span style={{ color: C.textDim, fontSize: T.typography.sizeXs }}>
+            Backend strips scripts/styles + decodes entities, then routes the text through the paste pipeline. Scheme-gated to http/https with a 15s fetch timeout + 10/60s rate limit.
+          </span>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: T.spacing.sm, alignItems: 'center', marginTop: T.spacing.sm }}>
+        <button
+          type="button"
+          aria-label={`Submit ${mode === 'paste' ? 'paste' : 'URL'} ingest`}
+          onClick={submit}
+          disabled={busy || (mode === 'paste' ? !pasteBody.trim() : !urlValue.trim())}
+          style={{
+            padding: `${T.spacing.sm} ${T.spacing.lg}`,
+            background: C.accent, color: C.bg, border: 'none',
+            borderRadius: T.radii.md, fontWeight: 600,
+            fontSize: T.typography.sizeSm, cursor: busy ? 'wait' : 'pointer',
+            opacity: busy ? 0.7 : 1, fontFamily: 'inherit',
+          }}
+        >{busy ? 'Ingesting…' : (mode === 'paste' ? 'Ingest paste' : 'Fetch + ingest')}</button>
+        {toast && (
+          <span style={{
+            fontSize: T.typography.sizeXs,
+            color: toast.ok ? C.green : C.red,
+            fontWeight: 500,
+          }}>{toast.text}</span>
+        )}
       </div>
     </div>
   );
