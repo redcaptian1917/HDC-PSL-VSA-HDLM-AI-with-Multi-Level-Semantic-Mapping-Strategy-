@@ -2456,7 +2456,7 @@ const ProofTab: React.FC<{ C: any; host: string }> = ({ C, host }) => {
   const BUCKETS: Array<{ key: string; label: string; tone: string; aliases: string[]; hint: string }> = [
     { key: 'proved',     label: 'Proved',      tone: C.green,     aliases: ['proved','valid','ok'],             hint: 'Lean4/Kimina accepted the proof' },
     { key: 'rejected',   label: 'Rejected',    tone: C.red,       aliases: ['rejected','invalid','contradicted'], hint: 'Verifier rejected the proof' },
-    { key: 'unreachable', label: 'Unreachable', tone: C.yellow,    aliases: ['unreachable','timeout','pending'], hint: 'Verifier was down or slow — prior tier preserved' },
+    { key: 'unreachable', label: 'Unreachable', tone: C.yellow,    aliases: ['unreachable','timeout','pending','pending_sample'], hint: 'Verifier was down, slow, or sampling hasn\'t completed yet' },
     { key: 'unknown',    label: 'Unknown',     tone: C.textMuted, aliases: ['unknown','error','unchecked','none'], hint: 'Never attempted — no verdict yet' },
   ];
 
@@ -3115,34 +3115,46 @@ const DocsTab: React.FC<{ C: any; host: string }> = ({ C, host }) => {
   const [source, setSource] = useState<string>('');
   const load = React.useCallback(async () => {
     setLoading(true); setErr(null);
-    // Try backend first, then the bundled USER_GUIDE.md (served by Vite
-    // from /public). Bundled path always wins if backend is offline so
-    // the user never sees an empty Docs tab.
-    const backendCandidates = [
-      `http://${host}:3000/docs/manager_guide.md`,
-      `http://${host}:3000/api/docs/manager_guide`,
-      `http://${host}:3000/api/docs/manager_guide.md`,
-    ];
-    const bundledCandidates = [
-      `/USER_GUIDE.md`,
-    ];
-    for (const url of [...backendCandidates, ...bundledCandidates]) {
+    // Try the bundled fallback FIRST — it's served by Vite / the SPA
+    // and is always fast (no backend round-trip). If the backend ever
+    // ships a newer manager_guide, it wins via the second pass. Each
+    // fetch has a 2s abort so a hung backend doesn't freeze the tab
+    // for the 60s+ default TCP timeout.
+    const fetchWithTimeout = async (url: string, ms: number): Promise<Response | null> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ms);
       try {
-        const r = await fetch(url);
-        if (!r.ok) continue;
-        const body = await r.text();
-        // Guard against index.html being returned by a catch-all route —
-        // real markdown won't start with "<!DOCTYPE".
-        if (body && body.length > 10 && !body.trimStart().startsWith('<!')) {
-          setText(body);
-          setSource(url.replace(`http://${host}:3000`, ''));
-          setLoading(false);
-          return;
-        }
-      } catch { /* try next */ }
+        const r = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(timer);
+        return r;
+      } catch {
+        clearTimeout(timer);
+        return null;
+      }
+    };
+    const candidates: Array<{ url: string; ms: number }> = [
+      // Bundled first — fast + offline-safe.
+      { url: `/USER_GUIDE.md`, ms: 2000 },
+      // Backend guide (if claude-0 ships it).
+      { url: `http://${host}:3000/docs/manager_guide.md`, ms: 2000 },
+      { url: `http://${host}:3000/api/docs/manager_guide`, ms: 2000 },
+      { url: `http://${host}:3000/api/docs/manager_guide.md`, ms: 2000 },
+    ];
+    for (const { url, ms } of candidates) {
+      const r = await fetchWithTimeout(url, ms);
+      if (!r || !r.ok) continue;
+      const body = await r.text();
+      // Guard against index.html being returned by a catch-all route —
+      // real markdown won't start with "<!DOCTYPE".
+      if (body && body.length > 10 && !body.trimStart().startsWith('<!')) {
+        setText(body);
+        setSource(url.replace(`http://${host}:3000`, ''));
+        setLoading(false);
+        return;
+      }
     }
     setLoading(false);
-    setErr('Guide not available — bundled fallback at /USER_GUIDE.md should have loaded. Try Reload.');
+    setErr('Guide not available — the bundled /USER_GUIDE.md should have loaded. Try Reload; if it persists, the build is missing the public asset.');
   }, [host]);
   useEffect(() => { load(); }, [load]);
   return (
