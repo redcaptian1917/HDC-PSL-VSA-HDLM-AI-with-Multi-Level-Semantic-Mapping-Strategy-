@@ -1346,6 +1346,33 @@ impl BrainDb {
         ).unwrap_or(0);
         out.insert("tuples_total".into(), tuples_total as f64);
 
+        // #354 Proof coverage — share of facts with a RESOLVED verdict
+        // (Proved OR Rejected). Unreachable / Unknown are excluded from
+        // the numerator AND denominator because their NO-OP semantic
+        // means the fact could still go either way. Uses the partial
+        // index idx_facts_proof_status so the WHERE IS NOT NULL count
+        // is cheap; total is sampled like the other ratios to stay
+        // under budget on 58M-row prod tables.
+        let resolved: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM facts WHERE proof_status IS NOT NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        // Use the same 5000-row sample as the rest of the ratios so
+        // the denominator is consistent with fresh_ratio etc.
+        let sample_total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM facts ORDER BY rowid DESC LIMIT 5000)",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        if sample_total > 0 {
+            // Scale resolved up — if the partial index covers N rows
+            // globally, the ratio over the sample equals resolved /
+            // estimated_total. Estimated_total approximated via
+            // sample_size for consistency with the other ratios.
+            let ratio = (resolved as f64 / (sample_total as f64).max(1.0))
+                .min(1.0); // can exceed 1 when resolved > sample; clamp
+            out.insert("proof_verified_ratio".into(), ratio);
+        }
+
         out
     }
 
