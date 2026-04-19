@@ -286,7 +286,7 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 let _ = socket.send(Message::Text(progress.to_string())).await;
 
                 // Route through CognitiveCore
-                let mut response_payload = {
+                let response_payload = {
                     let mut agent = state.agent.lock();
 
                     // Auto-learn from conversational patterns — extract
@@ -4880,12 +4880,13 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             Err(_) => 0,
         };
 
-        let uptime_secs = {
-            // Approximate from process start
+        let _uptime_secs = {
+            // Approximate from process start. Not wired into response yet —
+            // keeping the computed value so exposing it later is one-line.
             let start = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs()).unwrap_or(0);
-            start // We don't track exact start time, return epoch for now
+            start
         };
 
         axum::Json(json!({

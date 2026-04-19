@@ -1,8 +1,57 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { T } from './tokens';
-import { stripMarkdown, formatRelative } from './util';
+import { stripMarkdown, formatRelative, formatDuration } from './util';
 // c2-359 / task 65: shared copy button with 2s checkmark flash.
 import { CopyButton } from './components';
+
+// c2-433 / task 223: long-press → context-menu shim. Touch users can't right-
+// click; this synthesises the same `onContextMenu(MouseEvent)` callback after
+// a 500 ms hold without movement. 10 px movement budget cancels (so a scroll
+// gesture doesn't double as a long-press). navigator.vibrate(20) gives a
+// confirmation tick on devices that support it (Android Chrome). The synthetic
+// event provides preventDefault + clientX/clientY since that's what callers
+// actually read from MouseEvent — the rest of the surface is unused.
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_MOVE_PX = 10;
+function useLongPress(onLongPress?: (e: React.MouseEvent) => void) {
+  const timerRef = useRef<number | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const firedRef = useRef<boolean>(false);
+  const cancel = useCallback(() => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    startRef.current = null;
+  }, []);
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (!onLongPress || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    startRef.current = { x: t.clientX, y: t.clientY };
+    firedRef.current = false;
+    timerRef.current = window.setTimeout(() => {
+      firedRef.current = true;
+      try { (navigator as any).vibrate?.(20); } catch { /* unsupported / blocked */ }
+      const synth = {
+        preventDefault: () => {},
+        stopPropagation: () => {},
+        clientX: t.clientX,
+        clientY: t.clientY,
+      } as unknown as React.MouseEvent;
+      onLongPress(synth);
+    }, LONG_PRESS_MS);
+  }, [onLongPress]);
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!startRef.current || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - startRef.current.x;
+    const dy = t.clientY - startRef.current.y;
+    if (dx * dx + dy * dy > LONG_PRESS_MOVE_PX * LONG_PRESS_MOVE_PX) cancel();
+  }, [cancel]);
+  const onTouchEnd = useCallback(() => { cancel(); }, [cancel]);
+  const onTouchCancel = useCallback(() => { cancel(); }, [cancel]);
+  return { onTouchStart, onTouchMove, onTouchEnd, onTouchCancel };
+}
 
 // Sub-components of the chat message list. Extracted from App.tsx in stages —
 // system + web first (zero-closure, trivial) so the pattern is proven before
@@ -97,7 +146,10 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({ msg, C, isDesktop, exp
           <span style={{
             fontSize: '10px', color: C.textDim, flexShrink: 0,
             fontFamily: T.typography.fontMono,
-          }}>{msg.toolDuration}ms</span>
+          }}
+            // c2-433 / task 283 + 284: formatDuration helper from util.ts.
+            // Tooltip carries exact ms for precision.
+            title={`${msg.toolDuration} ms`}>{formatDuration(msg.toolDuration)}</span>
         )}
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.textMuted}
           strokeWidth="2" style={{ flexShrink: 0, transform: expanded ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.15s' }}>
@@ -183,11 +235,16 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const [expanded, setExpanded] = React.useState(false);
   const needsCollapse = !editing && msg.content.length > COLLAPSE_AT && !expanded;
   const shown = needsCollapse ? msg.content.slice(0, COLLAPSE_PREVIEW) : msg.content;
+  // c2-433 / task 223: long-press shim — only attach handlers when not editing
+  // (the editor uses its own touch behavior) and when the parent provided a
+  // context-menu callback.
+  const longPress = useLongPress(!editing ? onContextMenu : undefined);
   return (
   <div
     onMouseEnter={(e) => { const bar = e.currentTarget.querySelector('.user-msg-actions') as HTMLElement; if (bar) bar.style.opacity = '1'; }}
     onMouseLeave={(e) => { const bar = e.currentTarget.querySelector('.user-msg-actions') as HTMLElement; if (bar) bar.style.opacity = '0'; }}
     onContextMenu={onContextMenu}
+    {...longPress}
     style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', alignItems: 'flex-end' }}>
     {!editing && (
       <div className='user-msg-actions'
@@ -317,6 +374,11 @@ export interface AssistantMessageProps {
   onFollowUpChip: (prompt: string) => void;
   onFeedbackPositive: () => void;
   onFeedbackNegative: () => void;
+  // c2-433 / #350: third feedback affordance — "correct this." Opens a
+  // textarea modal so the user can paste what the AI *should* have said.
+  // Optional so existing call sites that haven't wired it yet still
+  // typecheck; when omitted the button is hidden.
+  onFeedbackCorrect?: () => void;
   formatTime: (ts: number) => string;
   // c2-400 / task 185: right-click hook. Same shape as UserMessage's.
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -329,7 +391,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   msg, C, isMobile, isDesktop, isLast, isThinking,
   showReasoning, developerMode, reasoningExpanded,
   renderBody, onToggleReasoning, onRegenerate, onCopy,
-  onOpenProvenance, onFollowUpChip, onFeedbackPositive, onFeedbackNegative, formatTime, respondToTs,
+  onOpenProvenance, onFollowUpChip, onFeedbackPositive, onFeedbackNegative, onFeedbackCorrect, formatTime, respondToTs,
   onContextMenu,
 }) => {
   // c2-406 / task 216: same collapse logic as UserMessage. Slicing
@@ -341,6 +403,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const bodyText = needsCollapse ? msg.content.slice(0, COLLAPSE_PREVIEW) : msg.content;
   // Follow-up chips — simple keyword extraction, only on last assistant message
   // when the body is long enough to have meaningful topics.
+  // c2-433 / task 223: same long-press shim as UserMessage so phone users can
+  // reach the context menu (copy / edit / branch / re-ask). Vibration tick on
+  // open feels native vs the silent appearance of the menu.
+  const longPress = useLongPress(onContextMenu);
   const chips: string[] = (() => {
     if (!isLast || msg.content.length <= 40) return [];
     const words = msg.content.toLowerCase().split(/\s+/).filter(w => w.length > 5);
@@ -359,6 +425,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       onMouseEnter={(e) => { (e.currentTarget.querySelector('.lfi-msg-actions') as HTMLElement)?.style.setProperty('opacity', '1'); }}
       onMouseLeave={(e) => { (e.currentTarget.querySelector('.lfi-msg-actions') as HTMLElement)?.style.setProperty('opacity', '0'); }}
       onContextMenu={onContextMenu}
+      {...longPress}
       style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{ maxWidth: isDesktop ? '80%' : '96%', width: '100%' }}>
         {/* Response body */}
@@ -402,15 +469,22 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           )}
         </div>
 
-        {/* Hover-revealed action bar */}
+        {/* Hover-revealed action bar.
+            c2-433 mobile compaction: button shrink 30→28, gap 4→3, no-wrap
+            with overflowX scroll so the new "correct" button + confidence
+            chip + duration chip don't push each other onto a 2nd line.
+            Confidence becomes icon-only on mobile (just %, not "% confident")
+            and the words/tokens line below is hidden — that detail lives
+            in the long-press context menu now. */}
         <div className='lfi-msg-actions'
           style={{
-            display: 'flex', gap: '4px', marginTop: '4px',
-            justifyContent: 'flex-end',
+            display: 'flex', gap: isMobile ? '3px' : '4px', marginTop: '4px',
+            justifyContent: 'flex-end', alignItems: 'center',
+            flexWrap: 'nowrap', overflowX: 'auto', scrollbarWidth: 'none',
             opacity: isMobile ? 1 : 0,
             transition: 'opacity 0.15s',
           }}>
-          <CopyButton C={C} size={30}
+          <CopyButton C={C} size={isMobile ? 28 : 30}
             title='Copy markdown (Shift-click: plain text)'
             onCopy={(e) => {
               // Shift-click -> copy as plain text (strips markdown syntax).
@@ -422,11 +496,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
             <button onClick={onRegenerate} title='Regenerate' aria-label='Regenerate last response'
               disabled={isThinking}
               style={{
-                width: '30px', height: '30px',
+                width: isMobile ? '28px' : '30px', height: isMobile ? '28px' : '30px',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 background: 'transparent', border: 'none',
                 color: C.textMuted, borderRadius: T.radii.md,
                 cursor: isThinking ? 'wait' : 'pointer', fontFamily: 'inherit',
+                flexShrink: 0,
               }}
               onMouseEnter={(e) => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.text; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = C.textMuted; }}>
@@ -438,10 +513,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           )}
           <button onClick={onFeedbackPositive} title='Good response' aria-label='Mark as good response'
             style={{
-              width: '30px', height: '30px',
+              width: isMobile ? '28px' : '30px', height: isMobile ? '28px' : '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'transparent', border: 'none',
               color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
+              flexShrink: 0,
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = C.green; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; }}>
@@ -453,10 +529,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
             title='Bad response — tell us what it should have said'
             aria-label='Mark as bad response'
             style={{
-              width: '30px', height: '30px',
+              width: isMobile ? '28px' : '30px', height: isMobile ? '28px' : '30px',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: 'transparent', border: 'none',
               color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
+              flexShrink: 0,
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = C.red; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; }}>
@@ -464,10 +541,35 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
               <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>
             </svg>
           </button>
+          {/* c2-433 / #350: "Correct this" — opens a textarea so the user can
+              teach the system the right answer. Distinct from thumbs-down
+              (which is "this is wrong") because it carries the *correction*,
+              not just the rating. Backend stores rating='correct' + correction
+              text; Classroom feedback queue surfaces these for ingestion. */}
+          {onFeedbackCorrect != null && (
+            <button onClick={onFeedbackCorrect}
+              title='Correct this — teach the system the right answer'
+              aria-label='Submit a correction'
+              style={{
+                width: isMobile ? '28px' : '30px', height: isMobile ? '28px' : '30px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'transparent', border: 'none',
+                color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = C.accent; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = C.textMuted; }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
+            </button>
+          )}
           {typeof msg.confidence === 'number' && (() => {
             // Confidence badge next to the action bar. Green ≥0.75, yellow 0.5-0.75,
             // amber-ish below. Gives users a cue when the AI is low-confidence so
             // they calibrate trust (addresses c0-008 bug #5 — quality indicator).
+            // c2-433 mobile: shorten label "82% confident" → "82%" to save room.
             const pct = Math.round(msg.confidence * 100);
             const color = msg.confidence >= 0.75 ? C.green : msg.confidence >= 0.5 ? C.yellow : C.red;
             const bg = msg.confidence >= 0.75 ? C.greenBg : msg.confidence >= 0.5 ? C.accentBg : C.redBg;
@@ -476,10 +578,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
                 title={`Model confidence on this response: ${pct}%`}
                 style={{
                   fontSize: '10px', fontWeight: 700, color, background: bg,
-                  padding: '2px 8px', borderRadius: T.radii.sm, alignSelf: 'center',
-                  fontFamily: T.typography.fontMono,
+                  padding: isMobile ? '2px 6px' : '2px 8px', borderRadius: T.radii.sm, alignSelf: 'center',
+                  fontFamily: T.typography.fontMono, flexShrink: 0,
                 }}>
-                {pct}% confident
+                {isMobile ? `${pct}%` : `${pct}% confident`}
               </span>
             );
           })()}
@@ -488,53 +590,54 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           <span title={new Date(msg.timestamp).toLocaleString()}
             style={{
               fontSize: '10px', color: C.textDim, alignSelf: 'center',
-              padding: '0 8px',
+              padding: isMobile ? '0 4px' : '0 8px', flexShrink: 0,
             }}>{formatRelative(msg.timestamp)}</span>
           {/* c2-393 / task 205: response-duration chip. Only when we have
               a user-turn timestamp to diff against and the gap is sane
-              (< 1 hour — larger means session boundaries, not latency). */}
-          {typeof respondToTs === 'number' && msg.timestamp > respondToTs && (msg.timestamp - respondToTs) < 3_600_000 && (() => {
+              (< 1 hour — larger means session boundaries, not latency).
+              c2-433 mobile: hidden on mobile to free row space — duration
+              still inspectable via long-press / context menu. */}
+          {!isMobile && typeof respondToTs === 'number' && msg.timestamp > respondToTs && (msg.timestamp - respondToTs) < 3_600_000 && (() => {
             const ms = msg.timestamp - respondToTs;
-            const label = ms < 1000
-              ? `${ms}ms`
-              : ms < 60_000
-                ? `${(ms / 1000).toFixed(1)}s`
-                : `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+            const label = formatDuration(ms);
             return (
               <span title={`Response took ${label}`}
                 style={{
                   fontSize: '10px', color: C.textDim, alignSelf: 'center',
-                  padding: '0 8px 0 0', fontFamily: T.typography.fontMono,
+                  padding: '0 8px 0 0', fontFamily: T.typography.fontMono, flexShrink: 0,
                 }}>{label}</span>
             );
           })()}
         </div>
-        {/* c2-360 / task 88: word count + GPT-style token estimate. Hidden on
-            empty / thinking messages so it doesn't flash during streaming.
-            Token estimate is ceil(len/4) which is the conventional ballpark
-            for English prose; good enough without bundling a tokenizer. */}
-        {!isThinking && msg.content && msg.content.trim().length > 0 && (() => {
+        {/* c2-360 / task 88 / c2-433 #339 vocab sweep: word + char counts on
+            assistant messages. Hidden on empty / thinking messages so it
+            doesn't flash during streaming. The "tokens" estimate that lived
+            here was an LLM concept — replaced with raw char count which is
+            the post-LLM-honest unit. Hidden on mobile — accessible via long-
+            press menu. */}
+        {!isMobile && !isThinking && msg.content && msg.content.trim().length > 0 && (() => {
           const words = msg.content.trim().split(/\s+/).length;
-          const tokens = Math.ceil(msg.content.length / 4);
           return (
             <div style={{
               fontSize: T.typography.sizeXs, color: C.textDim,
               padding: '0 8px', marginTop: '2px',
               fontFamily: T.typography.fontMono,
             }}>
-              {words.toLocaleString()} {words === 1 ? 'word' : 'words'} · ~{tokens.toLocaleString()} tokens
+              {words.toLocaleString()} {words === 1 ? 'word' : 'words'} · {msg.content.length.toLocaleString()} chars
             </div>
           );
         })()}
         {/* Last-message helpfulness nudge — only on the latest assistant reply,
             fades to invisibility once user votes (tracked via onFeedbackPositive/
-            onFeedbackNegative side effects at the parent). Addresses c0-008 #5. */}
-        {isLast && !isThinking && (
+            onFeedbackNegative side effects at the parent). Addresses c0-008 #5.
+            c2-433 mobile: hidden on mobile — the action bar above with three
+            buttons is self-explanatory and the nudge text is clutter on phones. */}
+        {!isMobile && isLast && !isThinking && (
           <div style={{
             fontSize: '11px', color: C.textDim, textAlign: 'right',
             marginTop: '4px', paddingRight: '4px',
             fontStyle: 'italic',
-          }}>Was this helpful? Use 👍 / 👎 above.</div>
+          }}>Was this helpful? Use 👍 / 👎 / ✏️ above.</div>
         )}
 
         {/* Follow-up suggestion chips — only on last assistant message with enough content. */}

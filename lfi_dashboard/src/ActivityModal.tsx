@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useModalFocus } from './useModalFocus';
 import { T } from './tokens';
 
@@ -48,6 +48,10 @@ export interface ActivityModalProps {
   logicDensity: number;
   qosReport: { checks?: ActivityQosCheck[] } | null;
   onRefreshQos: () => void;
+  // c2-433 / task 253: clear all session-local UI events. Wired from
+  // App-level localEvents state. Confirm path lives here so the modal
+  // owns the destructive flow.
+  onClearLocalEvents?: () => void;
   onRefreshFacts: () => void;
 }
 
@@ -56,10 +60,16 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
   serverChatLog, chatLogError, chatLogFetchedAt, onRefreshChatLog,
   localEvents,
   isConnected, currentTier, thermalThrottled, ramLabel, cpuTempC, factsLabel, conceptsLabel, logicDensity,
-  qosReport, onRefreshQos, onRefreshFacts,
+  qosReport, onRefreshQos, onRefreshFacts, onClearLocalEvents,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
+  // c2-433 / task 252: events tab filtering. eventKindFilter narrows to a
+  // single chip-selected kind; eventQuery is free-text matched against
+  // both kind + JSON-stringified data. Local state — resets on modal
+  // close so each open starts fresh.
+  const [eventKindFilter, setEventKindFilter] = useState<string | null>(null);
+  const [eventQuery, setEventQuery] = useState<string>('');
   return (
   <div onClick={onClose}
     style={{
@@ -88,24 +98,46 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
           {'\u2715'}
         </button>
       </div>
-      <div role='tablist' aria-label='Activity sections'
-        style={{ display: 'flex', gap: T.spacing.xs, padding: '8px 12px', borderBottom: `1px solid ${C.borderSubtle}` }}>
-        {([
+      {(() => {
+        // c2-433 / task 271: WAI-ARIA tablist kbd nav (Arrow/Home/End +
+        // roving tabindex) per #178. Same pattern as SettingsModal.
+        const TABS: ReadonlyArray<{ id: ActivityTab; label: string }> = [
           { id: 'chat', label: `Conversations (${serverChatLog.length})` },
           { id: 'events', label: `UI events (${localEvents.length})` },
           { id: 'system', label: 'System' },
-        ] as const).map(t => (
-          <button key={t.id} onClick={() => onTabChange(t.id)}
-            role='tab' aria-selected={tab === t.id}
-            style={{
-              padding: '8px 14px', fontSize: T.typography.sizeSm,
-              background: tab === t.id ? C.accentBg : 'transparent',
-              border: `1px solid ${tab === t.id ? C.accentBorder : 'transparent'}`,
-              color: tab === t.id ? C.accent : C.textMuted,
-              borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
-            }}>{t.label}</button>
-        ))}
-      </div>
+        ];
+        const onTabKey = (e: React.KeyboardEvent) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+          e.preventDefault();
+          const idx = TABS.findIndex(t => t.id === tab);
+          let next = idx;
+          if (e.key === 'ArrowLeft') next = (idx - 1 + TABS.length) % TABS.length;
+          else if (e.key === 'ArrowRight') next = (idx + 1) % TABS.length;
+          else if (e.key === 'Home') next = 0;
+          else if (e.key === 'End') next = TABS.length - 1;
+          onTabChange(TABS[next].id);
+        };
+        return (
+          <div role='tablist' aria-label='Activity sections' onKeyDown={onTabKey}
+            style={{ display: 'flex', gap: T.spacing.xs, padding: '8px 12px', borderBottom: `1px solid ${C.borderSubtle}` }}>
+            {TABS.map(t => {
+              const active = tab === t.id;
+              return (
+                <button key={t.id} onClick={() => onTabChange(t.id)}
+                  role='tab' aria-selected={active}
+                  tabIndex={active ? 0 : -1}
+                  style={{
+                    padding: '8px 14px', fontSize: T.typography.sizeSm,
+                    background: active ? C.accentBg : 'transparent',
+                    border: `1px solid ${active ? C.accentBorder : 'transparent'}`,
+                    color: active ? C.accent : C.textMuted,
+                    borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                  }}>{t.label}</button>
+              );
+            })}
+          </div>
+        );
+      })()}
       <div role='tabpanel' aria-label={tab} style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
         {tab === 'chat' && (
           <>
@@ -160,29 +192,160 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
             ))}
           </>
         )}
-        {tab === 'events' && (
-          <>
-            {localEvents.length === 0 && (
-              <div style={{ color: C.textMuted, fontSize: T.typography.sizeMd, padding: '20px', textAlign: 'center' }}>
-                No UI events captured yet.
-              </div>
-            )}
-            {localEvents.slice().reverse().map((e, i) => (
-              <div key={i} style={{
-                display: 'flex', gap: '12px', padding: '6px 10px',
-                borderBottom: `1px solid ${C.borderSubtle}`, fontSize: T.typography.sizeSm,
-              }}>
-                <span style={{ color: C.textDim, minWidth: '120px' }}>
-                  {new Date(e.t).toLocaleTimeString()}
-                </span>
-                <span style={{ color: C.accent, minWidth: '140px', fontWeight: 700 }}>{e.kind}</span>
-                <span style={{ color: C.textSecondary, flex: 1 }}>
-                  {e.data ? JSON.stringify(e.data) : ''}
-                </span>
-              </div>
-            ))}
-          </>
-        )}
+        {tab === 'events' && (() => {
+          // c2-433 / task 252: kind-filter chip group + search input. Long
+          // event logs (1000s of entries) are unreadable without filters;
+          // chips list every distinct kind seen + counts so users can
+          // narrow to just "feedback_correct" or "chat_modules_used"
+          // without manually scanning. Free-text search matches against
+          // both kind and the JSON-stringified data.
+          const kindCounts = new Map<string, number>();
+          for (const e of localEvents) kindCounts.set(e.kind, (kindCounts.get(e.kind) || 0) + 1);
+          const allKinds = Array.from(kindCounts.entries()).sort((a, b) => b[1] - a[1]);
+          const filtered = localEvents.filter(e => {
+            if (eventKindFilter && e.kind !== eventKindFilter) return false;
+            if (!eventQuery.trim()) return true;
+            const q = eventQuery.toLowerCase();
+            return e.kind.toLowerCase().includes(q) || (e.data ? JSON.stringify(e.data).toLowerCase().includes(q) : false);
+          });
+          return (
+            <>
+              {localEvents.length === 0 ? (
+                <div style={{ color: C.textMuted, fontSize: T.typography.sizeMd, padding: '20px', textAlign: 'center' }}>
+                  No UI events captured yet.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: T.spacing.sm, marginBottom: T.spacing.sm, flexWrap: 'wrap' }}>
+                    <input type='search' value={eventQuery}
+                      onChange={(ev) => setEventQuery(ev.target.value)}
+                      // c2-433 / task 282b: same Esc-clears-filter step-down
+                      // pattern as KnowledgeBrowser. First Esc clears the
+                      // free-text query (or the kind chip if no query);
+                      // second Esc propagates to global to close the modal.
+                      onKeyDown={(ev) => {
+                        if (ev.key !== 'Escape') return;
+                        if (eventQuery) {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          setEventQuery('');
+                        } else if (eventKindFilter) {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          setEventKindFilter(null);
+                        }
+                      }}
+                      placeholder='Filter events…' aria-label='Filter events'
+                      style={{
+                        flex: 1, minWidth: '160px', padding: '6px 10px',
+                        background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                        borderRadius: T.radii.md, color: C.text, fontFamily: 'inherit',
+                        fontSize: T.typography.sizeSm, outline: 'none', boxSizing: 'border-box',
+                      }} />
+                    {eventKindFilter && (
+                      <button onClick={() => setEventKindFilter(null)}
+                        style={{
+                          padding: '4px 10px', fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                          background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                          color: C.textMuted, borderRadius: T.radii.pill, cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}>{'\u2715'} {eventKindFilter}</button>
+                    )}
+                    {/* c2-433 / task 253: destructive clear with native confirm
+                        — lives in the modal's filter row so it's grouped with
+                        the other event-management controls. Hidden when no
+                        events to clear. */}
+                    {onClearLocalEvents && localEvents.length > 0 && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Clear ${localEvents.length} session-local UI event${localEvents.length === 1 ? '' : 's'}? Server-side chat log is unaffected.`)) {
+                            onClearLocalEvents();
+                            setEventKindFilter(null);
+                            setEventQuery('');
+                          }
+                        }}
+                        title='Clear all session-local UI events'
+                        style={{
+                          padding: '4px 10px', fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                          background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+                          color: C.red, borderRadius: T.radii.md, cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}>Clear log</button>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px', marginBottom: T.spacing.md, flexWrap: 'wrap' }}>
+                    {allKinds.slice(0, 12).map(([k, n]) => {
+                      const active = eventKindFilter === k;
+                      return (
+                        <button key={k} onClick={() => setEventKindFilter(active ? null : k)}
+                          aria-pressed={active}
+                          style={{
+                            padding: '2px 8px', fontSize: '10px', fontWeight: T.typography.weightBold,
+                            background: active ? C.accentBg : 'transparent',
+                            border: `1px solid ${active ? C.accentBorder : C.borderSubtle}`,
+                            color: active ? C.accent : C.textMuted,
+                            borderRadius: T.radii.pill, cursor: 'pointer',
+                            fontFamily: T.typography.fontMono,
+                          }}>{k} <span style={{ opacity: 0.6 }}>({n})</span></button>
+                      );
+                    })}
+                  </div>
+                  {filtered.length === 0 ? (
+                    <div style={{ color: C.textMuted, fontSize: T.typography.sizeSm, padding: '20px', textAlign: 'center', fontStyle: 'italic' }}>
+                      No events match the current filter.
+                    </div>
+                  ) : (
+                    filtered.slice().reverse().map((e, i) => (
+                      <div key={i} style={{
+                        display: 'flex', gap: '12px', padding: '6px 10px',
+                        borderBottom: `1px solid ${C.borderSubtle}`, fontSize: T.typography.sizeSm,
+                      }}>
+                        <span style={{ color: C.textDim, minWidth: '90px' }}>
+                          {new Date(e.t).toLocaleTimeString()}
+                        </span>
+                        <span style={{ color: C.accent, minWidth: '140px', fontWeight: 700, fontFamily: T.typography.fontMono }}>{e.kind}</span>
+                        <span style={{ color: C.textSecondary, flex: 1, fontFamily: T.typography.fontMono, fontSize: '11px', wordBreak: 'break-word' }}>
+                          {(() => {
+                            // c2-433 / task 275 + 276: friendlier rendering
+                            // for common event-kind shapes. Falls back to
+                            // JSON for everything else.
+                            if (!e.data) return '';
+                            const d = e.data as any;
+                            if (e.kind === 'chat_modules_used' && Array.isArray(d.modules)) {
+                              return d.modules.join(' · ');
+                            }
+                            if (e.kind === 'feedback_positive' && d.msgId != null) return `msg ${d.msgId}`;
+                            if (e.kind === 'feedback_negative' && d.msgId != null) return `msg ${d.msgId}${d.category ? ` · ${d.category}` : ''}`;
+                            if (e.kind === 'feedback_correct' && d.msgId != null) return `msg ${d.msgId}${typeof d.len === 'number' ? ` · ${d.len} chars` : ''}`;
+                            if (e.kind === 'fact_key_opened' && d.key) return d.key;
+                            if (e.kind === 'message_copied' && d.role) return `${d.role}${typeof d.length === 'number' ? ` · ${d.length} chars` : ''}${d.via ? ` · via ${d.via}` : ''}`;
+                            if (e.kind === 'chat_retry' && typeof d.len === 'number') return `${d.len} chars`;
+                            if (e.kind === 'chat_stop' && typeof d.elapsed === 'number') return `after ${d.elapsed}s`;
+                            if (e.kind === 'theme_cycled' && d.theme) return `→ ${d.theme}`;
+                            if (e.kind === 'slash_cmd' && d.cmd) return d.cmd;
+                            if (e.kind === 'tier_switched' && d.tier) return `→ ${d.tier}`;
+                            if (e.kind === 'message_sent' && typeof d.length === 'number') return `${d.length} chars${d.tier ? ` · ${d.tier}` : ''}${d.skill && d.skill !== 'chat' ? ` · ${d.skill}` : ''}`;
+                            if (e.kind === 'message_edited' && typeof d.originalLen === 'number' && typeof d.newLen === 'number') return `${d.originalLen} → ${d.newLen} chars`;
+                            if (e.kind === 'code_copied' && d.lang) return `${d.lang}${typeof d.length === 'number' ? ` · ${d.length} chars` : ''}`;
+                            if (e.kind === 'new_conversation') return d.incognito ? 'incognito' : '';
+                            if (e.kind === 'delete_conversation' && typeof d.messages === 'number') return `${d.messages} msgs`;
+                            if ((e.kind === 'toggle_pinned' || e.kind === 'toggle_starred' || e.kind === 'toggle_archived') && typeof d['nowPinned'] !== 'undefined') return d.nowPinned ? 'on' : 'off';
+                            if (e.kind === 'toggle_starred' && typeof d.nowStarred !== 'undefined') return d.nowStarred ? 'on' : 'off';
+                            if (e.kind === 'toggle_archived' && typeof d.nowArchived !== 'undefined') return d.nowArchived ? 'on' : 'off';
+                            if (e.kind === 'msg_queue_drained' && typeof d.count === 'number') return `${d.count} msg${d.count === 1 ? '' : 's'}`;
+                            if (e.kind === 'cmd_palette_run' && d.id) return d.id;
+                            if ((e.kind === 'bulk_delete_archived' || e.kind === 'bulk_unarchive') && typeof d.count === 'number') return `${d.count} convo${d.count === 1 ? '' : 's'}`;
+                            return JSON.stringify(d);
+                          })()}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </>
+              )}
+            </>
+          );
+        })()}
         {tab === 'system' && (
           <div style={{ fontSize: T.typography.sizeSm, color: C.textSecondary }}>
             <div style={{ marginBottom: '12px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: T.spacing.md }}>
@@ -219,6 +382,37 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
                   border: `1px solid ${C.purpleBorder}`, color: C.purple,
                   borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
                 }}>Refresh facts</button>
+              {/* c2-433 / task 266: copy-to-clipboard the system snapshot
+                  for paste-into-bug-report. Includes the same fields shown
+                  in the grid above + UA + viewport + timestamp. Useful when
+                  filing issues without manually transcribing each row. */}
+              <button onClick={(e) => {
+                const lines = [
+                  `PlausiDen AI debug snapshot — ${new Date().toISOString()}`,
+                  `Connection: ${isConnected ? 'LIVE' : 'DOWN'}`,
+                  `Tier: ${currentTier}`,
+                  `Throttled: ${thermalThrottled ? 'YES' : 'NO'}`,
+                  `RAM: ${ramLabel}`,
+                  `CPU temp: ${cpuTempC.toFixed(0)}\u00B0C`,
+                  `Facts: ${factsLabel}`,
+                  `Concepts: ${conceptsLabel}`,
+                  `Logic density: ${logicDensity.toFixed(3)}`,
+                  `User-agent: ${typeof navigator !== 'undefined' ? navigator.userAgent : 'n/a'}`,
+                  `Viewport: ${typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : 'n/a'}`,
+                ];
+                try { navigator.clipboard.writeText(lines.join('\n')); } catch { /* clipboard blocked */ }
+                const btn = e.currentTarget;
+                const orig = btn.textContent;
+                btn.textContent = 'Copied';
+                btn.style.color = C.green;
+                window.setTimeout(() => { btn.textContent = orig; btn.style.color = C.textMuted; }, 1200);
+              }}
+                title='Copy system snapshot to clipboard for bug reports'
+                style={{
+                  padding: '8px 14px', fontSize: T.typography.sizeSm, background: 'transparent',
+                  border: `1px solid ${C.borderSubtle}`, color: C.textMuted,
+                  borderRadius: T.radii.lg, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                }}>Copy debug</button>
             </div>
             {qosReport && (
               <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: T.spacing.xs }}>

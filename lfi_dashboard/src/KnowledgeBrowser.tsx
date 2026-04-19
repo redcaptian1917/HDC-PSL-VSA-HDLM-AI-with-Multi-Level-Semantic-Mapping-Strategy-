@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useModalFocus } from './useModalFocus';
 import { T } from './tokens';
 // c2-349 / task 29: shared shimmer skeleton.
@@ -9,13 +9,19 @@ import { SkeletonLoader } from './components/SkeletonLoader';
 
 export interface KnowledgeFact { key: string; value: string }
 export interface KnowledgeConcept { name: string; review_count: number; mastery: number }
-export interface KnowledgeDue { name: string; mastery: number; days_overdue: number }
+// c2-433 / #337: fact_key added so the FSRS rating buttons can POST a review
+// keyed to the specific card. Legacy SM-2 /api/knowledge/due payloads lack
+// fact_key, in which case the rating buttons are hidden (graceful degradation).
+export interface KnowledgeDue { name: string; mastery: number; days_overdue: number; fact_key?: string }
 
 export interface KnowledgeBrowserProps {
   C: any;
   facts: KnowledgeFact[];
   concepts: KnowledgeConcept[];
   due: KnowledgeDue[];
+  // c2-433 / #337 followup: FSRS envelope meta from /api/fsrs/due. Null
+  // when response came from the legacy SM-2 path — header line hides.
+  fsrsMeta?: { due_cards?: number; target_retention?: number } | null;
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
@@ -24,12 +30,34 @@ export interface KnowledgeBrowserProps {
   // the zero state surfaces a button that opens it (instead of just telling
   // users to chat more).
   onOpenTraining?: () => void;
+  // c2-433 / #337: FSRS review handler. When provided AND the due row has a
+  // fact_key, four rating buttons (Again / Hard / Good / Easy = 1..4) appear
+  // on the card. Parent POSTs /api/fsrs/review and refetches.
+  onReview?: (factKey: string, rating: 1 | 2 | 3 | 4) => Promise<void> | void;
 }
 
-export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, concepts, due, loading, error, onRetry, onClose, onOpenTraining }) => {
+export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, concepts, due, fsrsMeta, loading, error, onRetry, onClose, onOpenTraining, onReview }) => {
+  // c2-433 / #337: per-row review state — which fact_key is currently being
+  // graded (disables its buttons + shows inline spinner). Map so multiple
+  // reviews can technically be in flight, though the UX expects serial.
+  const [reviewing, setReviewing] = useState<Record<string, boolean>>({});
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
   const isEmpty = !loading && !error && facts.length === 0 && concepts.length === 0 && due.length === 0;
+  // c2-433 / task 274: filter input — narrows facts (key+value), concepts
+  // (name), and due (name) by case-insensitive substring. Useful when the
+  // KB grows past ~50 entries.
+  const [filter, setFilter] = useState<string>('');
+  const fLower = filter.trim().toLowerCase();
+  const filteredFacts = fLower
+    ? facts.filter(f => f.key.toLowerCase().includes(fLower) || f.value.toLowerCase().includes(fLower))
+    : facts;
+  const filteredConcepts = fLower
+    ? concepts.filter(c => c.name.toLowerCase().includes(fLower))
+    : concepts;
+  const filteredDue = fLower
+    ? due.filter(d => d.name.toLowerCase().includes(fLower))
+    : due;
   return (
   <div onClick={onClose}
     style={{
@@ -52,8 +80,32 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
       }}>
         <h2 id='scc-knowledge-title' style={{ margin: 0, fontSize: T.typography.sizeXl, fontWeight: T.typography.weightBold, color: C.text }}>Knowledge Browser</h2>
         <div style={{ display: 'flex', gap: T.spacing.sm, alignItems: 'center' }}>
-          <span style={{ fontSize: T.typography.sizeSm, color: C.textMuted }}>
-            {facts.length} facts &middot; {concepts.length} concepts &middot; {due.length} due
+          {/* c2-433 / task 274: filter input. Narrows facts/concepts/due
+              by substring. Counts shown reflect filter when active. */}
+          <input type='search' value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            // c2-433 / task 282: Esc-to-clear-filter (then Esc again closes
+            // the modal via the global Esc handler). Standard step-down
+            // pattern — gives users a graceful way to back out of a filter
+            // without losing the modal.
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && filter) {
+                e.preventDefault();
+                e.stopPropagation();
+                setFilter('');
+              }
+            }}
+            placeholder='Filter…' aria-label='Filter knowledge'
+            style={{
+              padding: '4px 10px', fontSize: T.typography.sizeXs,
+              background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+              borderRadius: T.radii.md, color: C.text, fontFamily: 'inherit',
+              outline: 'none', width: '140px',
+            }} />
+          <span style={{ fontSize: T.typography.sizeSm, color: C.textMuted, fontFamily: T.typography.fontMono }}>
+            {fLower
+              ? `${filteredFacts.length}/${facts.length} f · ${filteredConcepts.length}/${concepts.length} c · ${filteredDue.length}/${due.length} d`
+              : `${facts.length} facts · ${concepts.length} concepts · ${due.length} due`}
           </span>
           <button onClick={onClose} aria-label='Close knowledge browser'
             style={{ background: 'transparent', border: 'none', color: C.textMuted, fontSize: '20px', cursor: 'pointer' }}>
@@ -132,31 +184,88 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
         {/* Due for review */}
         {!loading && !error && due.length > 0 && (
           <div style={{ marginBottom: '20px' }}>
-            <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.accent, textTransform: 'uppercase', letterSpacing: '0.10em', marginBottom: T.spacing.md }}>
-              Due for review ({due.length})
+            <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.accent, textTransform: 'uppercase', letterSpacing: '0.10em', marginBottom: T.spacing.md, display: 'flex', alignItems: 'baseline', gap: T.spacing.sm, flexWrap: 'wrap' }}>
+              <span>Due for review ({due.length}{fsrsMeta?.due_cards != null && fsrsMeta.due_cards > due.length ? ` of ${fsrsMeta.due_cards}` : ''})</span>
+              {/* c2-433 / #337 followup: FSRS envelope meta line. Shows the
+                  target retention the scheduler is grading against so the
+                  user understands WHY a card is due (the scheduler aims to
+                  re-show right before the retrievability drops below this
+                  target). Hidden when not on the FSRS branch. */}
+              {fsrsMeta?.target_retention != null && (
+                <span title={`FSRS target retention: ${(fsrsMeta.target_retention * 100).toFixed(0)}% — cards reappear just before retrievability falls below this`}
+                  style={{
+                    fontSize: '10px', fontWeight: 600,
+                    color: C.textMuted, fontFamily: T.typography.fontMono,
+                    textTransform: 'none', letterSpacing: 0,
+                  }}>
+                  · target retention {(fsrsMeta.target_retention * 100).toFixed(0)}%
+                </span>
+              )}
             </div>
-            {due.map((d, i) => (
+            {filteredDue.map((d, i) => {
+              const canReview = !!(onReview && d.fact_key);
+              const isReviewing = canReview && reviewing[d.fact_key!] === true;
+              return (
               <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: T.spacing.md, padding: '10px 12px',
+                display: 'flex', flexDirection: 'column', gap: T.spacing.sm, padding: '10px 12px',
                 background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.lg,
                 marginBottom: '6px',
               }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: T.typography.sizeMd, fontWeight: 600, color: C.text }}>{d.name}</div>
-                  <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted }}>
-                    Mastery {(d.mastery * 100).toFixed(0)}% &middot; {d.days_overdue.toFixed(1)} days overdue
+                <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.md }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: T.typography.sizeMd, fontWeight: 600, color: C.text }}>{d.name}</div>
+                    <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted }}>
+                      Mastery {(d.mastery * 100).toFixed(0)}% &middot; {d.days_overdue.toFixed(1)} days overdue
+                    </div>
+                  </div>
+                  <div style={{
+                    width: '60px', height: '6px', background: C.bgInput, borderRadius: T.radii.xs, overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      width: `${d.mastery * 100}%`, height: '100%',
+                      background: d.mastery > 0.7 ? C.green : d.mastery > 0.3 ? C.yellow : C.red,
+                    }} />
                   </div>
                 </div>
-                <div style={{
-                  width: '60px', height: '6px', background: C.bgInput, borderRadius: T.radii.xs, overflow: 'hidden',
-                }}>
-                  <div style={{
-                    width: `${d.mastery * 100}%`, height: '100%',
-                    background: d.mastery > 0.7 ? C.green : d.mastery > 0.3 ? C.yellow : C.red,
-                  }} />
-                </div>
+                {/* c2-433 / #337: FSRS 4-rating row. Mapping follows FSRS
+                    convention: 1=Again (failed recall), 2=Hard (recalled but
+                    slowly), 3=Good (normal), 4=Easy (trivial). Buttons are
+                    color-coded along the same Again→Easy spectrum: red →
+                    amber → accent → green. Hidden when no fact_key or no
+                    review handler (legacy SM-2 payloads). */}
+                {canReview && (
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {([
+                      { r: 1 as const, label: 'Again', hint: 'Forgot — schedule soon', bg: C.redBg, border: C.redBorder, fg: C.red },
+                      { r: 2 as const, label: 'Hard',  hint: 'Recalled with effort', bg: C.yellowBg || C.bgInput, border: C.yellow, fg: C.yellow },
+                      { r: 3 as const, label: 'Good',  hint: 'Recalled normally', bg: C.accentBg, border: C.accentBorder, fg: C.accent },
+                      { r: 4 as const, label: 'Easy',  hint: 'Trivial — longer interval', bg: C.greenBg || C.bgInput, border: C.green, fg: C.green },
+                    ]).map(b => (
+                      <button key={b.r} disabled={isReviewing}
+                        onClick={async () => {
+                          if (!onReview || !d.fact_key) return;
+                          setReviewing(prev => ({ ...prev, [d.fact_key!]: true }));
+                          try { await onReview(d.fact_key, b.r); }
+                          finally { setReviewing(prev => { const n = { ...prev }; delete n[d.fact_key!]; return n; }); }
+                        }}
+                        title={`${b.hint} (${b.r})`}
+                        aria-label={`Rate ${d.name}: ${b.label}`}
+                        style={{
+                          flex: 1, padding: '5px 8px', fontSize: T.typography.sizeXs,
+                          fontWeight: T.typography.weightBold,
+                          background: b.bg, color: b.fg,
+                          border: `1px solid ${b.border}`,
+                          borderRadius: T.radii.sm,
+                          cursor: isReviewing ? 'wait' : 'pointer',
+                          opacity: isReviewing ? 0.5 : 1,
+                          fontFamily: 'inherit', letterSpacing: '0.02em',
+                        }}>{b.label}</button>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -170,8 +279,14 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
             <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.md, textAlign: 'center' }}>
               No facts learned yet. Chat with the AI — it picks up facts from conversation.
             </div>
+          ) : filteredFacts.length === 0 ? (
+            // c2-433 / task 274 followup: filter zero-state. Differentiates
+            // "no facts at all" from "no facts match the filter."
+            <div style={{ fontSize: T.typography.sizeSm, color: C.textMuted, padding: T.spacing.md, textAlign: 'center', fontStyle: 'italic' }}>
+              No facts match "{filter}". <button onClick={() => setFilter('')} style={{ background: 'transparent', border: 'none', color: C.accent, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}>Clear filter.</button>
+            </div>
           ) : (
-            facts.map((f, i) => (
+            filteredFacts.map((f, i) => (
               <div key={i} style={{
                 display: 'flex', gap: T.spacing.sm, padding: '8px 12px',
                 borderBottom: `1px solid ${C.borderSubtle}`, fontSize: T.typography.sizeMd,
@@ -192,10 +307,10 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
           </div>
           {concepts.length === 0 ? (
             <div style={{ fontSize: T.typography.sizeMd, color: C.textDim, padding: T.spacing.md, textAlign: 'center' }}>
-              No concepts yet. Teach the AI with /knowledge or via Settings.
+              No concepts yet. Concepts emerge as the substrate ingests facts and detects clusters — chat more or run an ingestion batch from Classroom.
             </div>
           ) : (
-            concepts.map((c, i) => (
+            filteredConcepts.map((c, i) => (
               <div key={i} style={{
                 display: 'flex', alignItems: 'center', gap: T.spacing.md,
                 padding: '10px 12px', borderBottom: `1px solid ${C.borderSubtle}`,

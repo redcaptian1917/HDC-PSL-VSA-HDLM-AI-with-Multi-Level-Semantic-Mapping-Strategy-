@@ -61,9 +61,22 @@ function ChatViewInner<T extends { id: number | string }>(
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {
-      if (messages.length > 0) {
-        virtuosoRef.current?.scrollToIndex({ index: messages.length - 1, align: 'end', behavior: scrollBehavior });
-      }
+      if (messages.length === 0) return;
+      // c2-428 fix: scrollToIndex({index: last, align: 'end'}) only lands
+      // on the top-of-the-last-item baseline, so the Footer below (thinking
+      // indicator, day-spacer, follow-up chips) still pokes off-screen and
+      // users see empty space below the FAB. scrollTo with a huge top
+      // value is clamped by Virtuoso to the real scrollHeight, which
+      // includes Header + all items + Footer. Second tick re-fires after
+      // any late layout (image decode, streaming chunk) so we actually
+      // land at the bottom.
+      const v = virtuosoRef.current;
+      if (!v) return;
+      v.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: scrollBehavior });
+      // Fire once more after a paint to catch deferred layout (streaming
+      // content that lands a frame later). 'auto' behavior here so the
+      // correction is instant, no double-smooth stutter.
+      setTimeout(() => v.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: 'auto' }), 80);
     },
     scrollToIndex: (index: number) => {
       if (messages.length === 0) return;

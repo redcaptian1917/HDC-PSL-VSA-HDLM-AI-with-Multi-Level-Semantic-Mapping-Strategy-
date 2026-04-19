@@ -40,7 +40,7 @@ pub fn summarize_conversation(
         if role == "user" {
             user_messages.push(content.as_str());
             // Extract topics from questions
-            let lower = content.to_lowercase();
+            let _lower = content.to_lowercase();
             for keyword in extract_topic_keywords(content) {
                 if !topics.contains(&keyword) && topics.len() < 10 {
                     topics.push(keyword);

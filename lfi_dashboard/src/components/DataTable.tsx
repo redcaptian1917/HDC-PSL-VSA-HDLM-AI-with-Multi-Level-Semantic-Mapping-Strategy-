@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { TableVirtuoso } from 'react-virtuoso';
 import { T } from '../tokens';
 
 // c0-auto-2 task 26 / BIG #180 (CLAUDE2_500_TASKS.md): generic sortable
@@ -69,6 +70,13 @@ export interface DataTableProps<T> {
   emptyText?: string;
   /** Font size for cells -- sizeSm default; set sizeMd for larger layouts. */
   cellFontSize?: string;
+  /** task 213: when true, rows render through TableVirtuoso so the table can
+   *  hold thousands of rows without painting them all. Sticky header + sort
+   *  + filter still work. Caller must pass a fixed height (CSS) for the
+   *  scroller to do its job. */
+  virtualize?: boolean;
+  /** Required when virtualize=true. Any CSS height value (px / vh / dvh). */
+  virtualizeHeight?: string;
 }
 
 export function DataTable<T>({
@@ -76,6 +84,7 @@ export function DataTable<T>({
   sort, onSortChange, filterQuery, filterFn,
   stripe = true, stickyHeader = true,
   emptyText, cellFontSize,
+  virtualize = false, virtualizeHeight,
 }: DataTableProps<T>): JSX.Element {
   const [internalSort, setInternalSort] = useState<{ col: string; dir: SortDir } | null>(null);
   const activeSort = sort ?? internalSort;
@@ -134,35 +143,89 @@ export function DataTable<T>({
     ...(stickyHeader ? { position: 'sticky' as const, top: 0, zIndex: 1 } : null),
   };
 
+  const renderHeader = () => (
+    <tr>
+      {columns.map(col => {
+        const sortable = col.sortable !== false;
+        const th: React.CSSProperties = {
+          ...headerBase,
+          textAlign: col.align ?? 'left',
+          width: col.width,
+          cursor: sortable ? 'pointer' : 'default',
+          userSelect: 'none',
+        };
+        return (
+          <th key={col.id}
+            onClick={sortable ? () => toggleSort(col) : undefined}
+            onKeyDown={sortable ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault(); toggleSort(col);
+              }
+            } : undefined}
+            tabIndex={sortable ? 0 : undefined}
+            role={sortable ? 'button' : undefined}
+            aria-sort={sortable ? ariaSort(col) : undefined}
+            style={th}>{col.header}{arrow(col)}</th>
+        );
+      })}
+    </tr>
+  );
+
+  const renderRow = (row: T, i: number) => (
+    <>
+      {columns.map(col => (
+        <td key={col.id} style={{
+          padding: '10px 14px',
+          textAlign: col.align ?? 'left',
+          borderBottom: `1px solid ${C.borderSubtle}`,
+          background: stripe && i % 2 === 1 ? 'rgba(255,255,255,0.015)' : undefined,
+          ...col.cellStyle,
+        }}>{col.accessor(row)}</td>
+      ))}
+    </>
+  );
+
+  // task 213: virtualized variant via TableVirtuoso. Only the visible rows
+  // mount, so 1k+-row tables (LibraryView source inventory) stay responsive.
+  // Sort + filter happen above on the full set; TableVirtuoso just paints
+  // the slice that fits in the scroller. Empty state still renders inline.
+  if (virtualize) {
+    const height = virtualizeHeight || '60vh';
+    if (processed.length === 0) {
+      return (
+        <div style={{
+          border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
+          padding: '20px', textAlign: 'center',
+          color: C.textMuted, fontSize: T.typography.sizeSm, fontStyle: 'italic',
+        }}>{emptyText ?? (filterQuery ? `No rows match "${filterQuery}"` : 'No rows')}</div>
+      );
+    }
+    return (
+      <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'hidden' }}>
+        <TableVirtuoso
+          style={{ height, background: C.bg }}
+          data={processed}
+          components={{
+            // Cast to any: TableVirtuoso slot components have over-strict
+            // ref typings vs the table tag they wrap.
+            Table: ((props: any) => (
+              <table {...props} style={{ ...props.style, width: '100%', borderCollapse: 'collapse', fontSize: fz, color: C.text, tableLayout: 'fixed' }} />
+            )) as any,
+            TableRow: ((props: any) => <tr {...props} />) as any,
+          }}
+          fixedHeaderContent={renderHeader}
+          itemContent={(index, row) => renderRow(row, index)}
+          computeItemKey={(_i, row) => rowKey(row)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md, overflow: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: fz, color: C.text }}>
         <thead>
-          <tr>
-            {columns.map(col => {
-              const sortable = col.sortable !== false;
-              const th: React.CSSProperties = {
-                ...headerBase,
-                textAlign: col.align ?? 'left',
-                width: col.width,
-                cursor: sortable ? 'pointer' : 'default',
-                userSelect: 'none',
-              };
-              return (
-                <th key={col.id}
-                  onClick={sortable ? () => toggleSort(col) : undefined}
-                  onKeyDown={sortable ? (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault(); toggleSort(col);
-                    }
-                  } : undefined}
-                  tabIndex={sortable ? 0 : undefined}
-                  role={sortable ? 'button' : undefined}
-                  aria-sort={sortable ? ariaSort(col) : undefined}
-                  style={th}>{col.header}{arrow(col)}</th>
-              );
-            })}
-          </tr>
+          {renderHeader()}
         </thead>
         <tbody>
           {processed.length === 0 ? (
@@ -174,16 +237,8 @@ export function DataTable<T>({
               }}>{emptyText ?? (filterQuery ? `No rows match "${filterQuery}"` : 'No rows')}</td>
             </tr>
           ) : processed.map((row, i) => (
-            <tr key={rowKey(row)}
-              style={stripe && i % 2 === 1 ? { background: 'rgba(255,255,255,0.015)' } : undefined}>
-              {columns.map(col => (
-                <td key={col.id} style={{
-                  padding: '10px 14px',
-                  textAlign: col.align ?? 'left',
-                  borderBottom: `1px solid ${C.borderSubtle}`,
-                  ...col.cellStyle,
-                }}>{col.accessor(row)}</td>
-              ))}
+            <tr key={rowKey(row)}>
+              {renderRow(row, i)}
             </tr>
           ))}
         </tbody>

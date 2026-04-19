@@ -13,7 +13,11 @@
 //   - Everything else (API calls, POSTs, cross-origin): network only.
 // API calls MUST NEVER be cached — stale facts would be worse than offline.
 
-const CACHE_VERSION = 'plausiden-v2';
+// c2-431 bump to force old-bundle eviction after the post-LLM pivot
+// mid-flight refactors. The activate handler already drops any key that
+// isn't the current CACHE_VERSION so this single string change wipes
+// whatever stale build was serving.
+const CACHE_VERSION = 'plausiden-v3';
 const PRECACHE_URLS = ['/'];
 const SAME_ORIGIN_STATIC = /\.(?:js|mjs|css|woff2?|ttf|otf|png|jpg|jpeg|svg|webp|ico)(?:\?.*)?$/i;
 

@@ -1,6 +1,50 @@
 // Shared formatting + browser helpers. Keep this file React-free so any
 // component can import without pulling in the React tree.
 
+// c2-433 / task 223: haptic tick for mobile interactions. Wraps navigator.
+// vibrate behind a try/catch since (a) iOS Safari has no Vibration API, (b)
+// some Android browsers gate it behind a user-activation check that throws
+// from non-gesture contexts, (c) some users disable it via OS settings.
+// Failing silently is the right behavior — vibration is a *bonus* signal,
+// never a primary one. Default 15 ms is the "tick" pattern; pass an array
+// for richer patterns (e.g. [10,40,10] for a confirm-double-tap).
+export const hapticTick = (ms: number | number[] = 15): void => {
+  try { (navigator as any).vibrate?.(ms); } catch { /* unsupported */ }
+};
+
+// c2-433 / task 284: humanize a millisecond duration. Used by the
+// response-duration chip on assistant messages + the tool-message footer.
+//   <1s  → "Nms"
+//   <60s → "N.Ns"
+//   else → "Nm Ns"
+// Compact + scannable. Callers stash the exact ms in a tooltip if needed.
+export const formatDuration = (ms: number): string => {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+};
+
+// c2-433 / task 245: flash a yellow box-shadow ring on the message bubble
+// matching the given id. Used by branch-jump, chat-search jump, and the
+// provenance system-message append — anywhere the user is sent to a
+// specific message and we want a visual landing cue. The 80ms initial
+// delay lets Virtuoso paint the row after a scrollToIndex; the 1100ms
+// hold + 200ms transition matches the prior inline implementations.
+//
+// `colour` defaults to a usable yellow (#fbbf24). Caller can pass any CSS
+// color string (e.g. C.yellow). Targets [data-msg-id="N"] which the chat
+// list wrapper assigns per render. No-op when no element is found.
+export const flashMessageById = (msgId: number | string, colour: string = '#fbbf24'): void => {
+  window.setTimeout(() => {
+    const el = document.querySelector(`[data-msg-id="${msgId}"]`) as HTMLElement | null;
+    if (!el) return;
+    const orig = el.style.boxShadow;
+    el.style.boxShadow = `0 0 0 3px ${colour}`;
+    el.style.transition = 'box-shadow 0.2s';
+    window.setTimeout(() => { el.style.boxShadow = orig; }, 1100);
+  }, 80);
+};
+
 // 56_750_622 → "56.7M", 168 → "168", 3945 → "3.9K", null/NaN → "—".
 export const compactNum = (n: number | null | undefined): string => {
   if (n == null || Number.isNaN(n)) return '—';

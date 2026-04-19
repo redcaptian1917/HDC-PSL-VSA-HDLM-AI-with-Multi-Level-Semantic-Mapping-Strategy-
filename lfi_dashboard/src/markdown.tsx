@@ -112,6 +112,12 @@ export interface MarkdownCtx {
   // segments. Driven by Cmd+Shift+F in-conversation search. Skip code blocks
   // and links to avoid mangling formatting.
   highlight?: string;
+  // c2-433 / #317: fact-key popover. When provided, the parser turns
+  // `[fact:abc123]` (or `[k:abc123]`) tokens into clickable chips that fire
+  // this callback with the key + the chip's bounding rect so the host can
+  // anchor a popover next to the click. Without the callback, the syntax
+  // renders as plain text — keeps the parser future-proof.
+  onFactKey?: (key: string, anchorRect: DOMRect) => void;
 }
 
 // Wrap occurrences of `query` (case-insensitive) inside a plain-text string
@@ -188,6 +194,9 @@ export const renderInlineMd = (raw: string, baseKey: string, ctx: MarkdownCtx): 
       } else if (tok.startsWith('*') && tok.endsWith('*') && tok.length >= 2) {
         out.push(<em key={`${baseKey}-i${i}-${j}`}>{tok.slice(1, -1)}</em>);
       } else if (tok) {
+        // c2-433 / #317: split first on link syntax, then on fact-key syntax
+        // (`[fact:abc]` or `[k:abc]`). Order matters — links can contain
+        // colons inside their text or url, so we strip them first.
         const linkParts = tok.split(/(\[[^\]]+\]\([^)]+\))/g);
         linkParts.forEach((lp, k) => {
           const linkMatch = lp.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
@@ -197,7 +206,39 @@ export const renderInlineMd = (raw: string, baseKey: string, ctx: MarkdownCtx): 
               style={{ color: C.accent, textDecoration: 'underline' }}
             >{linkMatch[1]}</a>);
           } else if (lp) {
-            out.push(<span key={`${baseKey}-t${i}-${j}-${k}`}>{wrapHighlight(lp, ctx.highlight, `${baseKey}-t${i}-${j}-${k}`)}</span>);
+            // Fact-key chips: split on `[fact:KEY]` / `[k:KEY]` runs.
+            const factParts = lp.split(/(\[(?:fact|k):[A-Za-z0-9_-]{1,64}\])/g);
+            factParts.forEach((fp, m) => {
+              const factMatch = fp.match(/^\[(?:fact|k):([A-Za-z0-9_-]{1,64})\]$/);
+              if (factMatch && ctx.onFactKey) {
+                const key = factMatch[1];
+                out.push(
+                  <button key={`${baseKey}-f${i}-${j}-${k}-${m}`}
+                    onClick={(e) => {
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      ctx.onFactKey!(key, rect);
+                    }}
+                    title={`Inspect fact ${key}`}
+                    style={{
+                      display: 'inline-block', padding: '0 5px',
+                      margin: '0 2px',
+                      background: 'transparent',
+                      border: `1px solid ${C.borderSubtle}`,
+                      borderRadius: '3px',
+                      color: C.accent, fontFamily: C.font || 'monospace',
+                      fontSize: '0.85em', fontWeight: 600,
+                      cursor: 'pointer', verticalAlign: 'baseline',
+                      lineHeight: '1.2',
+                    }}>{key}</button>
+                );
+              } else if (factMatch) {
+                // No callback — render the literal token so the syntax
+                // is still readable.
+                out.push(<span key={`${baseKey}-f${i}-${j}-${k}-${m}`}>{fp}</span>);
+              } else if (fp) {
+                out.push(<span key={`${baseKey}-t${i}-${j}-${k}-${m}`}>{wrapHighlight(fp, ctx.highlight, `${baseKey}-t${i}-${j}-${k}-${m}`)}</span>);
+              }
+            });
           }
         });
       }

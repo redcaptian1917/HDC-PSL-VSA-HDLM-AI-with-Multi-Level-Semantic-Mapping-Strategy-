@@ -83,26 +83,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </button>
       </div>
 
-      {/* Tabs */}
-      <div role='tablist' aria-label='Settings sections'
-        style={{ display: 'flex', gap: '4px', borderBottom: `1px solid ${C.borderSubtle}`, marginBottom: '18px' }}>
-        {([
+      {/* Tabs — WAI-ARIA tablist with ArrowLeft/Right key nav per #178. */}
+      {(() => {
+        const TABS = [
           { id: 'profile', label: 'Profile' },
           { id: 'appearance', label: 'Appearance' },
           { id: 'behavior', label: 'Behavior' },
           { id: 'data', label: 'Data' },
-        ] as const).map(t => (
-          <button key={t.id} onClick={() => onTabChange(t.id)}
-            role='tab' aria-selected={tab === t.id}
-            style={{
-              padding: '8px 12px', fontSize: T.typography.sizeSm, fontWeight: 700,
-              background: 'transparent', border: 'none', cursor: 'pointer',
-              color: tab === t.id ? C.accent : C.textMuted,
-              borderBottom: `2px solid ${tab === t.id ? C.accent : 'transparent'}`,
-              marginBottom: '-1px', fontFamily: 'inherit',
-            }}>{t.label}</button>
-        ))}
-      </div>
+        ] as const;
+        const onTabKey = (e: React.KeyboardEvent) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+          e.preventDefault();
+          const idx = TABS.findIndex(t => t.id === tab);
+          let next = idx;
+          if (e.key === 'ArrowLeft') next = (idx - 1 + TABS.length) % TABS.length;
+          else if (e.key === 'ArrowRight') next = (idx + 1) % TABS.length;
+          else if (e.key === 'Home') next = 0;
+          else if (e.key === 'End') next = TABS.length - 1;
+          onTabChange(TABS[next].id);
+        };
+        return (
+          <div role='tablist' aria-label='Settings sections' onKeyDown={onTabKey}
+            style={{ display: 'flex', gap: '4px', borderBottom: `1px solid ${C.borderSubtle}`, marginBottom: '18px' }}>
+            {TABS.map(t => {
+              const active = tab === t.id;
+              return (
+                <button key={t.id} onClick={() => onTabChange(t.id)}
+                  role='tab' aria-selected={active}
+                  // c2-433 / task 270: roving tabindex — only the active
+                  // tab is tab-stoppable; arrow keys move within. Standard
+                  // WAI-ARIA tablist keyboard pattern.
+                  tabIndex={active ? 0 : -1}
+                  style={{
+                    padding: '8px 12px', fontSize: T.typography.sizeSm, fontWeight: 700,
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: active ? C.accent : C.textMuted,
+                    borderBottom: `2px solid ${active ? C.accent : 'transparent'}`,
+                    marginBottom: '-1px', fontFamily: 'inherit',
+                  }}>{t.label}</button>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* ===== Profile tab ===== */}
       {tab === 'profile' && (
@@ -252,13 +275,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     boxShadow: picked ? `0 0 0 3px ${C.accentBg}` : 'none',
                   }}>
                   <div style={{ fontSize: T.typography.sizeMd, fontWeight: 700, color: preview.text }}>{t.name}</div>
-                  <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
-                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: preview.accent }} />
-                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: preview.green }} />
-                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: preview.purple }} />
-                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: preview.bg, border: `1px solid ${preview.border}` }} />
+                  {/* c2-433 / task 204: live thumbnail preview. Renders the
+                      theme's actual bg + bgCard chrome with two mock chat
+                      bubbles (assistant on left in bgCard, user on right in
+                      accentBg) so the user sees what the chat will look like,
+                      not just abstract color swatches. Static mock — no
+                      animation, no real text — keeps the card lightweight. */}
+                  <div style={{
+                    marginTop: '8px',
+                    background: preview.bg,
+                    border: `1px solid ${preview.borderSubtle || preview.border}`,
+                    borderRadius: T.radii.md,
+                    padding: '8px',
+                    display: 'flex', flexDirection: 'column', gap: '4px',
+                    height: '54px', overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      alignSelf: 'flex-start', maxWidth: '70%',
+                      padding: '4px 7px', background: preview.bgCard,
+                      border: `1px solid ${preview.border}`,
+                      borderRadius: '3px 8px 8px 8px',
+                    }}>
+                      <div style={{ height: '4px', width: '52px', background: preview.text, opacity: 0.55, borderRadius: '2px', marginBottom: '3px' }} />
+                      <div style={{ height: '4px', width: '38px', background: preview.text, opacity: 0.35, borderRadius: '2px' }} />
+                    </div>
+                    <div style={{
+                      alignSelf: 'flex-end', maxWidth: '60%',
+                      padding: '4px 7px', background: preview.accentBg,
+                      border: `1px solid ${preview.accentBorder}`,
+                      borderRadius: '8px 8px 3px 8px',
+                    }}>
+                      <div style={{ height: '4px', width: '32px', background: preview.accent, opacity: 0.85, borderRadius: '2px' }} />
+                    </div>
                   </div>
-                  <div style={{ fontSize: '10.5px', color: preview.textMuted, marginTop: '8px' }}>
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
+                    <div title='Accent' style={{ width: '14px', height: '14px', borderRadius: '50%', background: preview.accent }} />
+                    <div title='Success' style={{ width: '14px', height: '14px', borderRadius: '50%', background: preview.green }} />
+                    <div title='Highlight' style={{ width: '14px', height: '14px', borderRadius: '50%', background: preview.purple }} />
+                    <div title='Background' style={{ width: '14px', height: '14px', borderRadius: '50%', background: preview.bg, border: `1px solid ${preview.border}` }} />
+                  </div>
+                  <div style={{ fontSize: '10.5px', color: preview.textMuted, marginTop: '6px' }}>
                     {t.tagline}
                   </div>
                 </button>

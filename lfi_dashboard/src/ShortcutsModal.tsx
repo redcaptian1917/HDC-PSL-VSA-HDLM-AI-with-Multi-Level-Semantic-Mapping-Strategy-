@@ -36,8 +36,12 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', 'E'], label: 'Focus the message input' },
       { keys: ['⌘', '/'], label: 'Focus the message input' },
       { keys: ['any letter'], label: 'Auto-focuses input + types it' },
-      { keys: ['Shift', '↑'], label: 'Recall your last sent message' },
+      { keys: ['Shift', '↑'], label: 'Walk back through last 10 sent prompts' },
+      { keys: ['Shift', '↓'], label: 'Walk forward through prompt history' },
       { keys: ['⌘', 'Shift', 'R'], label: 'Regenerate last assistant response' },
+      { keys: ['⌘', 'Z'], label: 'Undo last conversation delete (within 5s)' },
+      { keys: ['⌘', 'Home'], label: 'Scroll chat to top' },
+      { keys: ['⌘', 'End'], label: 'Scroll chat to bottom' },
       { keys: ['Enter'], label: 'Send (when sendOnEnter is on)' },
       { keys: ['Shift', 'Enter'], label: 'New line in the input' },
       { keys: ['Esc'], label: 'Stop in-flight request (or close modal)' },
@@ -50,6 +54,16 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ keys: string[]; label: st
       { keys: ['⌘', 'D'], label: 'Toggle developer mode' },
       { keys: ['⌘', 'Shift', 'D'], label: 'Cycle through themes' },
       { keys: ['⌘', 'Shift', 'A'], label: 'Toggle auto theme (follow OS)' },
+    ],
+  },
+  // c2-433 / #178: chat search shortcuts. Cmd+F opens it (Navigation group),
+  // these keys are active inside the search input.
+  {
+    group: 'Chat search (search bar focused)',
+    items: [
+      { keys: ['Enter'], label: 'Jump to next match' },
+      { keys: ['Shift', 'Enter'], label: 'Jump to previous match' },
+      { keys: ['Esc'], label: 'Close search + clear query' },
     ],
   },
   // c2-250 / #112: document the sidebar row shortcuts added in c2-247+249

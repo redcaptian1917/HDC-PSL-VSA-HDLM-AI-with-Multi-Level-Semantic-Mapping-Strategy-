@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { T } from './tokens';
 // c2-343: 18/22/26px heading sizes need the design-system scale since
 // T.typography caps at 22; sourced cross-platform so desktop/Android match.
@@ -16,14 +16,14 @@ import { TabBar } from './components/TabBar';
 // c2-379 / BIG #180: shared sortable table.
 import { DataTable } from './components';
 import type { Column } from './components';
-import { compactNum, formatRelative, exportGradeReportPdf } from './util';
+import { compactNum, formatRelative, exportGradeReportPdf, formatDayBucket } from './util';
 
 // ClassroomView — full page (not modal) per c0-027. The "school" metaphor:
 // the AI is the student, training data is the curriculum, evaluation
 // results are the gradebook. Eight sub-sections; for now all draw from
 // /api/admin/dashboard until the classroom-specific endpoints land.
 
-type Sub = 'profile' | 'control' | 'curriculum' | 'gradebook' | 'lessons' | 'tests' | 'reports' | 'office' | 'library';
+type Sub = 'profile' | 'control' | 'curriculum' | 'gradebook' | 'lessons' | 'tests' | 'reports' | 'office' | 'library' | 'ledger' | 'drift' | 'runs';
 
 interface DashboardShape {
   overview?: { total_facts?: number; total_sources?: number; cve_facts?: number; adversarial_facts?: number; total_training_pairs?: number };
@@ -42,14 +42,24 @@ export interface ClassroomViewProps {
   // Optional: recent feedback/UI events captured locally. When provided,
   // Office Hours renders a quick activity log instead of a placeholder.
   localEvents?: Array<{ t: number; kind: string; data?: any }>;
+  // c2-433 / #317 reuse: parent-provided opener for the shared fact
+  // popover. The Ledger tab uses this to make fact_keys clickable so a
+  // contradiction row can be inspected without leaving the Classroom.
+  onOpenFactKey?: (key: string, rect: DOMRect) => void;
+  // c2-433 / Cmd+K deep-link. Pass {sub: 'ledger' | 'drift' | 'runs' | ...,
+  // tick: nonce} and the effect below will switch sub. The tick nonce
+  // lets re-clicking the same entry re-activate the sub even if the user
+  // manually navigated away in-between.
+  initialSub?: { sub: string; tick: number } | null;
 }
 
 const SUBS: Array<{ id: Sub; label: string; hint: string }> = [
   { id: 'profile',    label: 'Student Profile', hint: 'Grade, strengths, weaknesses' },
-  // c2-426: dedicated Control tab. Houses Start/Stop + per-domain status
-  // + live recent-cycle pulse. Second position so it's reachable without
-  // scrolling on narrow viewports.
-  { id: 'control',    label: 'Training Control', hint: 'Start / stop / rotator' },
+  // c2-426 / c2-428 (#339 pivot): Ingestion Control. Previously framed as
+  // "Training Control" — corrected per LFI_SUPERSOCIETY_ARCHITECTURE.md,
+  // LFI is post-LLM (HDC/VSA/PSL/HDLM), there is no training loop, only
+  // fact-ingestion batches.
+  { id: 'control',    label: 'Ingestion Control', hint: 'Start / stop / corpus runs' },
   { id: 'curriculum', label: 'Curriculum',      hint: 'Training datasets + sizes' },
   { id: 'gradebook',  label: 'Gradebook',       hint: 'Pass/fail + trends' },
   { id: 'lessons',    label: 'Lesson Plans',    hint: 'Active training sessions' },
@@ -57,6 +67,16 @@ const SUBS: Array<{ id: Sub; label: string; hint: string }> = [
   { id: 'reports',    label: 'Report Cards',    hint: 'Weekly progress' },
   { id: 'office',     label: 'Office Hours',    hint: 'Feedback review' },
   { id: 'library',    label: 'Library',         hint: 'Fact browser' },
+  // c2-433 / #298 followup: Ledger tab. Surfaces the contradictions queue
+  // the Classroom badge counts. Pending = upsert_fact disagreements where
+  // both sides are ≥ 0.7 confidence.
+  { id: 'ledger',     label: 'Ledger',          hint: 'Contradiction queue' },
+  // c2-433 / #284: Drift tab. One-call /api/drift/snapshot bundle with 6
+  // system-health metrics, session-ring history for trend sparklines.
+  { id: 'drift',      label: 'Drift',           hint: 'System health trends' },
+  // c2-433 / #312: Runs tab. Ingest history from /api/ingest/list, shows
+  // running-first then recent finished runs.
+  { id: 'runs',       label: 'Runs',            hint: 'Ingest run history' },
 ];
 
 const gradeColor = (C: any, grade: string | undefined): string => {
@@ -116,9 +136,9 @@ const projectHistory = (snaps: GradebookSnapshot[]): Record<string, number[]> =>
 // c2-260 / #122: persist active sub-tab so a reopen lands where the user
 // left off. Validated against the known set to guard against stale strings.
 const CLASSROOM_SUB_KEY = 'lfi_classroom_sub';
-const CLASSROOM_SUBS: readonly Sub[] = ['profile','control','curriculum','gradebook','lessons','tests','reports','office','library'];
+const CLASSROOM_SUBS: readonly Sub[] = ['profile','control','curriculum','gradebook','lessons','tests','reports','office','library','ledger','drift','runs'];
 
-export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop, localEvents = [] }) => {
+export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop, localEvents = [], onOpenFactKey, initialSub }) => {
   const [sub, setSub] = useState<Sub>(() => {
     try {
       const stored = localStorage.getItem(CLASSROOM_SUB_KEY) as Sub | null;
@@ -129,6 +149,19 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
   useEffect(() => {
     try { localStorage.setItem(CLASSROOM_SUB_KEY, sub); } catch { /* quota */ }
   }, [sub]);
+  // c2-433 / Cmd+K deep-link: sync sub when parent updates initialSub
+  // (with a new tick). The tick is what makes repeat-activation work —
+  // clicking the same palette entry twice re-fires even if the user
+  // clicked a different tab in-between.
+  const lastInitialSubTickRef = useRef<number>(-1);
+  useEffect(() => {
+    if (!initialSub) return;
+    if (initialSub.tick === lastInitialSubTickRef.current) return;
+    lastInitialSubTickRef.current = initialSub.tick;
+    if (CLASSROOM_SUBS.includes(initialSub.sub as Sub)) {
+      setSub(initialSub.sub as Sub);
+    }
+  }, [initialSub]);
   const [data, setData] = useState<DashboardShape | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -720,12 +753,27 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
 
         {/* --- Office Hours --- */}
         {sub === 'office' && (
-          <OfficeHoursTab C={C} events={localEvents} />
+          <OfficeHoursTab C={C} host={host} events={localEvents} />
         )}
 
         {/* --- Library --- */}
         {sub === 'library' && (
           <LibraryTab C={C} host={host} domains={sortedDomains} files={data?.training_files || []} />
+        )}
+
+        {/* --- Ledger (contradictions queue) --- */}
+        {sub === 'ledger' && (
+          <LedgerTab C={C} host={host} onOpenFactKey={onOpenFactKey} />
+        )}
+
+        {/* --- Drift (system-health trend) --- */}
+        {sub === 'drift' && (
+          <DriftTab C={C} host={host} onJumpTo={(s) => setSub(s as Sub)} />
+        )}
+
+        {/* --- Runs (ingest history #312) --- */}
+        {sub === 'runs' && (
+          <IngestRunsTab C={C} host={host} />
         )}
       </div>
     </div>
@@ -811,21 +859,10 @@ const TrainingControlPanel: React.FC<{
   const [busy, setBusy] = useState<null | 'start' | 'stop'>(null);
   const [toastMsg, setToastMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [nowTick, setNowTick] = useState(0);
-  // c2-427: model_tier selection for Start. Captured client-side so when
-  // the new /api/classroom/lessons/start route lands the body is already
-  // ready. Defaults to Bridge as a middle-ground choice. Persisted per
-  // device so returning users don't have to re-pick.
-  type TierChoice = 'pulse' | 'bridge' | 'bigbrain';
-  const [selectedTier, setSelectedTier] = useState<TierChoice>(() => {
-    try {
-      const v = localStorage.getItem('lfi_training_tier') as TierChoice | null;
-      if (v === 'pulse' || v === 'bridge' || v === 'bigbrain') return v;
-    } catch { /* storage blocked */ }
-    return 'bridge';
-  });
-  useEffect(() => {
-    try { localStorage.setItem('lfi_training_tier', selectedTier); } catch { /* quota */ }
-  }, [selectedTier]);
+  // c2-428 / #339 pivot: model_tier picker + lfi_training_tier LS key
+  // REMOVED. LFI is post-LLM — no model selection applies. Ingestion
+  // parameters (corpus, decomposer, priority) will live here once the
+  // /api/ingest/* routes land.
 
   const fetchWithTimeout = async <T,>(path: string, ms = 8000): Promise<T> => {
     const ctrl = new AbortController();
@@ -863,14 +900,12 @@ const TrainingControlPanel: React.FC<{
     try {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), 10000);
-      // c2-427: body carries model_tier on start. Legacy /api/admin/training/:action
-      // is JSON-body-tolerant (ignores unknown fields); the new
-      // /api/classroom/lessons/start route will read it when wired.
-      const bodyJson = action === 'start' ? JSON.stringify({ model_tier: selectedTier }) : undefined;
+      // c2-428 / #339 pivot: start body carries no params for now — the
+      // /api/ingest/start route when it lands will take {corpus, decomposer,
+      // priority}. Legacy /api/admin/training/:action endpoint used here
+      // until the ingest routes ship.
       const r = await fetch(`http://${host}:3000/api/admin/training/${action}`, {
         method: 'POST', signal: ctrl.signal,
-        headers: bodyJson ? { 'Content-Type': 'application/json' } : undefined,
-        body: bodyJson,
       });
       clearTimeout(to);
       const respBody = await r.json().catch(() => ({}));
@@ -878,8 +913,8 @@ const TrainingControlPanel: React.FC<{
       setToastMsg({
         ok: true,
         text: respBody?.message || (action === 'start'
-          ? `Trainer started on ${selectedTier}`
-          : 'Trainer stop requested'),
+          ? 'Ingestion run started'
+          : 'Ingestion stop requested'),
       });
       setTimeout(refresh, 500);
     } catch (e: any) {
@@ -922,7 +957,7 @@ const TrainingControlPanel: React.FC<{
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.md, marginBottom: T.spacing.md, flexWrap: 'wrap' }}>
-        <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: 0 }}>Training Control</h2>
+        <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: 0 }}>Ingestion Control</h2>
         <span aria-live='polite' style={{
           display: 'inline-flex', alignItems: 'center', gap: '6px',
           padding: `4px ${T.spacing.sm}`,
@@ -938,7 +973,7 @@ const TrainingControlPanel: React.FC<{
             background: trainerActive ? C.green : C.textDim,
             boxShadow: trainerActive ? `0 0 6px ${C.green}` : 'none',
           }} />
-          {trainerActive ? 'Training active' : 'Trainer idle'}
+          {trainerActive ? 'Ingestion active' : 'Idle'}
         </span>
       </div>
       {/* Top-level start/stop controls */}
@@ -946,38 +981,13 @@ const TrainingControlPanel: React.FC<{
         display: 'flex', gap: T.spacing.sm, marginBottom: T.spacing.lg, flexWrap: 'wrap',
         alignItems: 'center',
       }}>
-        {/* c2-427: model tier picker. Pulse=qwen2.5:0.5b (fast),
-            Bridge=qwen2.5:3b (balanced), BigBrain=qwen2.5-coder:7b (deep).
-            Per backend tier plumbing shipped in #324. Picked once + remembered
-            per device so the user doesn't re-choose each start. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <label htmlFor='training-tier-picker' style={{
-            fontSize: '9px', fontWeight: T.typography.weightBold,
-            color: C.textMuted, textTransform: 'uppercase',
-            letterSpacing: T.typography.trackingLoose,
-          }}>Model for next session</label>
-          <select id='training-tier-picker' value={selectedTier}
-            onChange={(e) => setSelectedTier(e.target.value as TierChoice)}
-            disabled={busy !== null || trainerActive}
-            style={{
-              padding: `7px 28px 7px 12px`,
-              fontSize: T.typography.sizeSm, fontWeight: T.typography.weightSemibold,
-              background: C.bgInput, color: C.text,
-              border: `1px solid ${C.border}`, borderRadius: T.radii.md,
-              cursor: (busy !== null || trainerActive) ? 'not-allowed' : 'pointer',
-              fontFamily: 'inherit',
-              appearance: 'none', WebkitAppearance: 'none',
-              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath fill='%237f8296' d='M0 2l4 4 4-4z'/%3E%3C/svg%3E")`,
-              backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center',
-            }}>
-            <option value='pulse'>Pulse &middot; qwen2.5:0.5b &middot; fast</option>
-            <option value='bridge'>Bridge &middot; qwen2.5:3b &middot; balanced</option>
-            <option value='bigbrain'>BigBrain &middot; qwen2.5-coder:7b &middot; deep</option>
-          </select>
-        </div>
+        {/* c2-428 / #339 pivot: model_tier dropdown removed. LFI is post-LLM;
+            there is no model to pick. Ingestion parameters (corpus,
+            decomposer, priority, etc.) will render here once /api/ingest/*
+            is live. */}
         <button onClick={() => control('start')}
           disabled={busy !== null || trainerActive}
-          aria-label='Start training'
+          aria-label='Start ingestion run'
           style={{
             padding: `${T.spacing.sm} ${T.spacing.lg}`,
             fontSize: T.typography.sizeMd, fontWeight: T.typography.weightBold,
@@ -988,10 +998,10 @@ const TrainingControlPanel: React.FC<{
             cursor: (busy !== null || trainerActive) ? 'not-allowed' : 'pointer',
             fontFamily: 'inherit',
             opacity: busy === 'start' ? 0.6 : 1,
-          }}>{busy === 'start' ? 'Starting…' : 'Start training'}</button>
+          }}>{busy === 'start' ? 'Starting…' : 'Start ingestion'}</button>
         <button onClick={() => control('stop')}
           disabled={busy !== null || !trainerActive}
-          aria-label='Stop training'
+          aria-label='Stop ingestion run'
           style={{
             padding: `${T.spacing.sm} ${T.spacing.lg}`,
             fontSize: T.typography.sizeMd, fontWeight: T.typography.weightBold,
@@ -1002,9 +1012,9 @@ const TrainingControlPanel: React.FC<{
             cursor: (busy !== null || !trainerActive) ? 'not-allowed' : 'pointer',
             fontFamily: 'inherit',
             opacity: busy === 'stop' ? 0.6 : 1,
-          }}>{busy === 'stop' ? 'Stopping…' : 'Stop training'}</button>
+          }}>{busy === 'stop' ? 'Stopping…' : 'Stop ingestion'}</button>
         <button onClick={refresh} disabled={busy !== null}
-          aria-label='Refresh training status'
+          aria-label='Refresh ingestion status'
           style={{
             padding: `${T.spacing.sm} ${T.spacing.lg}`,
             fontSize: T.typography.sizeMd, fontWeight: T.typography.weightBold,
@@ -1060,7 +1070,7 @@ const TrainingControlPanel: React.FC<{
             fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
             color: C.textMuted, textTransform: 'uppercase',
             letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.sm,
-          }}>Per-domain rotator ({domainStateEntries.length})</div>
+          }}>Per-domain ingestion state ({domainStateEntries.length})</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {domainStateEntries
               .sort(([, a]: any, [, b]: any) => (Number(b?.last_trained ?? 0)) - (Number(a?.last_trained ?? 0)))
@@ -1095,14 +1105,14 @@ const TrainingControlPanel: React.FC<{
           </div>
         </div>
       )}
-      {/* Recent training log tail */}
+      {/* Recent ingestion log tail */}
       {Array.isArray(accuracy?.recent_training_log) && accuracy.recent_training_log.length > 0 && (
         <div style={{ marginTop: T.spacing.lg }}>
           <div style={{
             fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
             color: C.textMuted, textTransform: 'uppercase',
             letterSpacing: T.typography.trackingLoose, marginBottom: T.spacing.sm,
-          }}>Recent training log (last 40)</div>
+          }}>Recent ingestion log (last 40)</div>
           <pre style={{
             padding: T.spacing.md, background: C.bgInput, borderRadius: T.radii.md,
             fontSize: T.typography.sizeXs, color: C.textSecondary,
@@ -1112,17 +1122,19 @@ const TrainingControlPanel: React.FC<{
           }}>{accuracy.recent_training_log.slice(-40).join('\n')}</pre>
         </div>
       )}
-      {/* c2-426: configuration placeholder — depends on backend endpoints
-          Claude 1 is still inventorying. Once /api/admin/training/config
-          (or equivalent) lands, this section will expose cadence / batch
-          size / priority / per-domain enable toggles. For now we show a
-          discoverability hint. */}
+      {/* c2-428 / #339 pivot placeholder — /api/ingest/* routes land here
+          once Claude 0 ships them. Surface will expose: corpus selection,
+          decomposer choice (HDC / PSL / tuple-extraction pipeline),
+          priority weight per domain, batch size, pause/resume. Metrics
+          rendered below will be PSL axiom pass rate, tuple
+          well-formedness, contradiction flags, provenance coverage — not
+          LLM-style accuracy / loss / perplexity. */}
       <div style={{
         marginTop: T.spacing.xl, padding: T.spacing.md,
         background: C.bgInput, border: `1px dashed ${C.borderSubtle}`,
         borderRadius: T.radii.md, color: C.textDim, fontSize: T.typography.sizeXs,
       }}>
-        <strong style={{ color: C.textMuted }}>Configuration</strong> — graphical rotator ordering, per-domain enable/disable, cadence and batch-size knobs land here once the backend endpoints are confirmed. Tracked in the task queue.
+        <strong style={{ color: C.textMuted }}>Configuration</strong> — corpus selection, decomposer choice, per-domain priority, and batch-size knobs land here once <code style={{ fontFamily: T.typography.fontMono, color: C.accent }}>/api/ingest/*</code> is live. Tracked in the task queue.
       </div>
     </div>
   );
@@ -1489,106 +1501,395 @@ const LessonsTab: React.FC<{
   );
 };
 
-const OfficeHoursTab: React.FC<{ C: any; events: Array<{ t: number; kind: string; data?: any }> }> = ({ C, events }) => {
-  const feedback = events
-    .filter(e => e.kind === 'feedback_positive' || e.kind === 'feedback_negative')
-    .slice()
-    .reverse();
-  const posCount = feedback.filter(e => e.kind === 'feedback_positive').length;
-  const negCount = feedback.length - posCount;
+// c2-433 / #350: Server-side feedback queue. Polls /api/feedback/recent every
+// 10s while the tab is mounted; falls back to session-local events if the
+// endpoint is unreachable (offline, backend mid-restart). Displays up/down/
+// correct ratings with separate color treatment + a "Mark as ingested" hook
+// for the future ingestion-decision API. Until that lands the row click just
+// expands the correction text.
+interface ServerFeedbackRow {
+  id: number | string;
+  // Backend ships ISO-ish "YYYY-MM-DD HH:MM:SS" strings via created_at; the
+  // older `ts` (epoch ms) field is kept for the session-fallback rows + any
+  // future schema bump.
+  ts?: number | string;
+  created_at?: string;
+  // null/undefined when the feedback hasn't been ingested into the substrate
+  // yet; presence + a string indicates Claude 0's reasoner has consumed it.
+  processed_at?: string | null;
+  conversation_id?: string;
+  message_id?: number;
+  conclusion_id?: number;
+  user_query?: string;
+  lfi_reply?: string;
+  rating: 'up' | 'down' | 'correct' | string;
+  correction?: string;
+  comment?: string;
+}
+
+type FeedbackFilter = 'all' | 'up' | 'down' | 'correct';
+
+const OfficeHoursTab: React.FC<{ C: any; host: string; events: Array<{ t: number; kind: string; data?: any }> }> = ({ C, host, events }) => {
+  const [serverRows, setServerRows] = React.useState<ServerFeedbackRow[] | null>(null);
+  const [serverErr, setServerErr] = React.useState<string | null>(null);
+  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  // c2-433 / task 233 + 243: filter chip — narrows the queue to one rating
+  // type. Persisted to localStorage so triagers who prefer "Down only" view
+  // stay there across reloads. 'all' is the default for first-time visitors.
+  const FILTER_KEY = 'lfi_office_hours_filter_v1';
+  const [filter, setFilterState] = React.useState<FeedbackFilter>(() => {
+    try {
+      const raw = localStorage.getItem(FILTER_KEY);
+      if (raw === 'up' || raw === 'down' || raw === 'correct' || raw === 'all') return raw;
+    } catch { /* SSR / quota / private mode — fall through to default */ }
+    return 'all';
+  });
+  const setFilter = React.useCallback((next: FeedbackFilter) => {
+    setFilterState(next);
+    try { localStorage.setItem(FILTER_KEY, next); } catch { /* quota — silent */ }
+  }, []);
+  // c2-433 / task 234b: last-fetched epoch + manual refresh affordance.
+  // Triagers can hit the button to skip the 10s poll cadence when they
+  // know a row was just submitted.
+  const [lastFetched, setLastFetched] = React.useState<number | null>(null);
+  // c2-433 / task 269: start refreshing=true so the first paint shows
+  // "Refreshing…" instead of an inert "Refresh" button before the
+  // mount-time useEffect fires its first load. Resolves the brief
+  // mismatch where lastFetched is null + refreshing is false.
+  const [refreshing, setRefreshing] = React.useState<boolean>(true);
+  const loadRef = React.useRef<() => Promise<void>>(() => Promise.resolve());
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setRefreshing(true);
+        const r = await fetch(`http://${host}:3000/api/feedback/recent?limit=200`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (cancelled) return;
+        const rows: ServerFeedbackRow[] = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : Array.isArray(data?.feedback) ? data.feedback : [];
+        setServerRows(rows);
+        setServerErr(null);
+        setLastFetched(Date.now());
+      } catch (e: any) {
+        if (cancelled) return;
+        setServerErr(String(e?.message || e || 'fetch failed'));
+      } finally {
+        if (!cancelled) setRefreshing(false);
+      }
+    };
+    loadRef.current = load;
+    load();
+    const id = window.setInterval(load, 10_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [host]);
+  const fmtAge = (ms: number): string => {
+    const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    return `${Math.floor(s / 3600)}h ago`;
+  };
+
+  // Normalise: server rows authoritative when available; otherwise use the
+  // session-local events as a degraded view. Sort newest first. Backend
+  // ships created_at not ts — read either, parse to epoch for sort.
+  const tsOf = (r: ServerFeedbackRow): number => {
+    if (typeof r.ts === 'number') return r.ts;
+    if (r.ts) return Date.parse(String(r.ts));
+    if (r.created_at) return Date.parse(r.created_at + 'Z'); // assume UTC
+    return 0;
+  };
+  const normalised: ServerFeedbackRow[] = React.useMemo(() => {
+    if (serverRows && serverRows.length > 0) {
+      return serverRows.slice().sort((a, b) => tsOf(b) - tsOf(a));
+    }
+    // Fallback: synthesise rows from session events.
+    return events
+      .filter(e => e.kind === 'feedback_positive' || e.kind === 'feedback_negative' || e.kind === 'feedback_correct')
+      .slice().reverse()
+      .map((e, i) => ({
+        id: `local-${i}-${e.t}`,
+        ts: e.t,
+        rating: e.kind === 'feedback_positive' ? 'up' : e.kind === 'feedback_correct' ? 'correct' : 'down',
+        message_id: e.data?.msgId,
+        comment: e.data?.category,
+      } as ServerFeedbackRow));
+  }, [serverRows, events]);
+
+  const upCount = normalised.filter(r => r.rating === 'up').length;
+  const downCount = normalised.filter(r => r.rating === 'down').length;
+  const correctCount = normalised.filter(r => r.rating === 'correct').length;
+  const total = normalised.length;
+  const ratingColor = (r: string): string => r === 'up' ? C.green : r === 'correct' ? C.accent : C.red;
+  const ratingLabel = (r: string): string => r === 'up' ? 'Up' : r === 'correct' ? 'Correction' : r === 'down' ? 'Down' : r;
+  const ratingBg = (r: string): string => r === 'up' ? C.greenBg : r === 'correct' ? C.accentBg : C.redBg;
+  const fmtRow = (row: ServerFeedbackRow): string => {
+    const ms = tsOf(row);
+    if (!ms) return '';
+    const d = new Date(ms);
+    const now = Date.now();
+    if (now - ms < 24 * 3600_000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleString();
+  };
+
   return (
     <div>
-      <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: '0 0 12px' }}>Office Hours</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.md, marginBottom: '12px', flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: T.typography.size2xl, fontWeight: 600, color: C.text, margin: 0 }}>Office Hours</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm }}>
+          {lastFetched && (
+            <span style={{ fontSize: T.typography.sizeXs, color: C.textDim, fontFamily: T.typography.fontMono }}
+              title={`Last fetched: ${new Date(lastFetched).toLocaleTimeString()}`}>
+              {fmtAge(lastFetched)}
+            </span>
+          )}
+          <button onClick={() => { void loadRef.current(); }}
+            disabled={refreshing}
+            title='Refetch from /api/feedback/recent'
+            aria-label='Refresh feedback queue'
+            style={{
+              padding: '4px 10px', fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+              background: refreshing ? C.bgInput : 'transparent',
+              border: `1px solid ${C.borderSubtle}`, color: refreshing ? C.textDim : C.textMuted,
+              borderRadius: T.radii.md, cursor: refreshing ? 'wait' : 'pointer',
+              fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+            }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
+        </div>
+      </div>
       <p style={{ fontSize: T.typography.sizeMd, color: C.textSecondary, margin: '0 0 16px', lineHeight: 1.55 }}>
-        Review user feedback captured from thumbs-up/down on AI responses.
-        Session-local only until /api/classroom/feedback aggregates server-side history.
+        Live feed from <code>POST /api/feedback</code>. Up = thumbs-up, Down = thumbs-down with optional comment, Correction = user-supplied right answer for ingestion. {serverErr && <span style={{ color: C.yellow, marginLeft: '8px' }}>(server fallback: {serverErr} — showing session-local only)</span>}
       </p>
-      <div style={{ display: 'flex', gap: T.spacing.md, marginBottom: T.spacing.xl }}>
-        <div style={{ flex: 1, padding: T.spacing.md, background: C.greenBg, border: `1px solid ${C.greenBorder}`, borderRadius: T.radii.md }}>
-          <Label color={C.green}>Positive</Label>
-          <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: C.green, fontFamily: T.typography.fontMono }}>{posCount}</div>
-        </div>
-        <div style={{ flex: 1, padding: T.spacing.md, background: C.redBg, border: `1px solid ${C.redBorder}`, borderRadius: T.radii.md }}>
-          <Label color={C.red}>Negative</Label>
-          <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: C.red, fontFamily: T.typography.fontMono }}>{negCount}</div>
-        </div>
-        {/* c2-365 / task 152: overall sentiment card. Green at >=70%,
-            yellow at 50-70%, red below 50%. Hidden when no feedback has
-            been captured yet -- division by zero + "0% positive" on an
-            empty log is noise rather than information. */}
-        {feedback.length > 0 && (() => {
-          const pct = Math.round((posCount / feedback.length) * 100);
+      <div style={{ display: 'flex', gap: T.spacing.md, marginBottom: T.spacing.xl, flexWrap: 'wrap' }}>
+        {/* c2-433 / task 254: stat cards are now click-to-filter shortcuts —
+            bigger tap targets than the chips below. Click a card → filter
+            queue to that rating. Click again → reset to All. Active card
+            gets a subtle ring so the bound state is visible. */}
+        {([
+          { id: 'up' as FeedbackFilter, label: 'Up', count: upCount, fg: C.green, bg: C.greenBg, border: C.greenBorder },
+          { id: 'down' as FeedbackFilter, label: 'Down', count: downCount, fg: C.red, bg: C.redBg, border: C.redBorder },
+          { id: 'correct' as FeedbackFilter, label: 'Corrections', count: correctCount, fg: C.accent, bg: C.accentBg, border: C.accentBorder },
+        ]).map(c => {
+          const active = filter === c.id;
+          return (
+            <button key={c.id}
+              onClick={() => setFilter(active ? 'all' : c.id)}
+              aria-pressed={active}
+              title={active ? `Showing only ${c.label} — click to clear` : `Filter to ${c.label}`}
+              style={{
+                flex: 1, minWidth: '120px', padding: T.spacing.md,
+                background: c.bg, border: `1px solid ${c.border}`, borderRadius: T.radii.md,
+                cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                boxShadow: active ? `0 0 0 2px ${c.fg}` : 'none',
+                transition: 'box-shadow 0.15s',
+              }}>
+              <Label color={c.fg}>{c.label}</Label>
+              <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: c.fg, fontFamily: T.typography.fontMono }}>{c.count}</div>
+            </button>
+          );
+        })}
+        {total > 0 && (() => {
+          const pct = Math.round((upCount / total) * 100);
           const col = pct >= 70 ? C.green : pct >= 50 ? C.yellow : C.red;
           const bg = pct >= 70 ? C.greenBg : pct >= 50 ? C.yellowBg : C.redBg;
           const border = pct >= 70 ? C.greenBorder : pct >= 50 ? C.accentBorder : C.redBorder;
           return (
-            <div style={{
-              flex: 1, padding: T.spacing.md,
-              background: bg, border: `1px solid ${border}`,
-              borderRadius: T.radii.md,
-            }}>
+            <div style={{ flex: 1, minWidth: '120px', padding: T.spacing.md, background: bg, border: `1px solid ${border}`, borderRadius: T.radii.md }}>
               <Label color={col}>Sentiment</Label>
-              <div style={{
-                fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack,
-                color: col, fontFamily: T.typography.fontMono,
-              }}>{pct}%</div>
-              <div style={{
-                fontSize: T.typography.sizeXs, color: C.textMuted,
-                fontFamily: T.typography.fontMono, marginTop: '2px',
-              }}>{feedback.length} total</div>
+              <div style={{ fontSize: T.typography.size3xl, fontWeight: T.typography.weightBlack, color: col, fontFamily: T.typography.fontMono }}>{pct}%</div>
+              <div style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: T.typography.fontMono, marginTop: '2px' }}>{total} total</div>
             </div>
           );
         })()}
       </div>
-      {feedback.length === 0 ? (
-        <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted, fontSize: T.typography.sizeMd, fontStyle: 'italic' }}>
-          No feedback captured this session yet. Use 👍 / 👎 on any AI response to populate this log.
+      {/* c2-433 / task 233: rating filter chips. Active chip is accent-tinted;
+          others sit dim until clicked. Counts mirror the cards above so users
+          see at a glance which segments have data. */}
+      {normalised.length > 0 && (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: T.spacing.md }}>
+          {([
+            { id: 'all', label: 'All', count: total },
+            { id: 'up', label: 'Up', count: upCount },
+            { id: 'down', label: 'Down', count: downCount },
+            { id: 'correct', label: 'Corrections', count: correctCount },
+          ] as Array<{ id: FeedbackFilter; label: string; count: number }>).map(c => {
+            const active = filter === c.id;
+            return (
+              <button key={c.id} onClick={() => setFilter(c.id)}
+                aria-pressed={active}
+                style={{
+                  padding: '4px 10px', fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                  background: active ? C.accentBg : 'transparent',
+                  border: `1px solid ${active ? C.accentBorder : C.borderSubtle}`,
+                  color: active ? C.accent : C.textMuted,
+                  borderRadius: T.radii.pill, cursor: 'pointer', fontFamily: 'inherit',
+                  textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+                }}>{c.label} <span style={{ opacity: 0.7, fontFamily: T.typography.fontMono }}>({c.count})</span></button>
+            );
+          })}
         </div>
-      ) : (
-        /* c2-379 / BIG #180: Office Hours feedback table -> DataTable.
-           Rating sort ranks Positive above Negative when desc. */
-        (() => {
-          type Ev = { t: number; kind: string; data?: { category?: string; msgId?: number } };
-          const rows = feedback.slice(0, 50) as Ev[];
-          const cols: ReadonlyArray<Column<Ev>> = [
-            {
-              id: 'when', header: 'When', align: 'left', width: '110px',
-              sortKey: (e) => e.t,
-              accessor: (e) => (
-                <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>
-                  {new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              ),
-            },
-            {
-              id: 'rating', header: 'Rating', align: 'left', width: '110px',
-              sortKey: (e) => e.kind === 'feedback_positive' ? 1 : 0,
-              accessor: (e) => {
-                const isPos = e.kind === 'feedback_positive';
-                return <span style={{ color: isPos ? C.green : C.red, fontWeight: T.typography.weightBold }}>{isPos ? 'Positive' : 'Negative'}</span>;
-              },
-            },
-            {
-              id: 'category', header: 'Category', align: 'left',
-              sortKey: (e) => (e.data?.category || '').toLowerCase(),
-              accessor: (e) => <span style={{ color: C.text }}>{e.data?.category || '\u2014'}</span>,
-            },
-            {
-              id: 'detail', header: 'Detail', align: 'left', sortable: false,
-              accessor: (e) => (
-                <span style={{ color: C.textMuted, fontFamily: T.typography.fontMono }}>
-                  {e.data?.msgId != null ? `msg ${e.data.msgId}` : ''}
-                </span>
-              ),
-            },
-          ];
-          return (
-            <DataTable<Ev> C={C} rows={rows} columns={cols}
-              rowKey={(e) => `${e.t}-${e.kind}`}
-              sort={{ col: 'when', dir: 'desc' }} />
-          );
-        })()
       )}
+      {(() => {
+        const view = filter === 'all' ? normalised : normalised.filter(r => r.rating === filter);
+        if (normalised.length === 0) {
+          return (
+            <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted, fontSize: T.typography.sizeMd, fontStyle: 'italic' }}>
+              No feedback captured yet. Use 👍 / 👎 / ✏️ on any AI response to populate this queue.
+            </div>
+          );
+        }
+        if (view.length === 0) {
+          return (
+            <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted, fontSize: T.typography.sizeMd, fontStyle: 'italic' }}>
+              No <strong>{filter}</strong> feedback yet. <button onClick={() => setFilter('all')} style={{ background: 'transparent', border: 'none', color: C.accent, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}>Show all.</button>
+            </div>
+          );
+        }
+        // c2-433 / task 285 + 286: day-bucket grouping via the shared
+        // formatDayBucket helper from util.ts (was inline reimplementation
+        // — DRY'd to match chat-list day separators + sidebar groupings).
+        // Triagers scan the queue at-a-glance for "what came in today vs
+        // older". Bucket header renders before the first row in each
+        // bucket; tracked via prevBucket scan.
+        const dayBucket = (ms: number): string => ms ? formatDayBucket(ms) : 'Unknown date';
+        let prevBucket = '';
+        return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {view.slice(0, 100).map(row => {
+            const key = String(row.id);
+            const isOpen = !!expanded[key];
+            const hasDetail = !!(row.correction || row.comment || row.lfi_reply || row.user_query);
+            // c2-433 / task 248: dim ingested rows (processed_at populated)
+            // so triagers visually skip them and focus on the pending queue.
+            // Hover restores opacity so the row is still inspectable.
+            const isIngested = !!row.processed_at;
+            const bucket = dayBucket(tsOf(row));
+            const showBucket = bucket !== prevBucket;
+            if (showBucket) prevBucket = bucket;
+            return (
+              <React.Fragment key={`${key}-frag`}>
+              {showBucket && (
+                <div role='heading' aria-level={3} style={{
+                  fontSize: '10px', fontWeight: T.typography.weightBold,
+                  color: C.textDim, textTransform: 'uppercase',
+                  letterSpacing: T.typography.trackingLoose,
+                  paddingLeft: '4px', marginTop: prevBucket === bucket ? '0' : T.spacing.xs,
+                }}>{bucket}</div>
+              )}
+              <div key={key}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = isIngested ? '0.55' : '1'; }}
+                style={{
+                  border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.md,
+                  background: C.bgCard, overflow: 'hidden',
+                  opacity: isIngested ? 0.55 : 1,
+                  transition: 'opacity 0.15s',
+                }}>
+                <button onClick={() => hasDetail && setExpanded(p => ({ ...p, [key]: !isOpen }))}
+                  disabled={!hasDetail}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: T.spacing.md,
+                    padding: '10px 12px', background: 'transparent', border: 'none',
+                    color: C.text, fontFamily: 'inherit', textAlign: 'left',
+                    cursor: hasDetail ? 'pointer' : 'default',
+                  }}>
+                  <span style={{
+                    fontSize: '11px', fontWeight: T.typography.weightBold,
+                    color: ratingColor(row.rating), background: ratingBg(row.rating),
+                    padding: '3px 8px', borderRadius: T.radii.sm,
+                    fontFamily: T.typography.fontMono, flexShrink: 0, minWidth: '76px', textAlign: 'center',
+                  }}>{ratingLabel(row.rating)}</span>
+                  <span style={{ fontSize: '11px', color: C.textMuted, fontFamily: T.typography.fontMono, flexShrink: 0, minWidth: '70px' }}>{fmtRow(row)}</span>
+                  {/* c2-433 / task 234: ingestion status badge. processed_at
+                      null means Claude 0's reasoner hasn't consumed this row
+                      yet; a string timestamp means it has. Helps triagers see
+                      backlog at a glance. Hidden when the field isn't present
+                      in the row at all (session-fallback shape). */}
+                  {'processed_at' in row && (
+                    <span title={row.processed_at ? `Ingested at ${row.processed_at}` : 'Awaiting ingestion'}
+                      style={{
+                        fontSize: '9px', fontWeight: T.typography.weightBold,
+                        color: row.processed_at ? C.green : C.yellow,
+                        background: row.processed_at ? C.greenBg : C.yellowBg,
+                        border: `1px solid ${row.processed_at ? C.greenBorder : C.yellow}`,
+                        padding: '1px 5px', borderRadius: T.radii.sm,
+                        flexShrink: 0, fontFamily: T.typography.fontMono,
+                        textTransform: 'uppercase', letterSpacing: '0.04em',
+                      }}>{row.processed_at ? 'Ingested' : 'Pending'}</span>
+                  )}
+                  <span style={{ flex: 1, fontSize: '12px', color: C.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {row.correction
+                      ? `→ ${row.correction.slice(0, 120)}${row.correction.length > 120 ? '…' : ''}`
+                      : row.comment
+                        ? row.comment.slice(0, 140)
+                        : row.lfi_reply
+                          ? row.lfi_reply.slice(0, 140) + (row.lfi_reply.length > 140 ? '…' : '')
+                          : ''}
+                  </span>
+                  {row.message_id != null && (
+                    <span style={{ fontSize: '10px', color: C.textDim, fontFamily: T.typography.fontMono, flexShrink: 0 }}>msg {row.message_id}</span>
+                  )}
+                  {hasDetail && (
+                    <span style={{ fontSize: '10px', color: C.textDim, flexShrink: 0 }}>{isOpen ? '▾' : '▸'}</span>
+                  )}
+                </button>
+                {isOpen && hasDetail && (
+                  <div style={{ padding: '0 12px 12px', borderTop: `1px solid ${C.borderSubtle}` }}>
+                    {row.user_query && (
+                      <>
+                        <div style={{ fontSize: '10px', color: C.textMuted, marginTop: '10px', textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, fontWeight: T.typography.weightSemibold }}>User asked</div>
+                        <div style={{ fontSize: '12px', color: C.textSecondary, padding: '6px 8px', background: C.bgInput, borderRadius: T.radii.sm, marginTop: '4px', whiteSpace: 'pre-wrap', maxHeight: '120px', overflowY: 'auto' }}>{row.user_query}</div>
+                      </>
+                    )}
+                    {row.lfi_reply && (
+                      <>
+                        <div style={{ fontSize: '10px', color: C.textMuted, marginTop: '10px', textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, fontWeight: T.typography.weightSemibold }}>LFI replied</div>
+                        <div style={{ fontSize: '12px', color: C.textSecondary, padding: '6px 8px', background: C.bgInput, borderRadius: T.radii.sm, marginTop: '4px', whiteSpace: 'pre-wrap', maxHeight: '160px', overflowY: 'auto' }}>{row.lfi_reply}</div>
+                      </>
+                    )}
+                    {row.correction && (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.sm, marginTop: '10px' }}>
+                          <div style={{ fontSize: '10px', color: C.accent, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, fontWeight: T.typography.weightSemibold }}>User correction</div>
+                          {/* c2-433 / task 239: copy correction text to clipboard.
+                              Triagers often want to paste the corrected answer
+                              elsewhere (review doc, ticket); without this they
+                              had to manual-select inside a max-height scroller. */}
+                          <button onClick={(e) => {
+                            e.stopPropagation();
+                            try { navigator.clipboard.writeText(row.correction || ''); } catch { /* clipboard API blocked */ }
+                            const btn = e.currentTarget;
+                            const orig = btn.textContent;
+                            btn.textContent = 'Copied';
+                            btn.style.color = C.green;
+                            window.setTimeout(() => { btn.textContent = orig; btn.style.color = C.accent; }, 1200);
+                          }}
+                            title='Copy correction to clipboard'
+                            style={{
+                              padding: '2px 8px', fontSize: '10px', fontWeight: T.typography.weightBold,
+                              background: 'transparent', border: `1px solid ${C.accentBorder}`,
+                              color: C.accent, borderRadius: T.radii.sm, cursor: 'pointer',
+                              fontFamily: 'inherit', textTransform: 'uppercase',
+                              letterSpacing: T.typography.trackingLoose,
+                            }}>Copy</button>
+                        </div>
+                        <div style={{ fontSize: '12px', color: C.text, padding: '6px 8px', background: C.accentBg, border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.sm, marginTop: '4px', whiteSpace: 'pre-wrap', maxHeight: '200px', overflowY: 'auto' }}>{row.correction}</div>
+                      </>
+                    )}
+                    {row.comment && (
+                      <>
+                        <div style={{ fontSize: '10px', color: C.textMuted, marginTop: '10px', textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose, fontWeight: T.typography.weightSemibold }}>Comment</div>
+                        <div style={{ fontSize: '12px', color: C.textSecondary, padding: '6px 8px', background: C.bgInput, borderRadius: T.radii.sm, marginTop: '4px', whiteSpace: 'pre-wrap' }}>{row.comment}</div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+        );
+      })()}
     </div>
   );
 };
@@ -1757,4 +2058,1022 @@ const Placeholder: React.FC<{ C: any; title: string; body: string; data: unknown
     </div>
   </div>
 );
- 
+
+// c2-433 / #298 followup: Ledger tab — surfaces the contradictions queue
+// the Classroom tab badge counts against. Polls /api/contradictions/recent
+// every 15s. Tolerant to several payload shapes (array / {items} /
+// {contradictions}), and each row is rendered with tolerant field pickup:
+// side_a|a|this, side_b|b|other, fact_key|key, at|timestamp|created_at.
+// Empty state explains the ≥ 0.7 confidence threshold so users know when
+// to expect entries.
+const LedgerTab: React.FC<{ C: any; host: string; onOpenFactKey?: (key: string, rect: DOMRect) => void }> = ({ C, host, onOpenFactKey }) => {
+  const [rows, setRows] = React.useState<any[] | null>(null);
+  const [loading, setLoading] = React.useState<boolean>(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [lastFetched, setLastFetched] = React.useState<number | null>(null);
+  const [resolving, setResolving] = React.useState<boolean>(false);
+  const [resolveMsg, setResolveMsg] = React.useState<string | null>(null);
+  // c2-433 / #298 followup: per-row resolve state — rowId -> 'a'|'b'|'dismiss'|'done'|'failed'.
+  // Rows marked 'done' fade out until the next poll drops them entirely.
+  const [rowResolving, setRowResolving] = React.useState<Record<string, string>>({});
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(`http://${host}:3000/api/contradictions/recent`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const list: any[] = Array.isArray(data) ? data
+        : Array.isArray(data?.items) ? data.items
+        : Array.isArray(data?.contradictions) ? data.contradictions
+        : [];
+      setRows(list);
+      setLastFetched(Date.now());
+    } catch (e: any) {
+      setErr(String(e?.message || e || 'fetch failed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [host]);
+  React.useEffect(() => {
+    load();
+    const id = window.setInterval(load, 15_000);
+    return () => window.clearInterval(id);
+  }, [load]);
+
+  const runAutoResolve = async () => {
+    setResolving(true);
+    setResolveMsg(null);
+    try {
+      const r = await fetch(`http://${host}:3000/api/contradictions/auto-resolve`, { method: 'POST' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json().catch(() => ({}));
+      const resolved = data.resolved ?? data.count ?? data.n ?? '?';
+      const total = data.total ?? data.pending ?? null;
+      setResolveMsg(total != null ? `Resolved ${resolved} of ${total}` : `Resolved ${resolved}`);
+      load();
+    } catch (e: any) {
+      setResolveMsg(`Failed: ${String(e?.message || e || 'unknown')}`);
+    } finally {
+      setResolving(false);
+      window.setTimeout(() => setResolveMsg(null), 4000);
+    }
+  };
+
+  // c2-433 / #298 followup: per-row manual resolve. Backend expects the
+  // row id + a winner side; we also try {side}, {keep}, and {verdict} for
+  // shape tolerance. On success, optimistically mark the row 'done' (fade
+  // out), then refetch 300ms later so the list drops the resolved row.
+  const resolveRow = async (rowId: string, winner: 'a' | 'b' | 'dismiss') => {
+    setRowResolving(prev => ({ ...prev, [rowId]: winner }));
+    try {
+      const r = await fetch(`http://${host}:3000/api/contradictions/${encodeURIComponent(rowId)}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ winner, side: winner, keep: winner, verdict: winner }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setRowResolving(prev => ({ ...prev, [rowId]: 'done' }));
+      window.setTimeout(() => { load(); }, 300);
+    } catch (e: any) {
+      setRowResolving(prev => ({ ...prev, [rowId]: 'failed' }));
+      window.setTimeout(() => {
+        setRowResolving(prev => { const n = { ...prev }; delete n[rowId]; return n; });
+      }, 3000);
+    }
+  };
+
+  const rowIdOf = (r: any): string | null => {
+    const id = r.id ?? r.contradiction_id ?? r._id;
+    return id != null ? String(id) : null;
+  };
+
+  const side = (r: any, which: 'a' | 'b'): string => {
+    const v = which === 'a' ? (r.side_a ?? r.a ?? r.this) : (r.side_b ?? r.b ?? r.other);
+    if (v == null) return '—';
+    if (typeof v === 'string') return v;
+    if (typeof v === 'object') {
+      const pred = v.pred || v.predicate || '';
+      const obj = v.obj || v.object || v.value || '';
+      const src = v.source ? ` [${v.source}]` : '';
+      const trust = typeof v.trust === 'number' ? ` (t=${v.trust.toFixed(2)})` : '';
+      return (pred && obj) ? `${pred} ${obj}${src}${trust}` : JSON.stringify(v).slice(0, 80);
+    }
+    return String(v);
+  };
+  const factKeyOf = (r: any): string | null => r.fact_key || r.key || null;
+  const timeOf = (r: any): number | null => {
+    const t = r.at || r.timestamp || r.created_at;
+    if (t == null) return null;
+    if (typeof t === 'number') return t;
+    const ms = Date.parse(String(t));
+    return Number.isNaN(ms) ? null : ms;
+  };
+
+  const count = rows?.length ?? 0;
+
+  return (
+    <div style={{ padding: T.spacing.xl, display: 'flex', flexDirection: 'column', gap: T.spacing.md, minWidth: 0 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.md, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: T.typography.sizeXl, fontWeight: T.typography.weightBold, color: C.text }}>
+          Contradiction ledger
+          {rows != null && <span style={{ marginLeft: T.spacing.sm, color: C.textMuted, fontSize: T.typography.sizeMd, fontWeight: 500 }}>({count})</span>}
+        </h2>
+        <div style={{ flex: 1 }} />
+        {resolveMsg && (
+          <span role='status' style={{
+            fontSize: T.typography.sizeXs,
+            color: resolveMsg.startsWith('Failed') ? C.red : C.green,
+            fontFamily: T.typography.fontMono,
+          }}>{resolveMsg}</span>
+        )}
+        {lastFetched != null && (
+          <span style={{ fontSize: T.typography.sizeXs, color: C.textDim, fontFamily: T.typography.fontMono }}>
+            {formatRelative(lastFetched)}
+          </span>
+        )}
+        <button onClick={runAutoResolve} disabled={resolving || count === 0}
+          title='Apply source_trust weights across the pending ledger'
+          style={{
+            background: resolving ? C.bgInput : 'transparent',
+            border: `1px solid ${C.borderSubtle}`, color: count === 0 ? C.textDim : C.textMuted,
+            borderRadius: T.radii.sm, cursor: (resolving || count === 0) ? 'not-allowed' : 'pointer',
+            padding: '4px 10px', fontFamily: 'inherit',
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightSemibold,
+          }}>{resolving ? 'Resolving…' : 'Auto-resolve'}</button>
+        <button onClick={load} disabled={loading}
+          title={loading ? 'Refreshing…' : 'Refresh now'}
+          style={{
+            background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+            color: C.textMuted, borderRadius: T.radii.sm,
+            cursor: loading ? 'wait' : 'pointer',
+            padding: '4px 10px', fontFamily: 'inherit',
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightSemibold,
+          }}>{loading ? 'Refreshing…' : 'Refresh'}</button>
+      </div>
+
+      {err && (
+        <div role='alert' style={{
+          padding: T.spacing.md, background: C.redBg,
+          border: `1px solid ${C.redBorder}`, color: C.red,
+          borderRadius: T.radii.md, fontSize: T.typography.sizeSm,
+        }}>Could not load ledger: {err}</div>
+      )}
+
+      {rows != null && count === 0 && !err && (
+        <div style={{
+          padding: T.spacing.xl, textAlign: 'center',
+          color: C.textMuted, fontSize: T.typography.sizeSm, lineHeight: 1.55,
+          background: C.bgCard, border: `1px dashed ${C.borderSubtle}`, borderRadius: T.radii.lg,
+        }}>
+          No pending contradictions. <br/>
+          <span style={{ color: C.textDim, fontSize: T.typography.sizeXs }}>
+            Entries land here when <code style={{ fontFamily: T.typography.fontMono }}>upsert_fact</code> sees two sources disagree with both ≥ 0.7 confidence.
+          </span>
+        </div>
+      )}
+
+      {rows != null && count > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {rows.map((r, i) => {
+            const fk = factKeyOf(r);
+            const t = timeOf(r);
+            const rowId = rowIdOf(r);
+            const rowState = rowId ? rowResolving[rowId] : undefined;
+            const isDone = rowState === 'done';
+            const isFailed = rowState === 'failed';
+            const isPending = rowState === 'a' || rowState === 'b' || rowState === 'dismiss';
+            return (
+              <div key={rowId || i} style={{
+                padding: T.spacing.md, borderRadius: T.radii.md,
+                background: C.bgCard, border: `1px solid ${isFailed ? C.redBorder : C.borderSubtle}`,
+                display: 'flex', flexDirection: 'column', gap: '4px',
+                opacity: isDone ? 0.4 : isPending ? 0.7 : 1,
+                transition: 'opacity 200ms, border-color 200ms',
+              }}>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  gap: T.spacing.sm, flexWrap: 'wrap',
+                }}>
+                  {fk && (
+                    onOpenFactKey ? (
+                      <button onClick={(e) => onOpenFactKey(fk, e.currentTarget.getBoundingClientRect())}
+                        title={`Open ancestry popover for ${fk}`}
+                        aria-label={`Open fact ${fk}`}
+                        style={{
+                          fontFamily: T.typography.fontMono, fontSize: T.typography.sizeXs,
+                          color: C.accent, fontWeight: 700,
+                          background: 'transparent', border: 'none',
+                          padding: 0, cursor: 'pointer',
+                          textDecoration: 'underline', textDecorationColor: `${C.accent}55`,
+                          textUnderlineOffset: '2px',
+                        }}>{fk}</button>
+                    ) : (
+                      <span style={{
+                        fontFamily: T.typography.fontMono, fontSize: T.typography.sizeXs,
+                        color: C.accent, fontWeight: 700,
+                      }}>{fk}</span>
+                    )
+                  )}
+                  {t != null && (
+                    <span style={{ fontFamily: T.typography.fontMono, fontSize: '10px', color: C.textDim }}>
+                      {formatRelative(t)}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm, flexWrap: 'wrap' }}>
+                  <span style={{
+                    fontFamily: T.typography.fontMono, fontSize: T.typography.sizeSm,
+                    color: C.text, flex: '1 1 40%', minWidth: 0, wordBreak: 'break-word',
+                  }}>{side(r, 'a')}</span>
+                  <span style={{ color: C.red, fontSize: T.typography.sizeMd, fontWeight: 900 }}>↔</span>
+                  <span style={{
+                    fontFamily: T.typography.fontMono, fontSize: T.typography.sizeSm,
+                    color: C.text, flex: '1 1 40%', minWidth: 0, wordBreak: 'break-word',
+                  }}>{side(r, 'b')}</span>
+                </div>
+                {r.verdict && (
+                  <span style={{
+                    alignSelf: 'flex-start', fontSize: '10px',
+                    fontFamily: T.typography.fontMono, color: C.textMuted,
+                    textTransform: 'uppercase', letterSpacing: '0.06em',
+                  }}>{String(r.verdict)}</span>
+                )}
+                {/* c2-433 / #298 followup: per-row resolve actions. Backend
+                    expects POST /api/contradictions/:id/resolve with a
+                    winner side. Hidden when the row has no stable id
+                    (auto-resolve + legacy paths still work via header). */}
+                {rowId && !isDone && (
+                  <div style={{
+                    display: 'flex', gap: '6px', marginTop: '4px',
+                    flexWrap: 'wrap', alignItems: 'center',
+                  }}>
+                    {isFailed && (
+                      <span style={{ fontSize: '10px', color: C.red, fontFamily: T.typography.fontMono }}>
+                        Resolve failed — try again
+                      </span>
+                    )}
+                    <button onClick={() => resolveRow(rowId, 'a')} disabled={isPending}
+                      title='Keep side A; discard side B'
+                      style={{
+                        padding: '3px 9px', fontSize: '10px', fontWeight: T.typography.weightBold,
+                        background: C.accentBg, color: C.accent,
+                        border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.sm,
+                        cursor: isPending ? 'wait' : 'pointer',
+                        fontFamily: 'inherit', letterSpacing: '0.04em',
+                        opacity: isPending && rowState !== 'a' ? 0.4 : 1,
+                      }}>{rowState === 'a' ? 'Keeping A…' : 'Keep A'}</button>
+                    <button onClick={() => resolveRow(rowId, 'b')} disabled={isPending}
+                      title='Keep side B; discard side A'
+                      style={{
+                        padding: '3px 9px', fontSize: '10px', fontWeight: T.typography.weightBold,
+                        background: C.accentBg, color: C.accent,
+                        border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.sm,
+                        cursor: isPending ? 'wait' : 'pointer',
+                        fontFamily: 'inherit', letterSpacing: '0.04em',
+                        opacity: isPending && rowState !== 'b' ? 0.4 : 1,
+                      }}>{rowState === 'b' ? 'Keeping B…' : 'Keep B'}</button>
+                    <button onClick={() => resolveRow(rowId, 'dismiss')} disabled={isPending}
+                      title='Dismiss this contradiction without picking a side'
+                      style={{
+                        padding: '3px 9px', fontSize: '10px', fontWeight: T.typography.weightBold,
+                        background: 'transparent', color: C.textMuted,
+                        border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.sm,
+                        cursor: isPending ? 'wait' : 'pointer',
+                        fontFamily: 'inherit', letterSpacing: '0.04em',
+                        opacity: isPending && rowState !== 'dismiss' ? 0.4 : 1,
+                      }}>{rowState === 'dismiss' ? 'Dismissing…' : 'Dismiss'}</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// c2-433 / #284: Drift tab. Polls /api/drift/snapshot every 60s for the
+// one-call health bundle (fresh_ratio, stale_ratio, hdc_cache_ratio,
+// contradictions_pending, feedback_negative_ratio_24h, fsrs_lapse_rate).
+// Session-local ring buffer (last 60 samples = 1h @ 60s) drives a
+// sparkline per metric so users can see whether the value is trending
+// up or down. Pure frontend state — persisting would need localStorage
+// but refresh-on-load is fine for a dashboard.
+const DriftTab: React.FC<{ C: any; host: string; onJumpTo?: (sub: string) => void }> = ({ C, host, onJumpTo }) => {
+  type DriftSnap = {
+    fresh_ratio?: number;
+    stale_ratio?: number;
+    hdc_cache_ratio?: number;
+    contradictions_pending?: number;
+    feedback_negative_ratio_24h?: number;
+    fsrs_lapse_rate?: number;
+  };
+  // c2-433 / #284 followup: hydrate Drift history from localStorage on mount
+  // so the trend survives a reload. Capped at 60 entries (1h @ 60s). Stale
+  // entries older than 4h are dropped on load so the sparkline doesn't
+  // show a week-old baseline flat-line.
+  const hydratedHistory = React.useMemo<Array<{ t: number; snap: DriftSnap }>>(() => {
+    try {
+      const raw = localStorage.getItem('lfi_drift_history_v1');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const fresh = parsed.filter((e: any) => e && typeof e.t === 'number' && e.snap && typeof e.snap === 'object' && Date.now() - e.t < 4 * 60 * 60 * 1000);
+      return fresh.slice(-60);
+    } catch { return []; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // c2-433 / #284 followup: seed `current` from the last persisted entry so
+  // the cards render immediately on reopen instead of flashing dashes for
+  // the first 60s. Overwritten by the first live fetch.
+  const [current, setCurrent] = React.useState<DriftSnap | null>(
+    hydratedHistory.length > 0 ? hydratedHistory[hydratedHistory.length - 1].snap : null
+  );
+  const [history, setHistory] = React.useState<Array<{ t: number; snap: DriftSnap }>>(hydratedHistory);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState<boolean>(false);
+  const [lastFetched, setLastFetched] = React.useState<number | null>(null);
+  // c2-433 / #284 followup: copy-feedback tick. Flips to the write-time
+  // epoch when the user clicks Copy and self-clears 2s later so the
+  // button label reverts from "Copied ✓" → "Copy".
+  const [copiedAt, setCopiedAt] = React.useState<number>(0);
+
+  // c2-433 / #284 followup: writeback to localStorage on every history
+  // mutation. Silent on quota failure — the sparkline still renders from
+  // the in-memory array.
+  React.useEffect(() => {
+    if (history.length === 0) return;
+    try {
+      localStorage.setItem('lfi_drift_history_v1', JSON.stringify(history));
+    } catch { /* quota or incognito — silent */ }
+  }, [history]);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(`http://${host}:3000/api/drift/snapshot`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const snap: DriftSnap = await r.json();
+      setCurrent(snap);
+      setLastFetched(Date.now());
+      setHistory(prev => {
+        const next = [...prev, { t: Date.now(), snap }];
+        return next.length > 60 ? next.slice(next.length - 60) : next;
+      });
+    } catch (e: any) {
+      setErr(String(e?.message || e || 'fetch failed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [host]);
+  React.useEffect(() => {
+    load();
+    const id = window.setInterval(load, 60_000);
+    return () => window.clearInterval(id);
+  }, [load]);
+
+  // c2-433 / #284: per-metric health rules. Higher/lower is better varies
+  // by metric, so each carries a ratingFn that maps value → color tier.
+  // Formatter produces the big display label.
+  type MetricSpec = {
+    key: keyof DriftSnap;
+    label: string;
+    format: (v: number | undefined) => string;
+    rating: (v: number | undefined) => string; // returns a C.* palette key
+    isPct: boolean; // percent vs count
+    hint: string;
+    // c2-433 / #284 followup: destination sub-tab when the card is clicked.
+    // Only set for metrics with a natural triage target; other cards stay
+    // non-interactive (no cursor pointer, no button affordance).
+    jumpTo?: string;
+    // c2-433 / #284 followup #2: polarity — 'up' means higher is better,
+    // 'down' means lower is better. Drives the color of the trend arrow
+    // so an improving metric always renders green regardless of direction.
+    polarity: 'up' | 'down';
+  };
+  const METRICS: MetricSpec[] = [
+    {
+      key: 'fresh_ratio', label: 'Fresh facts', isPct: true, polarity: 'up',
+      hint: 'Share of facts with a recent upsert. Higher = substrate is learning.',
+      format: v => v == null ? '—' : `${(v * 100).toFixed(0)}%`,
+      rating: v => v == null ? C.textMuted : v >= 0.6 ? C.green : v >= 0.3 ? C.yellow : C.red,
+    },
+    {
+      key: 'stale_ratio', label: 'Stale facts', isPct: true, polarity: 'down',
+      hint: 'Share of facts unchanged for a long time. Lower = fresher corpus.',
+      format: v => v == null ? '—' : `${(v * 100).toFixed(0)}%`,
+      rating: v => v == null ? C.textMuted : v <= 0.3 ? C.green : v <= 0.6 ? C.yellow : C.red,
+    },
+    {
+      key: 'hdc_cache_ratio', label: 'HDC cache', isPct: true, polarity: 'up',
+      hint: 'Encode-cache hit ratio. Higher = less recompute per query.',
+      format: v => v == null ? '—' : `${(v * 100).toFixed(0)}%`,
+      rating: v => v == null ? C.textMuted : v >= 0.8 ? C.green : v >= 0.4 ? C.yellow : C.red,
+    },
+    {
+      key: 'contradictions_pending', label: 'Contradictions', isPct: false, polarity: 'down',
+      hint: 'Open rows in the contradiction ledger. Click to jump to the Ledger.',
+      format: v => v == null ? '—' : String(v),
+      rating: v => v == null ? C.textMuted : v === 0 ? C.green : v <= 5 ? C.yellow : C.red,
+      jumpTo: 'ledger',
+    },
+    {
+      key: 'feedback_negative_ratio_24h', label: 'Neg feedback 24h', isPct: true, polarity: 'down',
+      hint: 'Share of last-24h user feedback that was thumbs-down. Click to jump to Office Hours.',
+      format: v => v == null ? '—' : `${(v * 100).toFixed(0)}%`,
+      rating: v => v == null ? C.textMuted : v <= 0.1 ? C.green : v <= 0.25 ? C.yellow : C.red,
+      jumpTo: 'office',
+    },
+    {
+      key: 'fsrs_lapse_rate', label: 'FSRS lapse', isPct: true, polarity: 'down',
+      hint: 'Share of FSRS cards graded Again. Lower = retention is holding.',
+      format: v => v == null ? '—' : `${(v * 100).toFixed(0)}%`,
+      rating: v => v == null ? C.textMuted : v <= 0.15 ? C.green : v <= 0.3 ? C.yellow : C.red,
+    },
+  ];
+
+  const seriesFor = (k: keyof DriftSnap): number[] =>
+    history.map(h => h.snap[k]).filter((v): v is number => typeof v === 'number');
+
+  // c2-433 / #284 followup #2: trend computation. Compare latest sample
+  // vs the one ~5 samples (= ~5 min at the 60s cadence) back so the arrow
+  // reflects recent direction, not the hour-long drift. Null when we
+  // don't have enough history to compare.
+  const trendFor = (spec: MetricSpec): { dir: 'up' | 'down' | 'flat'; deltaPct: number; improving: boolean } | null => {
+    const s = seriesFor(spec.key);
+    if (s.length < 2) return null;
+    const latest = s[s.length - 1];
+    const earlier = s[Math.max(0, s.length - 6)];
+    const delta = latest - earlier;
+    const base = Math.abs(earlier) < 1e-6 ? Math.max(Math.abs(latest), 1e-6) : Math.abs(earlier);
+    const deltaPct = (delta / base) * 100;
+    // Flat threshold: < 2% change relative to base.
+    if (Math.abs(deltaPct) < 2) return { dir: 'flat', deltaPct, improving: true };
+    const dir: 'up' | 'down' = delta > 0 ? 'up' : 'down';
+    // Improving = direction matches the better-polarity for this metric.
+    const improving = dir === spec.polarity;
+    return { dir, deltaPct, improving };
+  };
+
+  return (
+    <div style={{ padding: T.spacing.xl, display: 'flex', flexDirection: 'column', gap: T.spacing.md, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.md, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: T.typography.sizeXl, fontWeight: T.typography.weightBold, color: C.text }}>
+          Drift snapshot
+          <span style={{ marginLeft: T.spacing.sm, color: C.textMuted, fontSize: T.typography.sizeSm, fontWeight: 500 }}>
+            every 60s · {history.length} sample{history.length === 1 ? '' : 's'}
+          </span>
+        </h2>
+        {/* c2-433 / #284 followup: at-a-glance health summary. Tallies the
+            per-metric rating into green / yellow / red counts, renders a
+            color-tiered chip. Tier is driven by the worst bucket: any red
+            → red chip, any yellow → yellow chip, all green → green chip.
+            Hidden until at least one metric has a value (avoids the chip
+            showing 0/6 healthy on mount). */}
+        {current && (() => {
+          let healthy = 0, warn = 0, crit = 0;
+          for (const m of METRICS) {
+            const v = current[m.key];
+            const rc = m.rating(v);
+            if (rc === C.green) healthy++;
+            else if (rc === C.yellow) warn++;
+            else if (rc === C.red) crit++;
+          }
+          const rated = healthy + warn + crit;
+          if (rated === 0) return null;
+          const tierColor = crit > 0 ? C.red : warn > 0 ? C.yellow : C.green;
+          const tierBg = crit > 0 ? C.redBg : warn > 0 ? (C.yellowBg || `${C.yellow}18`) : (C.greenBg || `${C.green}18`);
+          const label = crit > 0 || warn > 0
+            ? `${healthy}/${rated} healthy · ${warn} warn · ${crit} crit`
+            : `${healthy}/${rated} healthy`;
+          return (
+            <span role='status'
+              title={`System health across 6 drift metrics — ${label}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                padding: '3px 10px', fontSize: T.typography.sizeXs,
+                fontWeight: T.typography.weightBold,
+                background: tierBg, color: tierColor,
+                border: `1px solid ${tierColor}55`,
+                borderRadius: T.radii.pill,
+                fontFamily: T.typography.fontMono,
+                letterSpacing: '0.04em',
+              }}>
+              <span style={{
+                width: '6px', height: '6px', borderRadius: '50%',
+                background: tierColor, flexShrink: 0,
+              }} />
+              {label}
+            </span>
+          );
+        })()}
+        <div style={{ flex: 1 }} />
+        {lastFetched != null && (
+          <span style={{ fontSize: T.typography.sizeXs, color: C.textDim, fontFamily: T.typography.fontMono }}>
+            {formatRelative(lastFetched)}
+          </span>
+        )}
+        {/* c2-433 / #284 followup: copy-JSON button. Serializes
+            {exported_at, current, history} to clipboard for external
+            trend analysis (excel, log diff, etc). Disabled when there's
+            nothing to copy. */}
+        <button
+          disabled={!current && history.length === 0}
+          onClick={async () => {
+            const payload = {
+              exported_at: new Date().toISOString(),
+              current,
+              history,
+            };
+            try {
+              await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+              setCopiedAt(Date.now());
+              window.setTimeout(() => setCopiedAt(0), 2000);
+            } catch { /* clipboard blocked */ }
+          }}
+          title={copiedAt > 0 ? 'Copied to clipboard' : `Copy ${history.length} sample${history.length === 1 ? '' : 's'} + current snapshot as JSON`}
+          style={{
+            background: copiedAt > 0 ? `${C.green}18` : 'transparent',
+            border: `1px solid ${copiedAt > 0 ? C.green : C.borderSubtle}`,
+            color: copiedAt > 0 ? C.green : C.textMuted,
+            borderRadius: T.radii.sm,
+            cursor: (!current && history.length === 0) ? 'not-allowed' : 'pointer',
+            padding: '4px 10px', fontFamily: 'inherit',
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightSemibold,
+            opacity: (!current && history.length === 0) ? 0.5 : 1,
+          }}>{copiedAt > 0 ? 'Copied \u2713' : 'Copy'}</button>
+        <button onClick={load} disabled={loading}
+          title={loading ? 'Refreshing…' : 'Refresh now'}
+          style={{
+            background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+            color: C.textMuted, borderRadius: T.radii.sm,
+            cursor: loading ? 'wait' : 'pointer',
+            padding: '4px 10px', fontFamily: 'inherit',
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightSemibold,
+          }}>{loading ? 'Refreshing…' : 'Refresh'}</button>
+      </div>
+
+      {err && (
+        <div role='alert' style={{
+          padding: T.spacing.md, background: C.redBg,
+          border: `1px solid ${C.redBorder}`, color: C.red,
+          borderRadius: T.radii.md, fontSize: T.typography.sizeSm,
+        }}>Could not load drift snapshot: {err}. The endpoint <code style={{ fontFamily: T.typography.fontMono }}>/api/drift/snapshot</code> may not be exposed yet.</div>
+      )}
+
+      <div style={{
+        display: 'grid', gap: T.spacing.md,
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+      }}>
+        {METRICS.map(m => {
+          const v = current ? current[m.key] : undefined;
+          const color = m.rating(v);
+          const series = seriesFor(m.key);
+          const canJump = !!(onJumpTo && m.jumpTo);
+          const trend = trendFor(m);
+          // c2-433 / #284 followup #2: trend arrow. Green when improving
+          // (direction matches polarity), red when regressing, textDim
+          // when flat (< 2% delta). Arrow glyph: ▲/▼/─ — compact enough
+          // to sit in the label row next to the jump hint.
+          const trendArrow = trend && (
+            <span title={`${trend.dir === 'flat' ? 'Flat' : trend.improving ? 'Improving' : 'Worsening'} — ${trend.deltaPct >= 0 ? '+' : ''}${trend.deltaPct.toFixed(1)}% vs ~5 min ago`}
+              style={{
+                color: trend.dir === 'flat' ? C.textDim
+                  : trend.improving ? C.green : C.red,
+                fontSize: '10px', fontFamily: T.typography.fontMono,
+                fontWeight: 800, letterSpacing: 0,
+              }}>
+              {trend.dir === 'up' ? '▲' : trend.dir === 'down' ? '▼' : '─'}
+              {trend.dir !== 'flat' && <span style={{ marginLeft: '2px' }}>{Math.abs(trend.deltaPct).toFixed(0)}%</span>}
+            </span>
+          );
+          const body = (
+            <>
+              <div style={{
+                fontSize: '10px', color: C.textMuted,
+                fontWeight: T.typography.weightSemibold,
+                textTransform: 'uppercase', letterSpacing: '0.08em',
+                display: 'flex', alignItems: 'center', gap: '6px',
+              }}>
+                <span style={{ flex: 1, textAlign: 'left' }}>{m.label}</span>
+                {trendArrow}
+                {canJump && <span aria-hidden='true' style={{
+                  color: C.textDim, fontSize: '10px',
+                }}>→</span>}
+              </div>
+              <div style={{
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                gap: T.spacing.sm,
+              }}>
+                <span style={{
+                  fontSize: T.typography.sizeXxl || T.typography.sizeXl,
+                  fontWeight: T.typography.weightBlack,
+                  color,
+                  fontFamily: T.typography.fontMono,
+                }}>{m.format(v)}</span>
+                {series.length >= 2 && (
+                  <Sparkline values={series} color={color} width={72} height={20} />
+                )}
+              </div>
+            </>
+          );
+          const commonStyle = {
+            padding: T.spacing.md, borderRadius: T.radii.lg,
+            background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+            display: 'flex', flexDirection: 'column' as const, gap: '6px',
+            textAlign: 'left' as const, fontFamily: 'inherit',
+            color: C.text,
+          };
+          return canJump ? (
+            <button key={m.key} type='button' title={m.hint}
+              onClick={() => onJumpTo!(m.jumpTo!)}
+              aria-label={`${m.label} — click to jump to ${m.jumpTo}`}
+              style={{
+                ...commonStyle,
+                cursor: 'pointer',
+              }}>
+              {body}
+            </button>
+          ) : (
+            <div key={m.key} title={m.hint}
+              style={commonStyle}>
+              {body}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// c2-433 / #312: Ingest runs tab. Consumes /api/ingest/list (running-first
+// ordering guaranteed by backend per Claude 0's 04:25 spec). Polls every
+// 10s while active; renders two groups — Running (accent border, live
+// progress bars) and Finished (muted, status pill). Tolerant payload
+// shape: array of rows or {runs|items|list: [...]} wrappers; per-row
+// tolerant on run_id/started_at/progress/total/status fields.
+const IngestRunsTab: React.FC<{ C: any; host: string }> = ({ C, host }) => {
+  const [runs, setRuns] = React.useState<any[] | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState<boolean>(false);
+  const [lastFetched, setLastFetched] = React.useState<number | null>(null);
+  // c2-433 / #312 followup: filter input. Narrows both Running and Finished
+  // sections by case-insensitive substring match on run_id / source / status.
+  // Empty string == no filtering. Esc-clears-step-down pattern (consistent
+  // with other search-bearing surfaces across the app).
+  const [filterQ, setFilterQ] = React.useState<string>('');
+  // c2-433 / #308: domain-gap scheduler — thinnest domains to ingest next.
+  // Silent-fail so an unavailable endpoint just hides the panel.
+  const [gaps, setGaps] = React.useState<any[] | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      // c2-433 / #308: fetch gaps in parallel. Silent-fail on gaps so the
+      // list path still surfaces its own success/error.
+      const [listRes, gapsRes] = await Promise.all([
+        fetch(`http://${host}:3000/api/ingest/list`),
+        fetch(`http://${host}:3000/api/ingest/gaps?limit=10`).catch(() => null as Response | null),
+      ]);
+      if (!listRes.ok) throw new Error(`HTTP ${listRes.status}`);
+      const data = await listRes.json();
+      const list: any[] = Array.isArray(data) ? data
+        : Array.isArray(data?.runs) ? data.runs
+        : Array.isArray(data?.items) ? data.items
+        : Array.isArray(data?.list) ? data.list
+        : [];
+      setRuns(list);
+      setLastFetched(Date.now());
+      if (gapsRes && gapsRes.ok) {
+        try {
+          const gdata = await gapsRes.json();
+          const glist: any[] = Array.isArray(gdata) ? gdata
+            : Array.isArray(gdata?.gaps) ? gdata.gaps
+            : Array.isArray(gdata?.items) ? gdata.items
+            : Array.isArray(gdata?.domains) ? gdata.domains
+            : [];
+          setGaps(glist);
+        } catch { /* parse error — leave gaps as-is */ }
+      }
+    } catch (e: any) {
+      setErr(String(e?.message || e || 'fetch failed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [host]);
+  React.useEffect(() => {
+    load();
+    const id = window.setInterval(load, 10_000);
+    return () => window.clearInterval(id);
+  }, [load]);
+
+  const statusOf = (r: any): string => String(r.status ?? r.state ?? '').toLowerCase();
+  const isRunning = (r: any) => {
+    const s = statusOf(r);
+    return s === 'running' || s === 'active' || s === 'in_progress' || (!s && !r.finished_at);
+  };
+  const tsOf = (r: any, field: string): number | null => {
+    const v = r[field];
+    if (v == null) return null;
+    if (typeof v === 'number') return v;
+    const ms = Date.parse(String(v));
+    return Number.isNaN(ms) ? null : ms;
+  };
+  const statusColor = (s: string): string => {
+    if (s === 'running' || s === 'active' || s === 'in_progress') return C.accent;
+    if (s === 'finished' || s === 'complete' || s === 'done' || s === 'success') return C.green;
+    if (s === 'failed' || s === 'error') return C.red;
+    if (s === 'cancelled' || s === 'canceled' || s === 'aborted') return C.yellow;
+    return C.textMuted;
+  };
+
+  // c2-433 / #312 followup: apply filter before splitting so both groups
+  // shrink together. Matches any of: run_id, source label, status string,
+  // label/tag fields. Match is case-insensitive substring.
+  const fLower = filterQ.trim().toLowerCase();
+  const matchesFilter = (r: any): boolean => {
+    if (!fLower) return true;
+    const id = String(r.run_id ?? r.id ?? r.uuid ?? '').toLowerCase();
+    const src = String(r.source ?? r.script ?? r.name ?? r.corpus ?? '').toLowerCase();
+    const st = statusOf(r);
+    const label = String(r.label ?? '').toLowerCase();
+    return id.includes(fLower) || src.includes(fLower) || st.includes(fLower) || label.includes(fLower);
+  };
+  const allRunning: any[] = (runs || []).filter(isRunning);
+  const allFinished: any[] = (runs || []).filter(r => !isRunning(r));
+  const running: any[] = allRunning.filter(matchesFilter);
+  const finished: any[] = allFinished.filter(matchesFilter);
+
+  const renderRow = (r: any, i: number, group: 'running' | 'finished') => {
+    const id: string = String(r.run_id ?? r.id ?? r.uuid ?? `run-${i}`);
+    const source: string = r.source ?? r.script ?? r.name ?? r.corpus ?? '(unnamed)';
+    const progress: number | null = typeof r.progress === 'number' ? r.progress : null;
+    const total: number | null = typeof r.total === 'number' ? r.total : null;
+    const ratio: number | null = (progress != null && total != null && total > 0)
+      ? Math.max(0, Math.min(1, progress / total))
+      : (typeof r.ratio === 'number' ? r.ratio
+         : typeof r.percent === 'number' ? (r.percent > 1 ? r.percent / 100 : r.percent)
+         : null);
+    const startedAt = tsOf(r, 'started_at') ?? tsOf(r, 'start_ts') ?? tsOf(r, 'created_at');
+    const finishedAt = tsOf(r, 'finished_at') ?? tsOf(r, 'end_ts') ?? tsOf(r, 'completed_at');
+    const durMs = (startedAt && finishedAt) ? (finishedAt - startedAt)
+      : (startedAt && group === 'running') ? (Date.now() - startedAt)
+      : null;
+    const durLabel = durMs != null ? formatRelative(Date.now() - durMs).replace(' ago', '') : null;
+    const status = statusOf(r) || (group === 'running' ? 'running' : 'done');
+    const sColor = statusColor(status);
+    return (
+      <div key={id}
+        style={{
+          padding: '10px 12px', borderRadius: T.radii.md,
+          background: C.bgCard,
+          border: `1px solid ${group === 'running' ? C.accentBorder : C.borderSubtle}`,
+          display: 'flex', flexDirection: 'column', gap: '6px',
+        }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: T.spacing.sm, flexWrap: 'wrap' }}>
+          <span style={{
+            fontFamily: T.typography.fontMono, fontSize: T.typography.sizeXs,
+            color: C.accent, fontWeight: 700,
+          }} title={id}>{id.length > 24 ? id.slice(0, 24) + '…' : id}</span>
+          <span style={{
+            fontFamily: T.typography.fontMono, fontSize: T.typography.sizeSm,
+            color: C.text, flex: 1, minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }} title={source}>{source}</span>
+          <span title={`Status: ${status}`}
+            style={{
+              fontSize: '9px', fontWeight: 800,
+              color: sColor, background: `${sColor}18`,
+              border: `1px solid ${sColor}55`,
+              borderRadius: T.radii.sm, padding: '1px 6px',
+              textTransform: 'uppercase', letterSpacing: '0.06em',
+              fontFamily: T.typography.fontMono,
+            }}>{status}</span>
+        </div>
+        {(ratio != null || progress != null) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.sm, minWidth: 0 }}>
+            <div style={{
+              flex: 1, height: '6px', background: C.bgInput,
+              borderRadius: T.radii.xs, overflow: 'hidden',
+            }}>
+              <div style={{
+                width: `${Math.round((ratio ?? 0) * 100)}%`, height: '100%',
+                background: group === 'running' ? C.accent : C.green,
+                transition: 'width 300ms',
+              }} />
+            </div>
+            <span style={{
+              fontFamily: T.typography.fontMono, fontSize: '10px',
+              color: C.textSecondary, minWidth: '90px', textAlign: 'right',
+            }}>{progress != null ? progress.toLocaleString() : '—'}{total != null ? ` / ${total.toLocaleString()}` : ''}{ratio != null ? ` · ${Math.round(ratio * 100)}%` : ''}</span>
+          </div>
+        )}
+        <div style={{
+          display: 'flex', gap: T.spacing.md, fontSize: '10px',
+          fontFamily: T.typography.fontMono, color: C.textDim,
+          flexWrap: 'wrap',
+        }}>
+          {startedAt && <span>started {formatRelative(startedAt)}</span>}
+          {finishedAt && <span>finished {formatRelative(finishedAt)}</span>}
+          {durLabel && group === 'running' && <span>running {durLabel}</span>}
+          {durLabel && group === 'finished' && <span>took {durLabel}</span>}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ padding: T.spacing.xl, display: 'flex', flexDirection: 'column', gap: T.spacing.md, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: T.spacing.md, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: T.typography.sizeXl, fontWeight: T.typography.weightBold, color: C.text }}>
+          Ingest runs
+          {runs != null && <span style={{ marginLeft: T.spacing.sm, color: C.textMuted, fontSize: T.typography.sizeMd, fontWeight: 500 }}>
+            {fLower
+              ? `(${running.length}/${allRunning.length} running · ${finished.length}/${allFinished.length} finished)`
+              : `(${running.length} running · ${finished.length} finished)`}
+          </span>}
+        </h2>
+        <div style={{ flex: 1 }} />
+        {/* c2-433 / #312 followup: search input. Esc clears when non-empty,
+            else propagates (closes parent modal / moves on). */}
+        {runs != null && runs.length > 0 && (
+          <input type='search' value={filterQ}
+            onChange={(e) => setFilterQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && filterQ) {
+                e.preventDefault();
+                e.stopPropagation();
+                setFilterQ('');
+              }
+            }}
+            autoComplete='off' spellCheck={false}
+            placeholder='Filter runs…'
+            aria-label='Filter ingest runs by id, source, or status'
+            style={{
+              padding: '4px 10px', width: '180px',
+              background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+              color: C.text, borderRadius: T.radii.sm,
+              fontFamily: 'inherit', fontSize: T.typography.sizeXs,
+              outline: 'none',
+            }} />
+        )}
+        {lastFetched != null && (
+          <span style={{ fontSize: T.typography.sizeXs, color: C.textDim, fontFamily: T.typography.fontMono }}>
+            {formatRelative(lastFetched)}
+          </span>
+        )}
+        <button onClick={load} disabled={loading}
+          title={loading ? 'Refreshing…' : 'Refresh now (auto-refreshes every 10s)'}
+          style={{
+            background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+            color: C.textMuted, borderRadius: T.radii.sm,
+            cursor: loading ? 'wait' : 'pointer',
+            padding: '4px 10px', fontFamily: 'inherit',
+            fontSize: T.typography.sizeXs, fontWeight: T.typography.weightSemibold,
+          }}>{loading ? 'Refreshing…' : 'Refresh'}</button>
+      </div>
+
+      {err && (
+        <div role='alert' style={{
+          padding: T.spacing.md, background: C.redBg,
+          border: `1px solid ${C.redBorder}`, color: C.red,
+          borderRadius: T.radii.md, fontSize: T.typography.sizeSm,
+        }}>Could not load ingest runs: {err}. The endpoint <code style={{ fontFamily: T.typography.fontMono }}>/api/ingest/list</code> may not be exposed yet.</div>
+      )}
+
+      {runs != null && runs.length === 0 && !err && (
+        <div style={{
+          padding: T.spacing.xl, textAlign: 'center',
+          color: C.textMuted, fontSize: T.typography.sizeSm, lineHeight: 1.55,
+          background: C.bgCard, border: `1px dashed ${C.borderSubtle}`, borderRadius: T.radii.lg,
+        }}>
+          No ingest runs yet.<br/>
+          <span style={{ color: C.textDim, fontSize: T.typography.sizeXs }}>
+            Python ingest scripts register runs via <code style={{ fontFamily: T.typography.fontMono }}>POST /api/ingest/start</code> and stream progress — entries land here the moment one begins.
+          </span>
+        </div>
+      )}
+
+      {/* c2-433 / #312 followup: filter-zero-state. Differentiates "no runs
+          at all" from "no runs match the filter." */}
+      {runs != null && runs.length > 0 && fLower && running.length === 0 && finished.length === 0 && (
+        <div style={{
+          padding: T.spacing.lg, textAlign: 'center',
+          color: C.textMuted, fontSize: T.typography.sizeSm, fontStyle: 'italic',
+          background: C.bgCard, border: `1px dashed ${C.borderSubtle}`, borderRadius: T.radii.lg,
+        }}>
+          No runs match "{filterQ}". <button onClick={() => setFilterQ('')}
+            style={{
+              background: 'transparent', border: 'none', color: C.accent,
+              cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline',
+              padding: 0, fontSize: T.typography.sizeSm,
+            }}>Clear filter.</button>
+        </div>
+      )}
+
+      {/* c2-433 / #308: Suggested Next — thinnest domains by composite gap
+          score. Helps operators pick what to ingest next. Hidden when
+          empty (fresh install) or when the endpoint didn't respond. Row
+          colors: higher gap_score = redder (more under-served). */}
+      {gaps && gaps.length > 0 && (
+        <section aria-label='Suggested next ingests'>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', gap: '6px',
+            fontSize: '10px', fontWeight: 700, color: C.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: '6px',
+          }}>
+            <span>Suggested next ({gaps.length})</span>
+            <span title='Thinnest domains: 1/ln(fact_count+1) − recent_7d/10k'
+              style={{
+                color: C.textDim, fontFamily: T.typography.fontMono,
+                textTransform: 'none', letterSpacing: 0,
+                fontWeight: 500,
+              }}>· by gap score</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {gaps.map((g: any, i: number) => {
+              const domain: string = g.domain ?? g.name ?? '(unknown)';
+              const fc = typeof g.fact_count === 'number' ? g.fact_count
+                : typeof g.facts === 'number' ? g.facts : null;
+              const recent = typeof g.recent_ingest_7d === 'number' ? g.recent_ingest_7d
+                : typeof g.recent_7d === 'number' ? g.recent_7d : null;
+              const score = typeof g.gap_score === 'number' ? g.gap_score
+                : typeof g.score === 'number' ? g.score : null;
+              const scoreColor = score == null ? C.textMuted
+                : score >= 0.8 ? C.red
+                : score >= 0.5 ? C.yellow
+                : C.green;
+              return (
+                <div key={`${domain}-${i}`} style={{
+                  display: 'flex', alignItems: 'center',
+                  gap: T.spacing.sm, padding: '7px 12px',
+                  background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+                  borderRadius: T.radii.md, minWidth: 0,
+                }}>
+                  <span style={{
+                    fontSize: '10px', color: C.textMuted,
+                    fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold,
+                    minWidth: '22px', textAlign: 'right',
+                  }}>#{i + 1}</span>
+                  <span style={{
+                    flex: 1, minWidth: 0, overflow: 'hidden',
+                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    color: C.text, fontFamily: T.typography.fontMono,
+                    fontSize: T.typography.sizeSm,
+                  }} title={domain}>{domain}</span>
+                  <span style={{
+                    display: 'flex', gap: '10px', alignItems: 'center',
+                    flexShrink: 0, fontSize: '10px',
+                    fontFamily: T.typography.fontMono, color: C.textDim,
+                  }}>
+                    {fc != null && <span title={`${fc.toLocaleString()} total facts`}>{fc.toLocaleString()}f</span>}
+                    {recent != null && <span title={`${recent.toLocaleString()} facts in the last 7d`}>7d:{recent.toLocaleString()}</span>}
+                  </span>
+                  <span style={{
+                    minWidth: '60px', textAlign: 'right',
+                    fontFamily: T.typography.fontMono, fontSize: T.typography.sizeSm,
+                    fontWeight: T.typography.weightBlack, color: scoreColor,
+                  }} title={`Gap score ${score != null ? score.toFixed(3) : '—'} (higher = thinner domain)`}>
+                    {score != null ? score.toFixed(3) : '—'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {running.length > 0 && (
+        <section aria-label='Running ingests'>
+          <div style={{
+            fontSize: '10px', fontWeight: 700, color: C.accent,
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: '6px',
+          }}>Running ({running.length})</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {running.map((r, i) => renderRow(r, i, 'running'))}
+          </div>
+        </section>
+      )}
+      {finished.length > 0 && (
+        <section aria-label='Finished ingests'>
+          <div style={{
+            fontSize: '10px', fontWeight: 700, color: C.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.1em',
+            marginBottom: '6px', marginTop: running.length > 0 ? T.spacing.md : 0,
+          }}>Finished ({finished.length})</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {finished.map((r, i) => renderRow(r, i, 'finished'))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+};

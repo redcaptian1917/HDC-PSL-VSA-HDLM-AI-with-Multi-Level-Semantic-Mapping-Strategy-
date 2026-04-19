@@ -120,8 +120,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           value={query}
           onChange={(e) => { setQuery(e.target.value); setIndex(0); }}
           onKeyDown={(e) => {
+            // c2-433 / task 281: full WAI-ARIA combobox kbd nav. Adds Home
+            // / End for jump-to-top/bottom + PageUp / PageDown for chunk
+            // jump (5-row jumps). Existing ArrowUp/Down + Enter unchanged.
             if (e.key === 'ArrowDown') { e.preventDefault(); setIndex(i => Math.min(i + 1, filtered.length - 1)); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); setIndex(i => Math.max(i - 1, 0)); }
+            else if (e.key === 'Home') { e.preventDefault(); setIndex(0); }
+            else if (e.key === 'End') { e.preventDefault(); setIndex(Math.max(0, filtered.length - 1)); }
+            else if (e.key === 'PageDown') { e.preventDefault(); setIndex(i => Math.min(i + 5, filtered.length - 1)); }
+            else if (e.key === 'PageUp') { e.preventDefault(); setIndex(i => Math.max(i - 5, 0)); }
             else if (e.key === 'Enter') { e.preventDefault(); runSelected(); }
           }}
           placeholder='Type a command or search conversations...'

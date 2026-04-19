@@ -14,6 +14,11 @@ export interface WelcomeScreenProps {
   isDesktop: boolean;
   onPickPrompt: (text: string) => void;
   recentContext?: { title: string; lastUserMsg?: string } | null;
+  // c2-433 / task 237: substrate fill snapshot from /api/health.
+  // When provided, renders a small "N facts · N axioms" line under the
+  // tagline so first-time visitors see the substrate is non-empty + the
+  // post-LLM positioning is concrete (this isn't an LLM wrapper).
+  substrate?: { concepts: number; axioms: number } | null;
 }
 
 // c0-023 fix: prior preset prompts produced poor responses from the
@@ -47,7 +52,7 @@ const pickStarters = (pool: typeof QUICK_START_POOL, n: number): typeof QUICK_ST
   return copy.slice(0, n);
 };
 
-export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPickPrompt, recentContext }) => {
+export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPickPrompt, recentContext, substrate }) => {
   // useMemo with [] dep array so the random pick is stable across re-renders
   // of THIS component instance. New mount (e.g. switching to an empty convo)
   // rolls fresh.
@@ -63,11 +68,28 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ C, isDesktop, onPi
     </h1>
     <p style={{
       fontSize: T.typography.sizeBody, color: C.textSecondary,
-      margin: `0 0 28px`, maxWidth: '440px', marginLeft: 'auto', marginRight: 'auto',
+      margin: `0 0 ${substrate ? T.spacing.md : '28px'}`, maxWidth: '440px', marginLeft: 'auto', marginRight: 'auto',
       lineHeight: T.typography.lineNormal,
     }}>
       Sovereign AI that runs on your hardware. Private by default, remembers across sessions.
     </p>
+    {/* c2-433 / task 237: substrate readiness chip on the welcome screen.
+        Concrete signal that the system has facts loaded (post-LLM
+        positioning: not "loading model weights" but "N facts indexed"). */}
+    {substrate && (substrate.concepts > 0 || substrate.axioms > 0) && (
+      <div style={{
+        display: 'inline-flex', gap: T.spacing.md, alignItems: 'center',
+        padding: '6px 14px', margin: `0 auto 28px`,
+        background: C.accentBg, border: `1px solid ${C.accentBorder}`,
+        borderRadius: T.radii.pill,
+        fontSize: T.typography.sizeXs, color: C.textSecondary,
+        fontFamily: T.typography.fontMono,
+      }}>
+        <span><strong style={{ color: C.text }}>{substrate.concepts.toLocaleString()}</strong> facts indexed</span>
+        <span style={{ color: C.borderSubtle }}>•</span>
+        <span><strong style={{ color: C.text }}>{substrate.axioms.toLocaleString()}</strong> PSL axioms</span>
+      </div>
+    )}
     {/* Contextual continuation card — shown only when a recent conversation
         exists. Pre-fills a resumption prompt so users don't stare at an
         empty blank page on return visits. */}

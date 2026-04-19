@@ -25,7 +25,7 @@ import type { Column } from './components';
 // affordance which users found cramped. Sortable + filterable tables, big-
 // number dashboard cards, bar-chart visualisations of domains + quality.
 
-export type AdminTab = 'dashboard' | 'inventory' | 'domains' | 'training' | 'quality' | 'system' | 'fleet' | 'logs';
+export type AdminTab = 'dashboard' | 'inventory' | 'domains' | 'training' | 'quality' | 'system' | 'fleet' | 'logs' | 'tokens';
 
 interface FleetInstance {
   id: string;
@@ -122,7 +122,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     if (initialTab !== 'dashboard') return initialTab;
     try {
       const stored = localStorage.getItem('lfi_admin_tab') as AdminTab | null;
-      const valid: AdminTab[] = ['dashboard', 'inventory', 'domains', 'training', 'quality', 'system', 'fleet', 'logs'];
+      const valid: AdminTab[] = ['dashboard', 'inventory', 'domains', 'training', 'quality', 'system', 'fleet', 'logs', 'tokens'];
       if (stored && valid.includes(stored)) return stored;
     } catch { /* storage blocked */ }
     return initialTab;
@@ -150,8 +150,21 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [sysInfo, setSysInfo] = useState<SystemShape | null>(null);
   const [fleet, setFleet] = useState<FleetShape | null>(null);
   const [logs, setLogs] = useState<string[] | null>(null);
+  // c2-433 / #305: Merkle-chained security-audit integrity. /api/audit/chain/verify
+  // returns {valid: bool, broken_at_idx?: number}. Poll every 60s while the
+  // Admin modal is open; banner turns red when the chain has been
+  // tampered with. Null = not yet fetched (banner hidden).
+  const [chainVerify, setChainVerify] = useState<null | { valid: boolean; broken_at_idx?: number | null; error?: string }>(null);
+  // c2-433 / #305 followup: expandable panel under the banner showing the
+  // last N audit-chain entries from /api/audit/chain/recent. Auto-expands
+  // when valid=false so the operator can inspect the events around the
+  // broken index without a click.
+  const [chainExpanded, setChainExpanded] = useState<boolean>(false);
+  const [chainRecent, setChainRecent] = useState<null | any[]>(null);
+  const [chainRecentErr, setChainRecentErr] = useState<string | null>(null);
+  const [chainRecentLoading, setChainRecentLoading] = useState<boolean>(false);
   const [err, setErr] = useState<Record<AdminTab, string | null>>({
-    dashboard: null, inventory: null, domains: null, training: null, quality: null, system: null, fleet: null, logs: null,
+    dashboard: null, inventory: null, domains: null, training: null, quality: null, system: null, fleet: null, logs: null, tokens: null,
   });
   const [loading, setLoading] = useState<AdminTab | null>(null);
   // c2-272: per-tab last-successful-load timestamp. Mirrors the Classroom
@@ -269,6 +282,66 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     // eslint-disable-next-line
   }, [tab]);
 
+  // c2-433 / #305: chain verify poll. Hits /api/audit/chain/verify on open
+  // + every 60s while the modal is mounted. A red Integrity banner appears
+  // when valid=false or the fetch itself errors — chain tampering and
+  // backend unreachability are both things the operator needs to see.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const r = await fetch(`http://${host}:3000/api/audit/chain/verify`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (cancelled) return;
+        const valid = data.valid === true;
+        const brokenAt = typeof data.broken_at_idx === 'number' ? data.broken_at_idx
+          : (typeof data.broken_idx === 'number' ? data.broken_idx : null);
+        setChainVerify({ valid, broken_at_idx: brokenAt });
+        // c2-433 / #305 followup: auto-expand the recent-entries panel
+        // the moment the chain breaks so the operator sees the events
+        // around the broken index without clicking. Idempotent: once
+        // the operator closes it manually (sets to false), a later
+        // verify that still reports broken won't re-open — we only
+        // auto-open on transition to invalid.
+        if (!valid) setChainExpanded(prev => prev ? prev : true);
+      } catch (e: any) {
+        if (!cancelled) setChainVerify({ valid: false, error: String(e?.message || e || 'unreachable') });
+      }
+    };
+    check();
+    const id = window.setInterval(check, 60_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [host]);
+
+  // c2-433 / #305 followup: fetch /api/audit/chain/recent when the panel
+  // expands. Refetches on every expand so operators see fresh data.
+  useEffect(() => {
+    if (!chainExpanded) return;
+    let cancelled = false;
+    (async () => {
+      setChainRecentLoading(true);
+      setChainRecentErr(null);
+      try {
+        const r = await fetch(`http://${host}:3000/api/audit/chain/recent?limit=20`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (cancelled) return;
+        const list: any[] = Array.isArray(data) ? data
+          : Array.isArray(data?.entries) ? data.entries
+          : Array.isArray(data?.items) ? data.items
+          : Array.isArray(data?.chain) ? data.chain
+          : [];
+        setChainRecent(list);
+      } catch (e: any) {
+        if (!cancelled) setChainRecentErr(String(e?.message || e || 'fetch failed'));
+      } finally {
+        if (!cancelled) setChainRecentLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [chainExpanded, host]);
+
   // ---- Tables: shared sort + filter state ----
   const [domainSort, setDomainSort] = useState<{ key: keyof DomainRow; dir: 'asc' | 'desc' }>({ key: 'facts', dir: 'desc' });
   const [domainFilter, setDomainFilter] = useState('');
@@ -365,6 +438,185 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         </div>
         <style>{`@keyframes scc-admin-spin { to { transform: rotate(360deg); } }`}</style>
 
+        {/* c2-433 / #305: Merkle-chained audit-log Integrity banner. Red if
+            /api/audit/chain/verify returned valid:false (chain has been
+            tampered with — broken_at_idx points at the first corrupt entry)
+            OR the endpoint itself was unreachable. Green pill when the
+            chain verifies. Hidden during the initial verify (null state)
+            to avoid a flash on open. */}
+        {chainVerify && (
+          chainVerify.valid ? (
+            <button type='button'
+              onClick={() => setChainExpanded(v => !v)}
+              title={chainExpanded ? 'Hide recent audit-chain entries' : 'Show recent audit-chain entries'}
+              aria-expanded={chainExpanded}
+              style={{
+                display: 'flex', alignItems: 'center', gap: T.spacing.sm,
+                padding: '6px 22px', fontSize: T.typography.sizeXs,
+                background: `${C.green}15`, color: C.green,
+                borderBottom: `1px solid ${C.borderSubtle}`,
+                border: 'none', borderTopLeftRadius: 0, borderTopRightRadius: 0,
+                fontFamily: T.typography.fontMono, fontWeight: 700,
+                letterSpacing: '0.04em', width: '100%',
+                cursor: 'pointer', textAlign: 'left',
+              }}>
+              <span style={{
+                width: '6px', height: '6px', borderRadius: '50%',
+                background: C.green, flexShrink: 0,
+              }} />
+              <span>AUDIT CHAIN VERIFIED</span>
+              <span aria-hidden='true' style={{ marginLeft: 'auto', opacity: 0.7 }}>{chainExpanded ? '▴' : '▾'}</span>
+            </button>
+          ) : (
+            <button type='button' role='alert'
+              onClick={() => setChainExpanded(v => !v)}
+              title={chainVerify.error ? `Verify endpoint unreachable: ${chainVerify.error} — click for recent entries` : 'The security audit chain has been tampered with — click for recent entries'}
+              aria-expanded={chainExpanded}
+              style={{
+                display: 'flex', alignItems: 'center', gap: T.spacing.md,
+                padding: '10px 22px', fontSize: T.typography.sizeSm,
+                background: C.redBg, color: C.red,
+                borderBottom: `1px solid ${C.redBorder}`,
+                border: 'none', borderTopLeftRadius: 0, borderTopRightRadius: 0,
+                fontWeight: T.typography.weightBold,
+                animation: 'scc-admin-integrity-pulse 2s ease-in-out infinite',
+                width: '100%', cursor: 'pointer', textAlign: 'left',
+                fontFamily: 'inherit',
+              }}>
+              <svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2.2' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+                <path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z' />
+                <line x1='12' y1='9' x2='12' y2='13' />
+                <line x1='12' y1='17' x2='12.01' y2='17' />
+              </svg>
+              <span style={{ flex: 1 }}>
+                {chainVerify.error ? (
+                  <>Audit chain verify failed — endpoint unreachable ({chainVerify.error}). Chain integrity cannot be confirmed.</>
+                ) : chainVerify.broken_at_idx != null ? (
+                  <>Audit chain integrity <strong>BROKEN</strong> at entry #{chainVerify.broken_at_idx} — a security audit event has been tampered with or the chain was truncated.</>
+                ) : (
+                  <>Audit chain integrity <strong>BROKEN</strong> — chain is invalid (broken index not reported).</>
+                )}
+              </span>
+              <span aria-hidden='true' style={{ opacity: 0.7, fontSize: T.typography.sizeMd }}>{chainExpanded ? '▴' : '▾'}</span>
+            </button>
+          )
+        )}
+        {/* c2-433 / #305 followup: expandable recent-entries panel. Fetches
+            /api/audit/chain/recent?limit=20 and renders a compact mono
+            table (idx, ts, event, hash-prefix). Auto-opens on chain
+            tampering; manually toggled via the banner click. The hash
+            column shows just the first 10 chars of the hex to keep the
+            row narrow. */}
+        {chainVerify && chainExpanded && (
+          <div style={{
+            padding: '8px 22px',
+            borderBottom: `1px solid ${C.borderSubtle}`,
+            background: C.bgInput, maxHeight: '220px', overflowY: 'auto',
+          }}>
+            {chainRecentLoading && (
+              <div style={{ color: C.textMuted, fontSize: T.typography.sizeXs, fontStyle: 'italic' }}>
+                Loading recent audit entries…
+              </div>
+            )}
+            {chainRecentErr && !chainRecentLoading && (
+              <div role='alert' style={{ color: C.red, fontSize: T.typography.sizeXs }}>
+                Could not load recent entries: {chainRecentErr}
+              </div>
+            )}
+            {chainRecent && !chainRecentLoading && !chainRecentErr && chainRecent.length === 0 && (
+              <div style={{ color: C.textDim, fontSize: T.typography.sizeXs, fontStyle: 'italic' }}>
+                No entries yet — the audit chain is empty.
+              </div>
+            )}
+            {chainRecent && !chainRecentLoading && chainRecent.length > 0 && (() => {
+              // c2-433 / #307: extract severity per row + compute a
+              // high-severity count. Anything tagged "High" (usually an
+              // auth rate-limit rejection per Claude 0's 04:05 spec) is
+              // what brute-force attempts look like in the chain.
+              const sevOf = (e: any): string => String(e.severity ?? e.level ?? '').toLowerCase();
+              const isHigh = (e: any) => {
+                const s = sevOf(e);
+                return s === 'high' || s === 'critical' || s === 'severe';
+              };
+              const highCount = chainRecent.filter(isHigh).length;
+              const sevColor = (s: string): string => {
+                if (s === 'high' || s === 'critical' || s === 'severe') return C.red;
+                if (s === 'warn' || s === 'warning' || s === 'medium') return C.yellow;
+                if (s === 'low' || s === 'info' || s === 'debug') return C.textDim;
+                return C.textMuted;
+              };
+              return (
+                <>
+                  {highCount > 0 && (
+                    <div role='status' style={{
+                      marginBottom: '8px', padding: '6px 10px',
+                      background: C.redBg, border: `1px solid ${C.redBorder}`,
+                      borderRadius: T.radii.sm, color: C.red,
+                      fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                      fontFamily: T.typography.fontMono, letterSpacing: '0.04em',
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                    }}>
+                      <svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2.4' strokeLinecap='round' strokeLinejoin='round' aria-hidden='true'>
+                        <path d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z' />
+                        <line x1='12' y1='9' x2='12' y2='13' />
+                        <line x1='12' y1='17' x2='12.01' y2='17' />
+                      </svg>
+                      <span>{highCount} high-severity event{highCount === 1 ? '' : 's'} in the last {chainRecent.length} — likely rate-limited auth (brute-force signal)</span>
+                    </div>
+                  )}
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '60px 160px 1fr 60px 100px',
+                    gap: '6px 12px', fontSize: '10px',
+                    fontFamily: T.typography.fontMono,
+                  }}>
+                    <div style={{ color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Idx</div>
+                    <div style={{ color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Timestamp</div>
+                    <div style={{ color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Event</div>
+                    <div style={{ color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sev</div>
+                    <div style={{ color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Hash</div>
+                    {chainRecent.map((e: any, i: number) => {
+                      const idx = e.idx ?? e.index ?? e.id ?? i;
+                      const ts = e.ts ?? e.timestamp ?? e.created_at ?? '';
+                      const tsStr = typeof ts === 'string' ? ts : typeof ts === 'number' ? new Date(ts).toISOString() : '';
+                      const kind = e.event ?? e.kind ?? e.type ?? e.action ?? 'event';
+                      const payload = e.data ?? e.payload ?? e.details ?? null;
+                      const hash = e.hash ?? e.prev_hash ?? e.digest ?? '';
+                      const hashShort = typeof hash === 'string' ? hash.slice(0, 10) : '';
+                      const isBroken = chainVerify.broken_at_idx != null && idx === chainVerify.broken_at_idx;
+                      const sev = sevOf(e);
+                      const high = isHigh(e);
+                      return (
+                        <React.Fragment key={`${idx}-${i}`}>
+                          <div style={{
+                            color: isBroken ? C.red : high ? C.red : C.accent,
+                            fontWeight: (isBroken || high) ? 900 : 700,
+                          }}>{isBroken ? '⚠ ' : high ? '⚠ ' : ''}#{idx}</div>
+                          <div style={{ color: C.textSecondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {tsStr ? tsStr.slice(0, 19).replace('T', ' ') : '—'}
+                          </div>
+                          <div style={{ color: high ? C.red : C.text, fontWeight: high ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            title={payload ? `${kind} · ${JSON.stringify(payload).slice(0, 200)}` : String(kind)}>
+                            {String(kind)}
+                          </div>
+                          <div style={{
+                            color: sevColor(sev),
+                            fontWeight: high ? 900 : 600,
+                            textTransform: 'uppercase', letterSpacing: '0.04em',
+                          }} title={sev ? `severity: ${sev}` : 'no severity reported'}>
+                            {sev ? sev.slice(0, 4) : '—'}
+                          </div>
+                          <div style={{ color: C.textDim }}>{hashShort ? `${hashShort}…` : '—'}</div>
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+        <style>{`@keyframes scc-admin-integrity-pulse { 0%, 100% { box-shadow: inset 0 0 0 0 ${C.red}00; } 50% { box-shadow: inset 0 -2px 0 0 ${C.red}aa; } }`}</style>
+
         {/* Tab bar — WAI-ARIA tablist with arrow-key navigation. */}
         <TabBar<AdminTab> C={C} label='Admin sections'
           padding='0 22px'
@@ -378,6 +630,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             { id: 'system', label: 'System' },
             { id: 'fleet', label: 'Fleet' },
             { id: 'logs', label: 'Logs' },
+            { id: 'tokens', label: 'Tokens' },
           ]}
           active={tab}
           onChange={setTab} />
@@ -1419,6 +1672,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               })()}
             </div>
           )}
+
+          {/* c2-433 / #303 capability tokens. Issue/list/revoke scoped
+              bearer creds. Backend stores SHA-256 hash at rest; we only
+              see the raw token once on issue, in the response — it's
+              shown in a one-time copy card, then never again. Every
+              issue+revoke is audit-chain logged. */}
+          {tab === 'tokens' && (
+            <TokensTab C={C} host={host} />
+          )}
         </div>
       </div>
     </div>
@@ -1442,3 +1704,367 @@ const DashCard: React.FC<{ C: any; label: string; value: string; color: string }
     </div>
   </div>
 );
+
+// c2-433 / #303: capability-tokens manager. List + issue + revoke against
+// /api/capability/tokens. The raw secret is only visible once — in the
+// POST response — so we surface a one-time "fresh token" card with a copy
+// button. Every issue and revoke is audit-chain logged server-side, so
+// rate-limit abuse is already visible in the Integrity banner expand.
+// Known capabilities per Claude 0's #307 spec: auth, research, hdc_encode.
+// Tolerant parser: the list GET may return array / {tokens} / {items}.
+const KNOWN_CAPABILITIES = ['auth', 'research', 'hdc_encode', 'ingest', 'admin'] as const;
+const TokensTab: React.FC<{ C: any; host: string }> = ({ C, host }) => {
+  const [tokens, setTokens] = useState<any[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [issueCapability, setIssueCapability] = useState<string>(KNOWN_CAPABILITIES[0]);
+  const [issueTtl, setIssueTtl] = useState<string>('86400'); // 1 day default
+  const [issueLabel, setIssueLabel] = useState<string>('');
+  const [issuing, setIssuing] = useState<boolean>(false);
+  const [issueErr, setIssueErr] = useState<string | null>(null);
+  const [freshToken, setFreshToken] = useState<{ token: string; capability: string; id?: string } | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  // c2-433 / #303 followup: two-click confirm pattern. First click sets
+  // confirmingRevokeId to the token id + arms a 3s timeout. Second click
+  // within that window actually fires the DELETE. Clicking a different
+  // token's Revoke or letting the timeout expire cancels the confirm.
+  // Prevents fat-finger revocation of live credentials.
+  const [confirmingRevokeId, setConfirmingRevokeId] = useState<string | null>(null);
+  const confirmTimeoutRef = useRef<number | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(`http://${host}:3000/api/capability/tokens`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const list: any[] = Array.isArray(data) ? data
+        : Array.isArray(data?.tokens) ? data.tokens
+        : Array.isArray(data?.items) ? data.items
+        : [];
+      setTokens(list);
+    } catch (e: any) {
+      setErr(String(e?.message || e || 'fetch failed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    load();
+    // c2-433 / #303 followup: 60s auto-refresh so expiry urgency coloring
+    // advances without manual refresh. Cheap — /api/capability/tokens is
+    // a list-only GET scoped to the operator's session.
+    const id = window.setInterval(load, 60_000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line
+  }, [host]);
+  // Unmount cleanup for the revoke-confirm timeout so we don't fire a
+  // setState into a stale component if the user closes Admin mid-confirm.
+  useEffect(() => () => {
+    if (confirmTimeoutRef.current) window.clearTimeout(confirmTimeoutRef.current);
+  }, []);
+
+  const issue = async () => {
+    setIssuing(true);
+    setIssueErr(null);
+    setFreshToken(null);
+    try {
+      const body: Record<string, any> = { capability: issueCapability };
+      const ttlSec = Number(issueTtl);
+      if (!Number.isNaN(ttlSec) && ttlSec > 0) body.ttl_seconds = ttlSec;
+      if (issueLabel.trim()) body.label = issueLabel.trim();
+      const r = await fetch(`http://${host}:3000/api/capability/tokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const rawToken = data.token ?? data.secret ?? data.bearer ?? data.value;
+      if (rawToken) {
+        setFreshToken({ token: String(rawToken), capability: issueCapability, id: data.id ?? data.token_id });
+      }
+      setIssueLabel('');
+      load();
+    } catch (e: any) {
+      setIssueErr(String(e?.message || e || 'issue failed'));
+    } finally {
+      setIssuing(false);
+    }
+  };
+
+  const revoke = async (id: string) => {
+    // Clear confirm state the moment we start the POST so a successful
+    // response can replace the row cleanly.
+    setConfirmingRevokeId(null);
+    if (confirmTimeoutRef.current) {
+      window.clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+    setRevokingId(id);
+    try {
+      const r = await fetch(`http://${host}:3000/api/capability/tokens/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      load();
+    } catch (e: any) {
+      setErr(`Revoke failed: ${String(e?.message || e || 'unknown')}`);
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  // c2-433 / #303 followup: arm the 3s confirm window. If the user clicks
+  // Revoke on a different token while a confirm is armed elsewhere, the
+  // previous window gets cancelled and the new one starts. Second click
+  // on the same id calls revoke() directly.
+  const armRevokeConfirm = (id: string) => {
+    if (confirmingRevokeId === id) {
+      // Second click — actually revoke.
+      revoke(id);
+      return;
+    }
+    if (confirmTimeoutRef.current) {
+      window.clearTimeout(confirmTimeoutRef.current);
+    }
+    setConfirmingRevokeId(id);
+    confirmTimeoutRef.current = window.setTimeout(() => {
+      setConfirmingRevokeId(null);
+      confirmTimeoutRef.current = null;
+    }, 3000);
+  };
+
+  const copyToken = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); } catch { /* blocked */ }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: T.spacing.lg }}>
+      {err && <ErrorAlert C={C} message={err} onRetry={load} retrying={loading} />}
+
+      {/* One-time fresh-token card. Shown for one render after a successful
+          POST, dismissable; the raw secret is lost the moment it closes. */}
+      {freshToken && (
+        <div role='alert' style={{
+          padding: T.spacing.lg, borderRadius: T.radii.xl,
+          background: `${C.green}12`, border: `2px solid ${C.green}`,
+          display: 'flex', flexDirection: 'column', gap: T.spacing.sm,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: T.spacing.sm,
+          }}>
+            <Label color={C.green}>New token · {freshToken.capability}</Label>
+            <button onClick={() => setFreshToken(null)}
+              aria-label='Dismiss fresh token card'
+              style={{
+                background: 'transparent', border: 'none', color: C.textMuted,
+                fontSize: T.typography.size2xl, cursor: 'pointer', padding: 0,
+                lineHeight: 1,
+              }}>{'\u2715'}</button>
+          </div>
+          <div style={{
+            fontSize: T.typography.sizeXs, color: C.textSecondary, lineHeight: 1.5,
+          }}>
+            Copy this secret now — it's hashed at rest and never shown again.
+          </div>
+          <div style={{ display: 'flex', gap: T.spacing.sm, alignItems: 'center' }}>
+            <code style={{
+              flex: 1, padding: '8px 10px', background: C.bgInput,
+              border: `1px solid ${C.borderSubtle}`, borderRadius: T.radii.sm,
+              fontFamily: T.typography.fontMono, fontSize: T.typography.sizeXs,
+              color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{freshToken.token}</code>
+            <button onClick={() => copyToken(freshToken.token)}
+              style={{
+                background: C.accent, color: '#fff', border: 'none',
+                borderRadius: T.radii.sm, padding: '6px 12px',
+                cursor: 'pointer', fontFamily: 'inherit', fontWeight: T.typography.weightBold,
+                fontSize: T.typography.sizeXs, letterSpacing: '0.04em',
+              }}>Copy</button>
+          </div>
+        </div>
+      )}
+
+      {/* Issue form */}
+      <div style={{
+        padding: T.spacing.lg, borderRadius: T.radii.xl,
+        background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+        display: 'flex', flexDirection: 'column', gap: T.spacing.sm,
+      }}>
+        <Label color={C.textMuted}>Issue a new token</Label>
+        <div style={{ display: 'flex', gap: T.spacing.sm, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={issueCapability} onChange={e => setIssueCapability(e.target.value)}
+            aria-label='Capability scope'
+            style={{
+              padding: '6px 10px', background: C.bgCard,
+              border: `1px solid ${C.borderSubtle}`, color: C.text,
+              borderRadius: T.radii.sm, fontFamily: 'inherit',
+              fontSize: T.typography.sizeSm,
+            }}>
+            {KNOWN_CAPABILITIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <input type='number' min='60' step='60' value={issueTtl}
+            onChange={e => setIssueTtl(e.target.value)}
+            aria-label='TTL in seconds'
+            placeholder='TTL (seconds)'
+            style={{
+              padding: '6px 10px', width: '130px', background: C.bgCard,
+              border: `1px solid ${C.borderSubtle}`, color: C.text,
+              borderRadius: T.radii.sm, fontFamily: T.typography.fontMono,
+              fontSize: T.typography.sizeSm,
+            }} />
+          <input type='text' value={issueLabel}
+            onChange={e => setIssueLabel(e.target.value)}
+            placeholder='Label (optional)'
+            aria-label='Token label'
+            style={{
+              flex: 1, minWidth: '160px',
+              padding: '6px 10px', background: C.bgCard,
+              border: `1px solid ${C.borderSubtle}`, color: C.text,
+              borderRadius: T.radii.sm, fontFamily: 'inherit',
+              fontSize: T.typography.sizeSm,
+            }} />
+          <button onClick={issue} disabled={issuing}
+            style={{
+              background: C.accent, color: '#fff', border: 'none',
+              borderRadius: T.radii.sm, padding: '6px 14px',
+              cursor: issuing ? 'wait' : 'pointer', fontFamily: 'inherit',
+              fontWeight: T.typography.weightBold,
+              fontSize: T.typography.sizeSm,
+              letterSpacing: '0.04em',
+            }}>{issuing ? 'Issuing…' : 'Issue'}</button>
+        </div>
+        {issueErr && (
+          <div style={{ color: C.red, fontSize: T.typography.sizeXs, fontFamily: T.typography.fontMono }}>
+            {issueErr}
+          </div>
+        )}
+      </div>
+
+      {/* Existing tokens */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: T.spacing.sm }}>
+          <Label color={C.textMuted}>
+            Active tokens{tokens ? ` (${tokens.length})` : ''}
+          </Label>
+          <button onClick={load} disabled={loading}
+            style={{
+              background: 'transparent', border: `1px solid ${C.borderSubtle}`,
+              color: C.textMuted, borderRadius: T.radii.sm,
+              cursor: loading ? 'wait' : 'pointer',
+              padding: '4px 10px', fontFamily: 'inherit',
+              fontSize: T.typography.sizeXs, fontWeight: T.typography.weightSemibold,
+            }}>{loading ? 'Refreshing…' : 'Refresh'}</button>
+        </div>
+        {tokens != null && tokens.length === 0 && !err && (
+          <div style={{
+            padding: T.spacing.lg, textAlign: 'center',
+            color: C.textMuted, fontSize: T.typography.sizeSm,
+            background: C.bgInput, border: `1px dashed ${C.borderSubtle}`,
+            borderRadius: T.radii.md,
+          }}>
+            No active capability tokens. Issue one above to scope a bearer credential.
+          </div>
+        )}
+        {tokens != null && tokens.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {tokens.map((t: any, i: number) => {
+              const id: string = String(t.id ?? t.token_id ?? t.uuid ?? i);
+              const capability: string = t.capability ?? t.scope ?? '?';
+              const label: string = t.label ?? '';
+              const hashPrefix: string = (t.hash ?? t.token_hash ?? '').toString().slice(0, 12);
+              const createdAt = t.created_at ?? t.issued_at;
+              const expiresAt = t.expires_at ?? t.expiry;
+              const revoked = t.revoked === true || t.active === false;
+              return (
+                <div key={id} style={{
+                  padding: '10px 12px', borderRadius: T.radii.md,
+                  background: C.bgCard,
+                  border: `1px solid ${revoked ? C.redBorder : C.borderSubtle}`,
+                  opacity: revoked ? 0.55 : 1,
+                  display: 'flex', alignItems: 'center', gap: T.spacing.sm, flexWrap: 'wrap',
+                }}>
+                  <span style={{
+                    fontSize: '9px', fontWeight: 800,
+                    color: revoked ? C.red : C.accent,
+                    background: revoked ? C.redBg : C.accentBg,
+                    border: `1px solid ${revoked ? C.redBorder : C.accentBorder}`,
+                    borderRadius: T.radii.sm, padding: '1px 6px',
+                    fontFamily: T.typography.fontMono,
+                    textTransform: 'uppercase', letterSpacing: '0.06em',
+                  }}>{revoked ? 'revoked' : capability}</span>
+                  <span style={{
+                    fontFamily: T.typography.fontMono, fontSize: T.typography.sizeXs,
+                    color: C.textMuted,
+                  }} title={`Token id ${id}`}>#{id.slice(0, 8)}</span>
+                  {hashPrefix && (
+                    <span title={`SHA-256 hash ${hashPrefix}…`}
+                      style={{
+                        fontFamily: T.typography.fontMono, fontSize: '10px', color: C.textDim,
+                      }}>h:{hashPrefix}…</span>
+                  )}
+                  {label && (
+                    <span style={{
+                      flex: 1, minWidth: 0, color: C.text,
+                      fontSize: T.typography.sizeSm,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{label}</span>
+                  )}
+                  {!label && <span style={{ flex: 1 }} />}
+                  {createdAt && (
+                    <span style={{
+                      fontFamily: T.typography.fontMono, fontSize: '10px', color: C.textDim,
+                    }} title={`Issued ${createdAt}`}>iss {formatRelative(typeof createdAt === 'number' ? createdAt : Date.parse(String(createdAt)))}</span>
+                  )}
+                  {expiresAt && (() => {
+                    // c2-433 / #303 followup: expiry urgency coloring. Red
+                    // when already expired, red when < 5m remaining, yellow
+                    // when < 1h remaining, textDim otherwise. Makes
+                    // near-expiry tokens visible at a scan so operators
+                    // rotate before a service cliff.
+                    const expMs = typeof expiresAt === 'number' ? expiresAt : Date.parse(String(expiresAt));
+                    const remaining = expMs - Date.now();
+                    const expired = remaining <= 0;
+                    const urgent = remaining > 0 && remaining < 5 * 60 * 1000;
+                    const soon = remaining >= 5 * 60 * 1000 && remaining < 60 * 60 * 1000;
+                    const color = expired || urgent ? C.red : soon ? C.yellow : C.textDim;
+                    const weight = (expired || urgent) ? 700 : 400;
+                    return (
+                      <span style={{
+                        fontFamily: T.typography.fontMono, fontSize: '10px',
+                        color, fontWeight: weight,
+                      }} title={`Expires ${expiresAt}${expired ? ' (already expired)' : ''}`}>
+                        {expired ? 'expired' : 'exp'} {formatRelative(expMs)}
+                      </span>
+                    );
+                  })()}
+                  {!revoked && (() => {
+                    const isConfirming = confirmingRevokeId === id;
+                    const isRevoking = revokingId === id;
+                    return (
+                      <button onClick={() => armRevokeConfirm(id)} disabled={isRevoking}
+                        title={isConfirming ? 'Click again within 3s to revoke this token' : 'Revoke this token (requires a second click to confirm)'}
+                        style={{
+                          background: isConfirming ? C.red : 'transparent',
+                          color: isConfirming ? '#fff' : C.red,
+                          border: `1px solid ${C.redBorder}`,
+                          borderRadius: T.radii.sm, padding: '3px 9px',
+                          cursor: isRevoking ? 'wait' : 'pointer',
+                          fontFamily: 'inherit', fontWeight: T.typography.weightBold,
+                          fontSize: '10px', letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          animation: isConfirming ? 'scc-admin-integrity-pulse 1.2s ease-in-out infinite' : undefined,
+                        }}>{isRevoking ? 'Revoking…' : isConfirming ? 'Confirm?' : 'Revoke'}</button>
+                    );
+                  })()}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

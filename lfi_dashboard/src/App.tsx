@@ -33,10 +33,22 @@ import 'highlight.js/styles/github-dark.css';
 // O(conversations). Pinned + day-bucket clusters map 1:1 to Virtuoso
 // groups, which gives us native sticky headers for free.
 import { GroupedVirtuoso } from 'react-virtuoso';
-import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportConversationTxt, exportAllAsJson, formatRelative, formatDayBucket, mod, modKey, stripMarkdown } from './util';
-import { TrainingDashboardContent } from './TrainingDashboard';
+import { compactNum, formatRam, formatTime, copyToClipboard, diskPressure, smartTitle, exportConversationMd, exportConversationPdf, exportConversationTxt, exportAllAsJson, formatRelative, formatDayBucket, mod, modKey, stripMarkdown, hapticTick, flashMessageById } from './util';
+import { useToastQueue } from './useToastQueue';
+import { useFeedbackModals } from './useFeedbackModals';
+import { useChatSearch } from './useChatSearch';
+import { useThinkingState } from './useThinkingState';
+import { useSlashMenu } from './useSlashMenu';
+import { useConvoDrag } from './useConvoDrag';
+import { useMessageEdit } from './useMessageEdit';
+import { useChatStreaming } from './useChatStreaming';
+// c2-433: TrainingDashboardContent only renders inside the showTraining
+// modal — lazy so the chat-only paint doesn't pay the chart bytes.
+const TrainingDashboardContent = React.lazy(() => import('./TrainingDashboard').then(m => ({ default: m.TrainingDashboardContent })));
 import { AppErrorBoundary } from './AppErrorBoundary';
-import { LoginScreen } from './LoginScreen';
+// c2-433: LoginScreen only renders on the unauth path (passwordless mode
+// keeps isAuthenticated=true by default). Lazy so the common case skips it.
+const LoginScreen = React.lazy(() => import('./LoginScreen').then(m => ({ default: m.LoginScreen })));
 import { SKILLS, AVATAR_PRESETS, type Skill as CatalogSkill } from './catalogs';
 import { SystemMessage, WebMessage, ToolMessage, UserMessage, AssistantMessage } from './MessageBubble';
 // Code-splitting: the overlays below are only rendered on user action, so we
@@ -44,11 +56,18 @@ import { SystemMessage, WebMessage, ToolMessage, UserMessage, AssistantMessage }
 import { type CmdPaletteItem } from './CommandPalette';
 import { DARK, THEMES } from './themes';
 import { T } from './tokens';
-import { WelcomeScreen } from './WelcomeScreen';
-import { FactsPanel } from './FactsPanel';
-import { QosPanel } from './QosPanel';
-import { DomainsPanel } from './DomainsPanel';
-import { AccuracyPanel } from './AccuracyPanel';
+// c2-433: WelcomeScreen lazy — only renders when there are zero messages
+// in the current convo. First-paint of an existing convo doesn't pay for it.
+const WelcomeScreen = React.lazy(() => import('./WelcomeScreen').then(m => ({ default: m.WelcomeScreen })));
+// c2-433: 4 telemetry-sidebar panels are desktop-sidebar-only. Mobile +
+// non-developer-mode visits don't render them — lazy so the initial paint
+// doesn't pay for the DataTable + chart bytes they pull in. They render
+// inside renderSidebar() which is gated on isDesktop, and the parent
+// React.Suspense boundary catches the chunk loads.
+const FactsPanel = React.lazy(() => import('./FactsPanel').then(m => ({ default: m.FactsPanel })));
+const QosPanel = React.lazy(() => import('./QosPanel').then(m => ({ default: m.QosPanel })));
+const DomainsPanel = React.lazy(() => import('./DomainsPanel').then(m => ({ default: m.DomainsPanel })));
+const AccuracyPanel = React.lazy(() => import('./AccuracyPanel').then(m => ({ default: m.AccuracyPanel })));
 // Full-screen admin console (c0-017). Lazy because it bundles 6 tabs of
 // panels that are only seen when the user clicks the Admin entry.
 const AdminModal = React.lazy(() => import('./AdminModal').then(m => ({ default: m.AdminModal })));
@@ -63,9 +82,11 @@ const LibraryView = React.lazy(() => import('./LibraryView').then(m => ({ defaul
 // c0-037 #12 / c2-331: Auditorium — AVP-2 audit state surface.
 const AuditoriumView = React.lazy(() => import('./AuditoriumView').then(m => ({ default: m.AuditoriumView })));
 import { TelemetryCard } from './TelemetryCards';
-import { SidebarStatus } from './SidebarStatus';
-import { SubstrateTelemetry } from './SubstrateTelemetry';
-import { AdminActions } from './AdminActions';
+// c2-433: 3 more telemetry-sidebar components, lazy for the same reason
+// as the panels above. All render inside renderSidebar() (isDesktop only).
+const SidebarStatus = React.lazy(() => import('./SidebarStatus').then(m => ({ default: m.SidebarStatus })));
+const SubstrateTelemetry = React.lazy(() => import('./SubstrateTelemetry').then(m => ({ default: m.SubstrateTelemetry })));
+const AdminActions = React.lazy(() => import('./AdminActions').then(m => ({ default: m.AdminActions })));
 import { renderMessageBody as renderMdBody, type MarkdownCtx } from './markdown';
 import { useTicTacToe } from './useTicTacToe';
 import { useStatusPoll, useQualityPoll, useSysInfoPoll } from './usePolls';
@@ -77,6 +98,7 @@ const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ 
 // ~200 KB and most sessions never open it.
 const XTermModal = React.lazy(() => import('./XTermModal').then(m => ({ default: m.XTermModal })));
 const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
+import type { KnowledgeDue } from './KnowledgeBrowser';
 const ActivityModal = React.lazy(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })));
 const CommandPalette = React.lazy(() => import('./CommandPalette').then(m => ({ default: m.CommandPalette })));
 const SettingsModal = React.lazy(() => import('./SettingsModal').then(m => ({ default: m.SettingsModal })));
@@ -196,27 +218,71 @@ const SovereignCommandConsole: React.FC = () => {
   // c2-371 / task 79: set when the last assistant turn errored out -- lets
   // us render an inline Retry affordance that resends the prior user
   // message. Cleared on successful next send or manual dismiss.
-  const [lastErrorRetry, setLastErrorRetry] = useState<{ userContent: string; at: number } | null>(null);
+  // c2-433 / #313 pass 8: chat streaming + last-error-retry state lifted
+  // into useChatStreaming. Hook owns the 500ms tick interval (only running
+  // when a stream is active) + chars-per-second derivation.
+  const cstr = useChatStreaming();
+  const lastErrorRetry = cstr.lastError;
+  const setLastErrorRetry = cstr.setLastError;
   // c2-387 / BIG #176: pending branch marker. Set by onCommitEdit immediately
   // before the resend; the next user-message append inside handleSend stamps
   // _branchedFromId onto the new bubble so the UI can render a "Branch" tag.
   // Cleared in handleSend after being consumed so subsequent normal sends
   // don't inherit the flag.
   const pendingBranchFromRef = useRef<number | null>(null);
-  // c2-372 / task 105: streaming throughput tracker. startAt = ms timestamp
-  // of the first chat_chunk; chars grows with every subsequent chunk.
-  // null when no stream is active. Used to render a live tokens/s chip
-  // during response generation.
-  const [streamTiming, setStreamTiming] = useState<{ startAt: number; chars: number } | null>(null);
-  // Tick once per 500 ms so the tokens/s readout updates visibly without
-  // causing a re-render storm. The effect runs only while a stream is live.
-  const [streamTimingTick, setStreamTimingTick] = useState(0);
-  useEffect(() => {
-    if (!streamTiming) return;
-    const id = setInterval(() => setStreamTimingTick(t => t + 1), 500);
-    return () => clearInterval(id);
-  }, [streamTiming != null]);
+  // c2-372 / task 105 / c2-433 #313 pass 8: streaming throughput tracker
+  // moved into useChatStreaming. cstr.timing carries startAt + chars; the
+  // tick interval lives in the hook. Local aliases below preserve existing
+  // call-site shape (setStreamTiming, streamTimingTick) so the surrounding
+  // chunk handler + render path don't have to change.
+  const streamTiming = cstr.timing;
+  const streamTimingTick = cstr.tick;
   const [isConnected, setIsConnected] = useState(false);
+  // c2-433 / task 236+253: substrate health stats from /api/health (concepts +
+  // axioms) + chat-throughput from /api/metrics (lfi_chat_total counter).
+  // Both polled in the same 30s cycle to amortize network overhead. null =
+  // haven't fetched yet; missing fields stay 0. Chip is hidden until we
+  // have a confirmed payload so the UI doesn't render zero-value chrome.
+  const [substrateStats, setSubstrateStats] = useState<{ concepts: number; axioms: number; chatTotal: number } | null>(null);
+  // c2-433 / #298: pending contradiction count from /api/contradictions/recent.
+  // Feeds a small red badge on the Classroom tab button + a tooltip line so
+  // the user can see at a glance that the ledger has unresolved disagreements
+  // ready for triage. null = never-loaded (hide badge), 0 = loaded-empty
+  // (also hide), >0 = badge with compact number.
+  const [contradictionsPending, setContradictionsPending] = useState<number | null>(null);
+  // c2-433 / #298 followup: rise-detection ref + pulse state. When the
+  // latest poll returns a count strictly greater than the previous count,
+  // we bump badgePulseId to trigger a 3s CSS scale animation on the
+  // badge — tiny but genuinely catches the eye when a new contradiction
+  // lands while the operator is on another tab.
+  const prevContradictionsRef = useRef<number | null>(null);
+  const [contradictionsPulseId, setContradictionsPulseId] = useState<number>(0);
+  // c2-433 / #256: HDC encode-cache coverage from /api/hdc/cache/stats.
+  // {sample_cached, sample_size, coverage 0..1}. Appended to the substrate
+  // chip as "cache N%" so users can glance-see whether recent queries are
+  // hitting cached encodings (coverage=0 means every query re-encodes).
+  const [hdcCache, setHdcCache] = useState<{ coverage: number; sample_cached: number; sample_size: number } | null>(null);
+  // c2-433 / #316 / #300: pre-send dry-run of the chat pipeline via
+  // /api/explain. Debounced ~450ms on input typing so we don't hammer the
+  // endpoint on every keystroke; returns { speech_act, extracted_concept,
+  // rag_top_facts, causal_preview, topic_stack, gate_verdicts } which we
+  // render as predicted-module chips above the input. Null = no preview
+  // yet (input too short or offline).
+  const [explainPreview, setExplainPreview] = useState<null | {
+    speech_act?: string;
+    extracted_concept?: string;
+    rag_top_facts?: any[];
+    causal_preview?: any;
+    topic_stack?: any;
+    gate_verdicts?: any;
+    [k: string]: any;
+  }>(null);
+  // c2-433 / #307: when /api/explain returns 429, stash the Retry-After
+  // deadline here. The effect skips fetches until Date.now() passes the
+  // deadline; the preview row shows a "rate limited · Ns" chip with a
+  // 1s ticker counting down. null = no active rate-limit.
+  const [explainRateLimitUntil, setExplainRateLimitUntil] = useState<number | null>(null);
+  const [explainRateLimitTick, setExplainRateLimitTick] = useState<number>(0);
   // Debounced disconnect banner — avoid flashing the banner on the initial
   // pre-connect moment or on momentary reconnects under 2s.
   const [showDisconnectBanner, setShowDisconnectBanner] = useState(false);
@@ -242,13 +308,13 @@ const SovereignCommandConsole: React.FC = () => {
   // `exiting` decouples the display-done moment from the DOM unmount so we
   // can run an exit animation before removing the node.
   // `onUndo` populates an Undo button inside the toast (soft-delete flow).
-  // c2-242 / #103: toast queue. Previously a single-slot state so a new toast
-  // clobbered the old one — bulk ops (delete 5 archived convos in a row) made
-  // only the last confirmation visible. Now an array; each entry has its own
-  // auto-dismiss timer scheduled exactly once, tracked via scheduledToastIds.
-  type ToastEntry = { id: number; msg: string; exiting?: boolean; onUndo?: () => void };
-  const [toasts, setToasts] = useState<ToastEntry[]>([]);
-  const scheduledToastIds = useRef<Set<number>>(new Set());
+  // c2-242 / #103 / c2-433 #313: toast queue lifted into useToastQueue hook.
+  // Renderer reads `toasts`; producers call `showToast(msg, onUndo?)`; click-
+  // to-dismiss calls `dismiss(id)`. setToasts kept exposed for the (rare)
+  // mutation paths that still touch the array directly (exiting flag flips,
+  // bulk delete on hash change). The two-phase auto-dismiss + per-id
+  // schedule guard now lives in the hook, off App.tsx.
+  const { toasts, showToast, dismiss: dismissToast } = useToastQueue();
   // c2-397 / task 200: global Cmd+Z undo for the last delete. Written by
   // deleteConversation alongside its toast-undo button; cleared after the
   // toast hold window so a stale Cmd+Z doesn't resurrect an old entry.
@@ -258,9 +324,57 @@ const SovereignCommandConsole: React.FC = () => {
   // helper (send path + slash commands) — not by natural typing, since
   // the browser's native undo handles that.
   const draftBackupRef = useRef<{ text: string; at: number } | null>(null);
+  // c2-433 / task 250+251: prompt history ring buffer. Last 10 sent inputs;
+  // Shift+ArrowUp walks back, Shift+ArrowDown walks forward (or clears at
+  // the recent end). Capacity 10 — beyond that and users should use
+  // chat-search to find the prompt they want. Cursor -1 means "not
+  // navigating" (next ArrowUp lands at the most recent entry). Persisted
+  // to localStorage so it survives reloads — read once at mount, written
+  // each time handleSend pushes a new entry.
+  const PROMPT_HISTORY_LS_KEY = 'lfi_prompt_history_v1';
+  const promptHistoryRef = useRef<string[]>((() => {
+    try {
+      const raw = localStorage.getItem(PROMPT_HISTORY_LS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0).slice(-10);
+    } catch { return []; }
+  })());
+  const promptHistoryCursorRef = useRef<number>(-1);
+  // c2-433 / task 243: force a re-render after handleSend writes
+  // draftBackupRef so the Restore chip appears. Bumped by clearInputWithBackup
+  // when a non-empty draft is captured.
+  const [draftBackupTick, setDraftBackupTick] = useState<number>(0);
   const clearInputWithBackup = (current: string) => {
-    if (current.trim()) draftBackupRef.current = { text: current, at: Date.now() };
+    if (current.trim()) {
+      draftBackupRef.current = { text: current, at: Date.now() };
+      setDraftBackupTick(t => t + 1);
+    }
     setInput('');
+  };
+  // c2-433 / task 252c: programmatic setInput + auto-grow + cursor-end.
+  // setInput from React doesn't fire the textarea's onChange, so the height
+  // auto-grow + cursor placement that handleInputChange does must be done
+  // manually anywhere we recall a value (prompt history, restore-prompt
+  // pill, legacy lastUser fallback). Single helper avoids drift.
+  const setInputAndResize = (value: string) => {
+    setInput(value);
+    setTimeout(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = (value.length === 0 ? '' : Math.min(el.scrollHeight, 280) + 'px');
+      el.selectionStart = el.selectionEnd = el.value.length;
+    }, 0);
+  };
+  const restoreDraftBackup = () => {
+    const b = draftBackupRef.current;
+    if (!b) return;
+    setInputAndResize(b.text);
+    inputRef.current?.focus();
+    draftBackupRef.current = null;
+    setDraftBackupTick(t => t + 1);
   };
   // c2-400 / task 185: floating right-click menu over chat messages. Role
   // disambiguates which action set to render. Closes on outside click + Esc
@@ -271,41 +385,119 @@ const SovereignCommandConsole: React.FC = () => {
   // "visual feedback on send"). Tracked as a bumping id so consecutive sends
   // retrigger the animation cleanly.
   const [sendPulseId, setSendPulseId] = useState(0);
-  // Negative-feedback modal target. Per c0-008 bug #4: thumbs-down opens a
-  // category picker + free-text field instead of a browser prompt().
-  const [negFeedbackFor, setNegFeedbackFor] = useState<{ msgId: number; conclusionId?: number } | null>(null);
-  const [negFeedbackCategory, setNegFeedbackCategory] = useState<string>('Incorrect');
-  const [negFeedbackText, setNegFeedbackText] = useState<string>('');
+  // c2-433 / #313: feedback modal state lifted into useFeedbackModals.
+  // Negative modal carries category+text drafts; Correct modal carries a
+  // single correction-text draft + the AI reply for context display. The
+  // hook gives us scoped open/close callbacks so callers don't have to
+  // reset draft fields by hand.
+  const fb = useFeedbackModals();
+  const negFeedbackFor = fb.negFeedbackFor;
+  const negFeedbackCategory = fb.negFeedbackCategory;
+  const negFeedbackText = fb.negFeedbackText;
+  const setNegFeedbackCategory = fb.setNegFeedbackCategory;
+  const setNegFeedbackText = fb.setNegFeedbackText;
+  const correctFeedbackFor = fb.correctFeedbackFor;
+  const correctFeedbackText = fb.correctFeedbackText;
+  const setCorrectFeedbackText = fb.setCorrectFeedbackText;
+  // c2-433 / #317: fact-key inspection popover. Anchored at click position;
+  // fetched lazily once on open. data shape is whatever /api/facts/:key
+  // returns — the popover renders known fields (subj/pred/obj/source/PSL/
+  // trust/temporal_class) and falls back to JSON for unknown shapes.
+  const [factPopover, setFactPopover] = useState<{
+    key: string; x: number; y: number;
+    data: any | null; error: string | null; loading: boolean;
+  } | null>(null);
+  // c2-433 / task 240: toggle between structured-fields view and raw JSON
+  // inside the fact popover. Flag is reset whenever a new popover opens
+  // (different key = different shape, want to start in the friendly view).
+  const [factPopoverRaw, setFactPopoverRaw] = useState<boolean>(false);
+  // c2-433 / #337 followup: in-flight FSRS review from inside the fact
+  // popover. Boolean is sufficient because only one popover is open at a
+  // time. Disables all 4 rating buttons during POST so a double-click
+  // can't fire two grades for the same card.
+  const [factReviewing, setFactReviewing] = useState<boolean>(false);
   // Tracks whether the chat is scrolled to the latest message. False = user
   // is reading history; we surface a "scroll to bottom" affordance.
   const [chatAtBottom, setChatAtBottom] = useState(true);
+  // c2-433 / task 249b: track messages.length at the moment the user
+  // scrolled away from the bottom — drives the "+N new" badge on the
+  // scroll-to-bottom FAB. Reset when the user scrolls back to bottom OR
+  // clicks the FAB. Tracks length, not message-id, so chat_chunk in-place
+  // growth doesn't inflate the count (only fully-new messages do).
+  const scrollAwayLengthRef = useRef<number | null>(null);
   const chatViewRef = useRef<ChatViewHandle>(null);
   // Index of the topmost-visible message in Virtuoso. Drives the floating
   // day-header pinned at the top of the chat pane.
   const [chatTopIndex, setChatTopIndex] = useState(0);
-  // In-conversation message search (Cmd+Shift+F). When non-empty, the chat
-  // list renders only matching messages.
-  const [chatSearch, setChatSearch] = useState<string>('');
-  const [showChatSearch, setShowChatSearch] = useState<boolean>(false);
-  // Search mode: 'filter' hides non-matching messages (default, focused
-  // view), 'highlight' keeps all messages visible and marks matches in
-  // place. User toggles via a button in the search bar.
-  const [chatSearchMode, setChatSearchMode] = useState<'filter' | 'highlight'>('filter');
-  // c2-256 / #118: cursor into the matching-message index list. Enter cycles
-  // forward, Shift+Enter backward, scrollToIndex brings the match into view.
-  // Reset to 0 whenever the query changes.
-  const [chatSearchCursor, setChatSearchCursor] = useState(0);
-  const chatSearchInputRef = useRef<HTMLInputElement>(null);
-  const showToast = useCallback((msg: string, onUndo?: () => void) => {
-    // Date.now() + random to avoid id collisions when two toasts fire in the
-    // same ms (e.g. async then sync path both landing).
-    const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, msg, onUndo }]);
-  }, []);
-  const [isThinking, setIsThinking] = useState(false);
-  const [thinkingStart, setThinkingStart] = useState<number | null>(null);
-  const [thinkingStep, setThinkingStep] = useState<string>('');
-  const [thinkingElapsed, setThinkingElapsed] = useState<number>(0);
+  // c2-433 / #313 pass 3: chat search state + helpers lifted into
+  // useChatSearch. Hook owns query/show/mode/cursor + the input ref +
+  // open/close/toggle that maintain the focus + reset invariants.
+  const cs = useChatSearch();
+  const chatSearch = cs.query;
+  const showChatSearch = cs.show;
+  const chatSearchMode = cs.mode;
+  const chatSearchCursor = cs.cursor;
+  const chatSearchInputRef = cs.inputRef;
+  const setChatSearch = cs.setQuery;
+  const setChatSearchMode = cs.setMode;
+  const setChatSearchCursor = cs.setCursor;
+  // c2-433 / #313 pass 4: thinking lifecycle (isThinking + thinkingStart +
+  // thinkingStep + thinkingElapsed + activeModule + modulesUsed) lifted into
+  // useThinkingState. Hook owns the elapsed-tick interval + start/stop/reset
+  // invariants. Setter passthroughs (setIsThinking, setThinkingStep,
+  // setActiveModule, setThinkingStart) kept exposed for the WS handler that
+  // pokes individual fields mid-stream. recordModule(name) updates active +
+  // adds to modulesUsed Set.
+  const ts = useThinkingState();
+  const isThinking = ts.isThinking;
+  const thinkingStart = ts.thinkingStart;
+  const thinkingStep = ts.thinkingStep;
+  const thinkingElapsed = ts.thinkingElapsed;
+  const activeModule = ts.activeModule;
+  const modulesUsed = ts.modulesUsed;
+  const setIsThinking = ts.setIsThinking;
+  const setThinkingStart = ts.setThinkingStart;
+  const setThinkingStep = ts.setThinkingStep;
+  const setActiveModule = ts.setActiveModule;
+  // c2-433 / task 255: mirror modulesUsed into a ref so the WS chat_done
+  // handler (closure captured at WS-effect setup, deps:[isAuthenticated])
+  // can read the current set instead of the empty initial value. Without
+  // this mirror the chat_modules_used log event would never fire because
+  // the closure only sees the modulesUsed at WS-setup time.
+  const modulesUsedRef = useRef<Set<string>>(modulesUsed);
+  useEffect(() => { modulesUsedRef.current = modulesUsed; }, [modulesUsed]);
+  // c2-433 / task 259: same closure-staleness pattern for isThinking — used
+  // by ws.onclose to decide whether the WS death interrupted an active
+  // stream (in which case we set lastError so the Retry pill shows).
+  const isThinkingRef = useRef<boolean>(isThinking);
+  useEffect(() => { isThinkingRef.current = isThinking; }, [isThinking]);
+  // c2-433 / #352: topic context for multi-turn pronoun resolution. Backend
+  // (post topic_stack ship) emits the active topic on chat_progress; UI
+  // surfaces it as a chip so users see what 'them' / 'it' will resolve to.
+  // null = no topic yet (fresh session or backend not emitting).
+  const [activeTopic, setActiveTopic] = useState<string | null>(null);
+  // c2-433 / task 259: mirror messages so ws.onclose can find the last
+  // user-turn for the retry-pill content without closing over stale state.
+  const messagesRef = useRef<typeof messages>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  // c2-433 / task 260: mirror currentConversationId for applyToStreamingConvo
+  // — without this the WS handlers comparison "targetId === currentConvId"
+  // reads stale closure state, causing chat_chunks from the original
+  // streaming convo to bleed into the now-active convo when the user
+  // switches mid-stream. The fix the previous-author intended (streaming
+  // ConvoIdRef) handled the conversations-write side but not the messages
+  // gate. Combined with that ref, the bleed is fully sealed.
+  const currentConversationIdRef = useRef<string>(currentConversationId);
+  useEffect(() => { currentConversationIdRef.current = currentConversationId; }, [currentConversationId]);
+  // c2-433 / task 261: same closure-staleness fix for settings (used by the
+  // OS-notification block in chat_done — toggling notifyOnReply mid-session
+  // wouldn't take effect because the WS closure held the WS-setup-time
+  // value) and conversations (used to find the streaming convo's last
+  // assistant message for the notification preview).
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+  const conversationsRef = useRef(conversations);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
   const [expandedReasoning, setExpandedReasoning] = useState<number | null>(null);
   const [showTelemetry, setShowTelemetry] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -439,9 +631,14 @@ const SovereignCommandConsole: React.FC = () => {
   type Skill = CatalogSkill;
   const [activeSkill, setActiveSkill] = useState<Skill>('chat');
   const [showSkillMenu, setShowSkillMenu] = useState(false);
-  const [showSlashMenu, setShowSlashMenu] = useState(false);
-  const [slashFilter, setSlashFilter] = useState('');
-  const [slashIndex, setSlashIndex] = useState(0);
+  // c2-433 / #313 pass 5: slash-menu state lifted into useSlashMenu. Hook
+  // bundles the open-resets-index + filter-resets-index invariants. Call
+  // sites use sm.open/close/moveUp/moveDown directly — the older bare-setter
+  // shape isn't reconstructed.
+  const sm = useSlashMenu();
+  const showSlashMenu = sm.show;
+  const slashFilter = sm.filter;
+  const slashIndex = sm.index;
 
   type SlashCmd = { cmd: string; label: string; desc: string; run: () => void };
   const slashCommands: SlashCmd[] = [
@@ -455,12 +652,8 @@ const SovereignCommandConsole: React.FC = () => {
       run: () => setShowSettings(true) },
     { cmd: '/logs', label: 'Activity logs', desc: 'Chat log + UI events',
       run: () => { setAdminInitialTab('logs'); setShowAdmin(true); fetchChatLog(50); } },
-    { cmd: '/pulse', label: 'Model: Pulse', desc: 'Fast tier',
-      run: () => handleTierSwitch('Pulse') },
-    { cmd: '/bridge', label: 'Model: Bridge', desc: 'Balanced tier',
-      run: () => handleTierSwitch('Bridge') },
-    { cmd: '/bigbrain', label: 'Model: BigBrain', desc: 'Deepest reasoning',
-      run: () => handleTierSwitch('BigBrain') },
+    // c2-428 / #339 pivot: /pulse /bridge /bigbrain slash commands removed.
+    // LFI is post-LLM (HDC/VSA/PSL/HDLM) — no transformer tier applies.
     { cmd: '/web', label: 'Web Search', desc: 'Search the internet',
       run: () => { setActiveSkill('web'); } },
     { cmd: '/code', label: 'Code mode', desc: 'BigBrain + code focus',
@@ -519,7 +712,7 @@ const SovereignCommandConsole: React.FC = () => {
     // c2-251 / #113: natural coverage for features already in the app but
     // not reachable via slash.
     { cmd: '/search', label: 'Search this chat', desc: 'Open the in-conversation search bar',
-      run: () => { setShowChatSearch(true); setTimeout(() => chatSearchInputRef.current?.focus(), 50); } },
+      run: () => { cs.open(); } },
     { cmd: '/shortcuts', label: 'Keyboard shortcuts', desc: 'Open the cheatsheet (also: ?)',
       run: () => { setShowShortcuts(true); } },
     { cmd: '/admin', label: 'Admin console', desc: 'Dashboard, domains, system, fleet, logs',
@@ -640,26 +833,90 @@ ${cmdList}
   // State for items inside .map() — can't use useState inside a map callback
   // (React hooks rules violation). Track expanded/editing IDs instead.
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
-  const [editingMsgId, setEditingMsgId] = useState<number | null>(null);
-  const [editText, setEditText] = useState('');
+  // c2-433 / #313 pass 7: user-message edit-in-place state lifted into
+  // useMessageEdit. Hook bundles begin/cancel/commit lifecycle.
+  const me = useMessageEdit();
+  const editingMsgId = me.editingId;
+  const editText = me.draft;
+  const setEditText = me.setDraft;
   const [knowledgeFacts, setKnowledgeFacts] = useState<Array<{ key: string; value: string }>>([]);
   const [knowledgeConcepts, setKnowledgeConcepts] = useState<Array<{ name: string; mastery: number; review_count: number }>>([]);
-  const [knowledgeDue, setKnowledgeDue] = useState<Array<{ name: string; mastery: number; days_overdue: number }>>([]);
+  const [knowledgeDue, setKnowledgeDue] = useState<Array<{ name: string; mastery: number; days_overdue: number; fact_key?: string }>>([]);
+  // c2-433 / #337 followup: FSRS top-level meta from /api/fsrs/due response
+  // — {due_cards: N, target_retention: 0.9}. Rendered as a subtle header
+  // line above the "Due for review" block so users see the target they're
+  // grading toward. Null when the endpoint was the legacy SM-2 path.
+  const [knowledgeFsrsMeta, setKnowledgeFsrsMeta] = useState<{ due_cards?: number; target_retention?: number } | null>(null);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
+  // c2-433 / task 273: stale-while-revalidate the knowledge fetch. Track
+  // when we last successfully populated the lists; on reopen-within-window
+  // show the cached data immediately + skip the loading flag (background
+  // refresh fires anyway). 60s window matches the human "I just glanced
+  // at this" intuition without ever serving deeply stale data.
+  const knowledgeLastFetchedRef = useRef<number>(0);
   const fetchKnowledge = async () => {
     const host = getHost();
-    setKnowledgeLoading(true);
+    const haveCache = knowledgeLastFetchedRef.current > 0;
+    const fresh = haveCache && (Date.now() - knowledgeLastFetchedRef.current) < 60_000;
+    // Skip the loading-flag flash when serving fresh-enough cache; still
+    // refresh in the background.
+    if (!fresh) setKnowledgeLoading(true);
     setKnowledgeError(null);
     try {
+      // c2-433 / #337: FSRS scheduler endpoint is now primary for due cards.
+      // Falls back to legacy SM-2 /api/knowledge/due when FSRS isn't
+      // available. Payload-shape tolerant: FSRS rows carry fact_key +
+      // retrievability/stability; we normalize to {name, mastery,
+      // days_overdue, fact_key}. If fact_key is absent (legacy), the
+      // rating-buttons row stays hidden in the browser component.
       const [f, c, d] = await Promise.all([
         fetch(`http://${host}:3000/api/facts`).then(r => r.json()),
         fetch(`http://${host}:3000/api/knowledge/concepts`).then(r => r.json()),
-        fetch(`http://${host}:3000/api/knowledge/due`).then(r => r.json()),
+        (async () => {
+          try {
+            const r = await fetch(`http://${host}:3000/api/fsrs/due?limit=50&target_r=0.9`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return { __fsrs: true, ...(await r.json()) };
+          } catch {
+            return await fetch(`http://${host}:3000/api/knowledge/due`).then(r => r.json());
+          }
+        })(),
       ]);
       setKnowledgeFacts(f.facts || []);
       setKnowledgeConcepts(c.concepts || []);
-      setKnowledgeDue(d.due || []);
+      // FSRS payload likely: { due: [{ fact_key, name?, retrievability?,
+      // stability?, difficulty?, days_overdue?, due? }] } — normalize.
+      const rawDue: any[] = Array.isArray(d?.due) ? d.due : Array.isArray(d?.cards) ? d.cards : Array.isArray(d) ? d : [];
+      const nowMs = Date.now();
+      const normDue = rawDue.map((row: any): KnowledgeDue => {
+        const fact_key: string | undefined = row.fact_key || row.key || undefined;
+        const name: string = row.name || row.concept || row.fact_key || row.key || '(unnamed)';
+        let mastery: number = 0;
+        if (typeof row.retrievability === 'number') mastery = row.retrievability;
+        else if (typeof row.mastery === 'number') mastery = row.mastery;
+        else if (typeof row.stability === 'number') mastery = Math.min(1, row.stability / 30);
+        let days_overdue: number = 0;
+        if (typeof row.days_overdue === 'number') days_overdue = row.days_overdue;
+        else if (row.due) {
+          const dueMs = typeof row.due === 'string' ? Date.parse(row.due) : (typeof row.due === 'number' ? row.due : NaN);
+          if (!Number.isNaN(dueMs)) days_overdue = Math.max(0, (nowMs - dueMs) / 86_400_000);
+        }
+        return { name, mastery, days_overdue, fact_key };
+      });
+      setKnowledgeDue(normDue);
+      // c2-433 / #337 followup: capture FSRS meta fields on the envelope —
+      // due_cards (total count; may exceed the limit-50 slice we render)
+      // and target_retention (0..1). Only set when the response came from
+      // the FSRS branch AND at least one meta field is present.
+      if (d && d.__fsrs) {
+        const dc = typeof d.due_cards === 'number' ? d.due_cards : undefined;
+        const tr = typeof d.target_retention === 'number' ? d.target_retention : undefined;
+        setKnowledgeFsrsMeta(dc != null || tr != null ? { due_cards: dc, target_retention: tr } : null);
+      } else {
+        setKnowledgeFsrsMeta(null);
+      }
+      knowledgeLastFetchedRef.current = Date.now();
     } catch (e) {
       console.warn('knowledge fetch failed', e);
       setKnowledgeError((e as Error).message || 'Network error — is the backend reachable?');
@@ -681,6 +938,16 @@ ${cmdList}
   // c2-261: use AdminTab so this can't drift when new tabs are added
   // (was previously a narrow inline union missing 'inventory').
   const [adminInitialTab, setAdminInitialTab] = useState<AdminTab>('dashboard');
+  // c2-433 / #312 + #284 followup: Classroom deep-link. Cmd+K entries for
+  // Ledger / Drift / Runs bump this so ClassroomView opens on the right
+  // sub-tab. Keyed with a nonce (tick) so re-clicking the same entry
+  // re-activates it even if the sub was manually changed in-between.
+  const [classroomInitialSub, setClassroomInitialSub] = useState<{ sub: string; tick: number } | null>(null);
+  const openClassroomSub = (sub: string) => {
+    setActiveView('classroom');
+    setShowAdmin(false);
+    setClassroomInitialSub(prev => ({ sub, tick: (prev?.tick ?? 0) + 1 }));
+  };
 
   const avatarPresets = AVATAR_PRESETS;
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -809,20 +1076,174 @@ ${cmdList}
     return () => clearTimeout(t);
   }, [messages.length, scrollToBottom]);
 
-  // Tick elapsed seconds on the thinking indicator once per second while active.
+  // c2-433 / #313 pass 4: elapsed-tick interval lives inside useThinkingState.
+
+  // c2-433 / task 236: substrate stats poll. /api/health returns
+  // {ok, subsystems: {knowledge_concepts, psl_axioms_registered, ...}}.
+  // 30s cadence — these counts move slowly (corpus ingest is the producer).
+  // Silent failures: this is a peripheral metric; falling back to "no chip"
+  // is the right behavior when the endpoint is unreachable.
   useEffect(() => {
-    if (!isThinking || thinkingStart == null) { setThinkingElapsed(0); return; }
-    setThinkingElapsed(0);
-    const id = setInterval(() => {
-      setThinkingElapsed(Math.floor((Date.now() - thinkingStart) / 1000));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [isThinking, thinkingStart]);
+    let cancelled = false;
+    const load = async () => {
+      try {
+        // c2-433 / task 252: parallel fetch of /api/health + /api/metrics
+        // so both refresh on the same 30s cadence. metrics is Prometheus
+        // text format (line-based "metric value\n") — parse the one
+        // counter we care about with a regex (no full prom-parser needed).
+        const [hRes, mRes, cRes, xRes] = await Promise.all([
+          fetch(`http://${getHost()}:3000/api/health`),
+          fetch(`http://${getHost()}:3000/api/metrics`).catch(() => null as Response | null),
+          fetch(`http://${getHost()}:3000/api/contradictions/recent`).catch(() => null as Response | null),
+          fetch(`http://${getHost()}:3000/api/hdc/cache/stats`).catch(() => null as Response | null),
+        ]);
+        if (!hRes.ok) return;
+        const d = await hRes.json();
+        if (cancelled) return;
+        const subs = d?.subsystems || {};
+        let chatTotal = 0;
+        if (mRes && mRes.ok) {
+          try {
+            const mtext = await mRes.text();
+            const m = mtext.match(/^lfi_chat_total\s+(\d+(?:\.\d+)?)/m);
+            if (m) chatTotal = Math.floor(Number(m[1]) || 0);
+          } catch { /* metrics parse failure — leave chatTotal at 0 */ }
+        }
+        setSubstrateStats({
+          concepts: typeof subs.knowledge_concepts === 'number' ? subs.knowledge_concepts : 0,
+          axioms: typeof subs.psl_axioms_registered === 'number' ? subs.psl_axioms_registered : 0,
+          chatTotal,
+        });
+        // c2-433 / task 238: sync local currentTier with the backend's
+        // authoritative current_tier on every health poll. Catches the case
+        // where a sibling tab / device flipped the tier, OR the backend
+        // restarted and reset to its default. Only writes if different to
+        // avoid a state-update churn loop.
+        if (typeof subs.current_tier === 'string' && subs.current_tier) {
+          setCurrentTier(prev => prev === subs.current_tier ? prev : subs.current_tier);
+        }
+        // c2-433 / #298: pending contradiction count from ledger. The endpoint
+        // returns either an array of rows or { items: [], count: N } — handle
+        // both shapes. Falsy / parse-fail => null (hide badge entirely).
+        if (cRes && cRes.ok) {
+          try {
+            const cj = await cRes.json();
+            let n: number | null = null;
+            if (Array.isArray(cj)) n = cj.length;
+            else if (cj && typeof cj === 'object') {
+              if (typeof cj.pending === 'number') n = cj.pending;
+              else if (typeof cj.count === 'number') n = cj.count;
+              else if (Array.isArray(cj.items)) n = cj.items.length;
+              else if (Array.isArray(cj.contradictions)) n = cj.contradictions.length;
+            }
+            setContradictionsPending(n);
+            // c2-433 / #298 followup: rise detector. Pulse only when count
+            // STRICTLY grew vs the last poll — avoids re-pulsing on
+            // unchanged values or when the count drops (resolved).
+            if (typeof n === 'number' && prevContradictionsRef.current != null && n > prevContradictionsRef.current) {
+              setContradictionsPulseId(id => id + 1);
+            }
+            if (typeof n === 'number') prevContradictionsRef.current = n;
+          } catch { /* contradictions parse failure — leave badge as-is */ }
+        }
+        // c2-433 / #256: HDC encode-cache coverage. Expected payload
+        // {sample_cached, sample_size, coverage} per Claude 0's 03:00 spec.
+        // Coverage may be reported as 0..1 or 0..100; normalize to a 0..1
+        // float so the chip renders consistently.
+        if (xRes && xRes.ok) {
+          try {
+            const xj = await xRes.json();
+            const sample_cached = typeof xj.sample_cached === 'number' ? xj.sample_cached : 0;
+            const sample_size = typeof xj.sample_size === 'number' ? xj.sample_size : 0;
+            let coverage: number = 0;
+            if (typeof xj.coverage === 'number') {
+              coverage = xj.coverage > 1 ? xj.coverage / 100 : xj.coverage;
+            } else if (sample_size > 0) {
+              coverage = Math.max(0, Math.min(1, sample_cached / sample_size));
+            }
+            setHdcCache({ coverage, sample_cached, sample_size });
+          } catch { /* cache parse failure — leave chip as-is */ }
+        }
+      } catch { /* peripheral metric — silent */ }
+    };
+    load();
+    const id = window.setInterval(load, 30_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, []);
 
   useEffect(() => {
     console.debug("// SCC: Persisting auth:", isAuthenticated);
     localStorage.setItem('lfi_auth', isAuthenticated.toString());
   }, [isAuthenticated]);
+
+  // c2-433 / #316 / #300: pre-send pipeline dry-run. When the user is
+  // composing a query (not-empty, >= 6 chars, connected, not currently
+  // streaming a reply), debounce ~450ms after the last keystroke and POST
+  // /api/explain. The response (speech_act / extracted_concept / rag_top_facts
+  // / causal_preview / topic_stack) drives a predicted-modules chip row
+  // above the textarea so users can see what the substrate is about to do
+  // BEFORE they hit send. AbortController cancels in-flight fetches when
+  // the input changes again so only the latest query is awaited.
+  useEffect(() => {
+    const q = input.trim();
+    if (!q || q.length < 6 || !isConnected || isThinking) {
+      setExplainPreview(null);
+      return;
+    }
+    // c2-433 / #307: skip fetching while the rate-limit cooldown is active.
+    // The preview row will render a countdown chip instead.
+    if (explainRateLimitUntil != null && Date.now() < explainRateLimitUntil) {
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => {
+      (async () => {
+        try {
+          const r = await fetch(`http://${getHost()}:3000/api/explain`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q }),
+            signal: ctrl.signal,
+          });
+          if (r.status === 429) {
+            // c2-433 / #307: research capability cap is 10/300s per Claude
+            // 0's spec. Honor Retry-After (seconds) when present; otherwise
+            // fall back to 30s — enough to let the window slide without
+            // camping on the endpoint.
+            const retryAfter = r.headers.get('retry-after');
+            const retrySec = retryAfter ? Math.max(1, Number(retryAfter) || 30) : 30;
+            setExplainRateLimitUntil(Date.now() + retrySec * 1000);
+            setExplainPreview(null);
+            return;
+          }
+          if (!r.ok) {
+            setExplainPreview(null);
+            return;
+          }
+          const data = await r.json();
+          setExplainPreview(data);
+        } catch {
+          // AbortError or network — silent (peripheral UX affordance).
+          setExplainPreview(null);
+        }
+      })();
+    }, 450);
+    return () => { window.clearTimeout(t); ctrl.abort(); };
+  }, [input, isConnected, isThinking, explainRateLimitUntil]);
+
+  // c2-433 / #307: 1s ticker while the rate-limit is active so the chip
+  // countdown updates. Cleared the moment the deadline passes.
+  useEffect(() => {
+    if (explainRateLimitUntil == null) return;
+    const id = window.setInterval(() => {
+      if (Date.now() >= explainRateLimitUntil) {
+        setExplainRateLimitUntil(null);
+      } else {
+        setExplainRateLimitTick(t => t + 1);
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [explainRateLimitUntil]);
 
   // Disconnect banner: only show after 2s of !isConnected, hide instantly on
   // reconnect. Skips the initial pre-connect window (avoids flash on load).
@@ -963,24 +1384,8 @@ ${cmdList}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected]);
 
-  // Toast auto-dismiss with a two-phase animation: display then flip to
-  // `exiting` for a 0.18s fade-out before unmounting. Each toast id is
-  // scheduled exactly once (tracked in scheduledToastIds), so re-renders of
-  // the toasts array don't double-schedule. Undo toasts hold 5s; plain 1.5s.
-  useEffect(() => {
-    for (const t of toasts) {
-      if (t.exiting || scheduledToastIds.current.has(t.id)) continue;
-      scheduledToastIds.current.add(t.id);
-      const hold = t.onUndo ? 5000 : 1500;
-      setTimeout(() => {
-        setToasts(prev => prev.map(tt => tt.id === t.id ? { ...tt, exiting: true } : tt));
-      }, hold);
-      setTimeout(() => {
-        setToasts(prev => prev.filter(tt => tt.id !== t.id));
-        scheduledToastIds.current.delete(t.id);
-      }, hold + 180);
-    }
-  }, [toasts]);
+  // c2-433 / #313: toast auto-dismiss + showToast moved into useToastQueue.
+  // App.tsx only consumes the array + the produce/dismiss callbacks above.
 
   // ---- Eruda FAB repositioning ----
   // Moves the Eruda floating action button above the input bar on mobile
@@ -1014,6 +1419,10 @@ ${cmdList}
     // resets to 1s on a successful open. Prior fixed 3s hammered the backend
     // during brief network blips AND waited too long after a server restart.
     let reconnectDelayMs = 1000;
+    // c2-433 / task 264: track whether we've ever closed so the onopen
+    // handler can distinguish "initial connect" (silent) from "reconnect
+    // after a drop" (toast). Plain ws.onopen fires for both cases.
+    let hasDisconnected = false;
     const RECONNECT_MAX_MS = 30000;
 
     const connect = () => {
@@ -1027,6 +1436,13 @@ ${cmdList}
         console.debug("// SCC: Chat WS OPEN");
         setIsConnected(true);
         setWsReconnectAt(null);
+        // c2-433 / task 264: toast on reconnect-after-drop, silent on the
+        // initial mount-time connect. hasDisconnected flips true whenever
+        // ws.onclose fires, so this branch only runs after the first drop.
+        if (hasDisconnected) {
+          showToast('Reconnected');
+          hasDisconnected = false;
+        }
         reconnectDelayMs = 1000; // reset backoff after healthy connect
         // c2-382 / BIG #177: drain the offline outbox. Each queued payload
         // gets replayed in FIFO order. If the send throws mid-drain (socket
@@ -1057,6 +1473,11 @@ ${cmdList}
             })));
             setMessages(prev => prev.map(m => (m as any)._queued ? { ...m, _queued: false } : m));
             logEvent('msg_queue_drained', { count: sent.length });
+            // c2-433 / task 265: explicit toast so the user knows the
+            // queued messages went through (otherwise the only signal is
+            // the (Queued) badge silently disappearing). Singular/plural
+            // for grammar.
+            showToast(`Sent ${sent.length} queued message${sent.length === 1 ? '' : 's'}`);
           }
         } catch (err) {
           console.warn('// SCC: outbox drain failed', err);
@@ -1079,24 +1500,39 @@ ${cmdList}
               setConversations(prev => prev.map(c => c.id === targetId
                 ? { ...c, messages: reducer(c.messages), updatedAt: Date.now() } : c));
             }
-            if (!targetId || targetId === currentConversationId) {
+            // c2-433 / task 260: read currentConversationIdRef.current (live)
+            // instead of the closure-stale currentConversationId — without
+            // this, switching convo mid-stream bled chunks into the new one.
+            if (!targetId || targetId === currentConversationIdRef.current) {
               setMessages(reducer);
             }
           };
 
           if (msg.type === 'progress') {
             setThinkingStep(msg.step || 'Processing...');
+            // c2-433 / #316: read cognitive_module if present. Accept either
+            // top-level cognitive_module or nested in a modules object so the
+            // client tracks whatever shape the backend ships first.
+            const mod: string | undefined = msg.cognitive_module || msg.module;
+            if (mod) ts.recordModule(mod);
+            // c2-433 / #352: topic-context tracking. When the backend emits
+            // a topic field on chat_progress (e.g. "volcanoes" for the
+            // 4-turn chain Claude 0 verified), the UI surfaces it as a
+            // small chip so users see what context the multi-turn pronoun
+            // resolution is anchored to. Forward-compat scaffold — silent
+            // when backend doesn't ship the field.
+            const topic: string | undefined = msg.topic || msg.topic_context;
+            if (topic && typeof topic === 'string') setActiveTopic(topic);
           } else if (msg.type === 'chat_chunk') {
             // Streaming: append partial text to the last assistant message,
             // or create one if this is the first chunk.
             setIsThinking(false);
-            // c2-372 / task 105: accumulate chars into streamTiming so the
-            // tokens/s chip can compute ceil(chars/4) / elapsed. First chunk
-            // seeds startAt; subsequent chunks just grow the counter.
+            // c2-372 / task 105 / c2-433 #313 pass 8: accumulate chars into
+            // the chat-streaming tracker. First chunk seeds startAt + chars;
+            // subsequent chunks just grow the counter. growBy is a no-op
+            // when n<=0 so empty chunks don't disturb the start time.
             const chunkLen = (msg.text || '').length;
-            setStreamTiming(prev => prev
-              ? { ...prev, chars: prev.chars + chunkLen }
-              : { startAt: Date.now(), chars: chunkLen });
+            cstr.growBy(chunkLen);
             applyToStreamingConvo(prev => {
               const last = prev[prev.length - 1];
               if (last && last.role === 'assistant' && (last as any)._streaming) {
@@ -1110,10 +1546,25 @@ ${cmdList}
             });
           } else if (msg.type === 'chat_done') {
             // c2-372 / task 105: end of stream -- drop the timing chip.
-            setStreamTiming(null);
+            cstr.end();
+            // c2-433 / #316: clear the active-module pulse so the next turn
+            // starts clean. modulesUsed clears on the next handleSend so
+            // the post-turn pill can still show which modules ran.
+            setActiveModule(null);
+            // c2-433 / task 247 + 255: log the modules-used set as a single
+            // event per turn so the Activity log captures the cognitive
+            // dispatch trace. Read from modulesUsedRef (mirrored from
+            // state) since the WS handler closure captures stale state.
+            const usedNow = modulesUsedRef.current;
+            if (usedNow.size > 0) {
+              logEvent('chat_modules_used', { modules: Array.from(usedNow) });
+            }
             // OS notification when the user has tabbed away and opted in.
             // Requires prior permission grant; silently no-op otherwise.
-            if (settings.notifyOnReply && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+            // c2-433 / task 261: read settingsRef + conversationsRef +
+            // messagesRef to dodge closure-staleness — toggling
+            // notifyOnReply mid-session now takes effect immediately.
+            if (settingsRef.current.notifyOnReply && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
               try {
                 // c2-290: include a preview of the actual reply rather than
                 // a generic "Your response is ready." — read the last
@@ -1121,8 +1572,8 @@ ${cmdList}
                 // markdown, cap at 140 chars so OS notification boxes
                 // don't mangle long replies.
                 const streamingMessages = streamingConvoIdRef.current
-                  ? (conversations.find(c => c.id === streamingConvoIdRef.current)?.messages ?? messages)
-                  : messages;
+                  ? (conversationsRef.current.find(c => c.id === streamingConvoIdRef.current)?.messages ?? messagesRef.current)
+                  : messagesRef.current;
                 const lastAssistant = [...streamingMessages].reverse().find(m => m.role === 'assistant');
                 const rawPreview = lastAssistant?.content || 'Your response is ready.';
                 const clean = stripMarkdown(rawPreview).replace(/\s+/g, ' ').trim();
@@ -1177,7 +1628,7 @@ ${cmdList}
             console.debug("// SCC: Chat error:", msg.error);
             setIsThinking(false);
             // c2-372: error also ends the stream -- clear the timing chip.
-            setStreamTiming(null);
+            cstr.end();
             applyToStreamingConvo(prev => {
               // c2-371 / task 79: remember the most recent user turn so the
               // Retry button has something to resend. Scanned from the end
@@ -1210,6 +1661,29 @@ ${cmdList}
       ws.onclose = (ev) => {
         console.debug("// SCC: Chat WS CLOSED:", ev.code, 'reconnect in', reconnectDelayMs, 'ms');
         setIsConnected(false);
+        hasDisconnected = true;
+        // c2-433 / task 258 + 259: clear in-flight thinking + streaming
+        // state when WS dies. Without this, a backend restart mid-stream
+        // leaves the user staring at "Thinking…" forever (no chunks will
+        // arrive on the reconnected socket — that turn is lost). When the
+        // close interrupted an active stream (isThinkingRef.current), also
+        // capture the last user message into lastError so the Retry pill
+        // appears after reconnect. Same pattern as chat_error handler.
+        if (isThinkingRef.current) {
+          // Walk the messages array from the end to find the last user
+          // turn — same pattern as chat_error. Read messagesRef to avoid
+          // closure-staleness on the messages array.
+          const ms = messagesRef.current;
+          for (let i = ms.length - 1; i >= 0; i--) {
+            if (ms[i].role === 'user') {
+              cstr.setLastError({ userContent: ms[i].content, at: Date.now() });
+              break;
+            }
+          }
+        }
+        setIsThinking(false);
+        setThinkingStart(null);
+        cstr.end();
         // Add 0-500ms jitter so a fleet of reconnecting clients doesn't stampede.
         const jitter = Math.floor(Math.random() * 500);
         reconnectTimer = setTimeout(connect, reconnectDelayMs + jitter);
@@ -1543,6 +2017,18 @@ ${cmdList}
         logEvent('theme_cycled', { via: 'hotkey', theme: next });
       }
       else if (mod && k === 'b') { e.preventDefault(); setShowConvoSidebar(v => !v); }
+      else if (mod && (e.key === 'Home' || e.key === 'End')) {
+        // c2-433 / task 246: Cmd/Ctrl+Home → scroll chat to top, Cmd/Ctrl+End
+        // → scroll to bottom. Skip when an editable element has focus so
+        // textarea / search input still get native Home/End. Active only on
+        // the chat view (other views don't have a Virtuoso scroller).
+        const target = e.target as HTMLElement | null;
+        const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+        if (isEditable || activeView !== 'chat') return;
+        e.preventDefault();
+        if (e.key === 'Home') chatViewRef.current?.scrollToIndex(0);
+        else chatViewRef.current?.scrollToBottom();
+      }
       else if (mod && e.shiftKey && k === 'r') {
         // Cmd/Ctrl+Shift+R = regenerate last assistant response. Browser's
         // native Cmd+R is a hard reload, so we claim Shift+R to avoid conflict.
@@ -1599,18 +2085,13 @@ ${cmdList}
         // in-conversation search so results are filterable.
         const target = e.target as HTMLElement | null;
         const isEditable = !!(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
-        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin || !!negFeedbackFor || showTerminal;
+        const anyModalOpen = showCmdPalette || showSettings || showKnowledge || showActivity || showGame || showShortcuts || pendingConfirm || !!showWelcome || showAdmin || !!negFeedbackFor || !!correctFeedbackFor || showTerminal;
         const inChatView = activeView === 'chat' && !anyModalOpen;
         // Shift-variant always opens our search (power-user shortcut, not
         // overloaded by the browser). Plain Cmd+F only hijacks in chat view.
         if (!e.shiftKey && (!inChatView || isEditable)) return; // browser native
         e.preventDefault();
-        setShowChatSearch(v => {
-          const next = !v;
-          if (next) setTimeout(() => chatSearchInputRef.current?.focus(), 0);
-          else setChatSearch('');
-          return next;
-        });
+        cs.toggle();
       }
       else if (e.key === 'Escape') {
         // c2-400 / task 185: message context menu takes Escape before any
@@ -1633,9 +2114,17 @@ ${cmdList}
         // approval dialog Esc is semantically Cancel (safer default matches
         // autoFocus choice in c2-308). Feedback modal Esc closes without
         // sending — discarded text is fine since the user hit Escape.
-        else if (negFeedbackFor) setNegFeedbackFor(null);
+        else if (negFeedbackFor) fb.closeNegFeedback();
+        else if (correctFeedbackFor) fb.closeCorrectFeedback();
+        else if (factPopover) setFactPopover(null);
         else if (pendingConfirm) { setPendingConfirm(null); setIsThinking(false); }
-        else if (showChatSearch) { setShowChatSearch(false); setChatSearch(''); }
+        else if (showChatSearch) { cs.close(); }
+        // c2-433 / task 256 + 279: dropdowns that were click-outside-only.
+        // Add at the same precedence as other top-level dismissibles so
+        // keyboard users can close cleanly. Skill menu added in 279.
+        else if (showAccountMenu) setShowAccountMenu(false);
+        else if (showSkillMenu) setShowSkillMenu(false);
+        else if (showSlashMenu) sm.close();
         // Last-resort Esc binding: cancel an in-flight request when no modal
         // is open. Mirrors the on-screen Stop button so power users can abort
         // without reaching for the mouse.
@@ -1650,7 +2139,7 @@ ${cmdList}
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showCmdPalette, showSettings, showKnowledge, showActivity, showGame, showTraining, negFeedbackFor, pendingConfirm, tosAccepted]);
+  }, [showCmdPalette, showSettings, showKnowledge, showActivity, showGame, showTraining, negFeedbackFor, pendingConfirm, tosAccepted, showAccountMenu, showSlashMenu, showSkillMenu]);
 
   // Three polling hooks — see ./usePolls.ts for the fetch logic. Each manages
   // its own interval + abort handling; parent just reads the state they return.
@@ -1849,9 +2338,13 @@ ${cmdList}
     const base = sectionPrefix
       ? `${sectionPrefix} · PlausiDen AI`
       : title ? `${title} · PlausiDen AI` : 'PlausiDen AI';
-    document.title = unreadReplies > 0 ? `(${unreadReplies}) ${base}` : base;
+    // c2-433 / task 263: prefix [offline] to the tab title when WS is down.
+    // Helps users who have multiple tabs open and need to spot which one
+    // disconnected without switching focus.
+    const connPrefix = !isConnected ? '[offline] ' : '';
+    document.title = `${connPrefix}${unreadReplies > 0 ? `(${unreadReplies}) ` : ''}${base}`;
     return () => { document.title = 'PlausiDen AI'; };
-  }, [currentConversationId, conversations, unreadReplies, activeView, showAdmin]);
+  }, [currentConversationId, conversations, unreadReplies, activeView, showAdmin, isConnected]);
 
   // Save draft to conversation when switching away, restore when switching in.
   // c2-266: flush the active-convo draft to localStorage on pagehide /
@@ -1905,12 +2398,13 @@ ${cmdList}
       if (currentConversationId) postConversationSwitch(currentConversationId);
     }
     const incoming = conversations.find(c => c.id === currentConversationId);
-    setInput(incoming?.draft || '');
-    // c2-278: switching into a convo with a short draft (or none) needs the
-    // textarea to re-size — otherwise it retains whatever height the prior
-    // convo's long draft grew it to. Clear style.height; the next input
-    // change re-runs the grower, and CSS minHeight applies immediately.
-    if (inputRef.current) inputRef.current.style.height = '';
+    // c2-278 + c2-433 / task 262: switching into a convo with a short draft
+    // (or none) needs the textarea to re-size, AND switching into one with
+    // a multi-line draft needs it to grow to fit. setInputAndResize handles
+    // both: empty value → height='' (CSS minHeight), non-empty → grow to
+    // scrollHeight capped at 280. Replaces the prior 'height = '' only'
+    // approach which left long drafts clipped on convo-switch-in.
+    setInputAndResize(incoming?.draft || '');
     // c2-281: scroll the sidebar so the newly-active row is on screen — in
     // long conversation lists the active row may have been scrolled out of
     // view. block='nearest' is a no-op when already visible.
@@ -2067,8 +2561,12 @@ ${cmdList}
   };
   // c2-232 / #80: drag-to-reorder for the pinned group. Dragged row id +
   // hover target id drive the opacity-dim + insert-line visual.
-  const [draggedConvoId, setDraggedConvoId] = useState<string | null>(null);
-  const [dragOverConvoId, setDragOverConvoId] = useState<string | null>(null);
+  // c2-433 / #313 pass 6: convo-drag state lifted into useConvoDrag. Hook
+  // dedupes the dragover updates so repeated events on the same row don't
+  // thrash the sidebar at 60Hz.
+  const cd = useConvoDrag();
+  const draggedConvoId = cd.draggedId;
+  const dragOverConvoId = cd.overId;
   // c2-248 / #110: wrap matched substring in the title with <mark> while
   // the search box has text. Case-insensitive; returns the raw string when
   // no query is supplied so non-searching renders stay a simple text node.
@@ -2196,6 +2694,13 @@ ${cmdList}
     };
     setConversations(prev => [...prev, clone]);
     setCurrentConversationId(clone.id);
+    // c2-433 / task 280: focus the input after the duplicate so the user
+    // can type immediately. Same setTimeout-0 pattern as
+    // createNewConversation — let React commit the active-convo switch +
+    // draft restore before the focus call lands. Mobile sidebar auto-
+    // closes on convo-switch via the existing useEffect at convo-id
+    // change, so no extra mobile handling needed here.
+    setTimeout(() => inputRef.current?.focus(), 0);
     logEvent('conversation_duplicated', { sourceId: id, messages: clone.messages.length });
     showToast(`Duplicated as "${clone.title.slice(0, 32)}${clone.title.length > 32 ? '\u2026' : ''}"`);
   };
@@ -2267,6 +2772,20 @@ ${cmdList}
     // c2-230 / #71: allow send when there are pasted images, even if the
     // text is empty — the user intent is clearly "send these images".
     if (!trimmed && pastedImages.length === 0) return;
+    // c2-433 / task 223: confirmation tick on send. Mobile only by virtue of
+    // hapticTick being a no-op on devices without the Vibration API; iOS
+    // Safari and most desktops silently ignore.
+    hapticTick(15);
+    // c2-433 / #316 / #313: fresh turn → reset thinking state. ts.reset()
+    // clears modulesUsed + activeModule + isThinking + step so the activity
+    // bar shows just *this* turn's modules. The actual setIsThinking(true)
+    // happens later in this fn after the WS send fires.
+    ts.reset();
+    // c2-433 / #352: NOTE topic chip intentionally NOT cleared here —
+    // topic_stack persists across turns by design (4-turn volcano chain).
+    // Backend re-emits the resolved topic on the next chat_progress; if the
+    // topic changed (user pivoted), the new value overwrites. Clearing on
+    // handleSend would cause a flicker even for same-topic continuations.
     sendingRef.current = true;
 
     // Record user message. If only images were pasted (no text), use a
@@ -2293,7 +2812,27 @@ ${cmdList}
       logEvent('paste_image_sent', { count: pastedImages.length, totalBytes: total });
       setPastedImages([]);
     }
-    setInput('');
+    // c2-410 / task 206 / c2-433 task 243: wire the previously-dead
+    // clearInputWithBackup helper so the prompt we just sent stays
+    // recoverable for the next ~30s. The "↶ Restore" affordance below
+    // surfaces it; the helper writes draftBackupRef.current.
+    clearInputWithBackup(input);
+    // c2-433 / task 250: push to the prompt-history ring buffer. Skip
+    // empty / pure-image sends. Cap at 10 by trimming the oldest. Reset
+    // the cursor so the next Shift+ArrowUp lands on this fresh entry.
+    if (trimmed.length > 0) {
+      const buf = promptHistoryRef.current;
+      // Don't push duplicates of the immediately-prior entry — common
+      // user pattern is "fix typo + send again", which would otherwise
+      // clog the history with near-dupes.
+      if (buf[buf.length - 1] !== trimmed) {
+        buf.push(trimmed);
+        if (buf.length > 10) buf.shift();
+        // c2-433 / task 251: persist after each push so reloads keep history.
+        try { localStorage.setItem(PROMPT_HISTORY_LS_KEY, JSON.stringify(buf)); } catch { /* quota — silent */ }
+      }
+      promptHistoryCursorRef.current = -1;
+    }
     // c2-277: collapse the auto-grown textarea back to its minHeight so the
     // post-send input isn't still occupying 4 lines of empty height.
     if (inputRef.current) inputRef.current.style.height = '';
@@ -2527,13 +3066,15 @@ ${cmdList}
     // scroll inside a too-small box. Now the JS-driven grow tracks the
     // declared max.
     el.style.height = Math.min(el.scrollHeight, 280) + 'px';
+    // c2-433 / task 254: typing breaks the prompt-history recall. Matches
+    // terminal/zsh behavior — Shift+↑ to recall, then any keystroke resets
+    // the cursor so the next Shift+↑ starts fresh from the most-recent.
+    promptHistoryCursorRef.current = -1;
     // Slash command detection: show menu when "/" is at position 0.
     if (val.startsWith('/') && !val.includes(' ')) {
-      setShowSlashMenu(true);
-      setSlashFilter(val.slice(1).toLowerCase());
-      setSlashIndex(0);
+      sm.open(val.slice(1).toLowerCase());
     } else {
-      setShowSlashMenu(false);
+      sm.close();
     }
   };
 
@@ -2587,6 +3128,41 @@ ${cmdList}
     return parts.length > 0 ? <>{parts}</> : <>{text}</>;
   };
 
+  // c2-433 / #317 / #299: shared fact-popover opener. Any UI surface that
+  // has a fact_key + a DOMRect (chat [fact:KEY] chips, Ledger rows, future
+  // widgets) calls this to get the same ancestry-first popover. Fetch chain:
+  //   /api/library/fact/:key/ancestry  →  /api/facts/:key  →  /api/provenance/:key
+  // The popover render branch auto-picks which sections to display based
+  // on payload shape.
+  const openFactKey = (key: string, rect: DOMRect) => {
+    setFactPopover({
+      key,
+      x: rect.left + rect.width / 2,
+      y: rect.bottom + 6,
+      data: null, error: null, loading: true,
+    });
+    setFactPopoverRaw(false);
+    logEvent('fact_key_opened', { key });
+    const tryFetch = async (path: string) => {
+      const r = await fetch(`http://${getHost()}:3000${path}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    };
+    (async () => {
+      try {
+        let data: any;
+        try { data = await tryFetch(`/api/library/fact/${encodeURIComponent(key)}/ancestry`); }
+        catch {
+          try { data = await tryFetch(`/api/facts/${encodeURIComponent(key)}`); }
+          catch { data = await tryFetch(`/api/provenance/${encodeURIComponent(key)}`); }
+        }
+        setFactPopover(prev => prev && prev.key === key ? { ...prev, data, loading: false } : prev);
+      } catch (e: any) {
+        setFactPopover(prev => prev && prev.key === key ? { ...prev, error: String(e?.message || e || 'fetch failed'), loading: false } : prev);
+      }
+    })();
+  };
+
   // Markdown renderer lives in ./markdown.tsx; we build a ctx each render so the
   // current theme key + copy-handler flow through. Cheap — just a tiny object.
   // Wrap copyToClipboard so every copy fires a 'Copied' toast — without this
@@ -2600,6 +3176,11 @@ ${cmdList}
     onCopy: copyWithToast,
     onCopyEvent: (lang, length) => logEvent('code_copied', { lang, length }),
     highlight: chatSearch || undefined,
+    // c2-433 / #317 / #299: clicking a [fact:KEY] chip opens the shared
+    // fact popover anchored at the chip's rect. Delegates to openFactKey
+    // (defined above) so other surfaces (Ledger tab, future widgets) can
+    // reuse the same popover with identical fetch fallbacks.
+    onFactKey: openFactKey,
   };
   const renderMessageBody = (text: string) => renderMdBody(text, mdCtx);
 
@@ -2615,13 +3196,17 @@ ${cmdList}
   // ============================================================
   if (!isAuthenticated) {
     console.debug("// SCC: Rendering login, breakpoint:", bp);
+    // c2-433: LoginScreen is lazy. Wrap in Suspense — the root Suspense is
+    // below this early-return so it doesn't catch this branch.
     return (
-      <LoginScreen
-        C={C} isMobile={isMobile} isDesktop={isDesktop}
-        password={password} setPassword={setPassword}
-        authError={authError} authLoading={authLoading}
-        onLogin={handleLogin}
-      />
+      <React.Suspense fallback={null}>
+        <LoginScreen
+          C={C} isMobile={isMobile} isDesktop={isDesktop}
+          password={password} setPassword={setPassword}
+          authError={authError} authLoading={authLoading}
+          onLogin={handleLogin}
+        />
+      </React.Suspense>
     );
   }
 
@@ -2737,7 +3322,7 @@ ${cmdList}
     }}>
       {/* ========== NEGATIVE FEEDBACK MODAL (bug #4 from c0-008) ========== */}
       {negFeedbackFor && (
-        <div onClick={() => setNegFeedbackFor(null)}
+        <div onClick={() => fb.closeNegFeedback()}
           style={{
             position: 'fixed', inset: 0, zIndex: T.z.modal + 60,
             background: 'rgba(0,0,0,0.55)',
@@ -2804,7 +3389,7 @@ ${cmdList}
                 resize: 'vertical', boxSizing: 'border-box',
               }} />
             <div style={{ display: 'flex', gap: T.spacing.sm, justifyContent: 'flex-end', marginTop: T.spacing.lg }}>
-              <button onClick={() => setNegFeedbackFor(null)}
+              <button onClick={() => fb.closeNegFeedback()}
                 style={{
                   padding: '10px 18px', background: 'transparent',
                   border: `1px solid ${C.border}`, color: C.textMuted,
@@ -2813,19 +3398,29 @@ ${cmdList}
                 }}>Cancel</button>
               <button data-role='submit-feedback'
                 onClick={() => {
+                // c2-433 / #350: spec body shape — rating: up|down|correct +
+                // optional comment. Category collapses into the comment prefix
+                // ("Incorrect: actual user text") so the backend has both the
+                // structured tag and the freeform note in one field.
                 const target = negFeedbackFor!;
+                const txt = negFeedbackText.trim();
+                const comment = txt ? `${negFeedbackCategory}: ${txt}` : negFeedbackCategory;
                 const body = JSON.stringify({
+                  conversation_id: currentConversationId,
                   message_id: target.msgId,
                   conclusion_id: target.conclusionId,
-                  rating: 'negative',
-                  category: negFeedbackCategory,
-                  text: negFeedbackText.trim(),
+                  rating: 'down',
+                  comment,
                 });
                 fetch(`http://${getHost()}:3000/api/feedback`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-                }).catch(() => {});
+                }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+                  .catch((e) => {
+                    console.warn('feedback (negative) POST failed', e);
+                    showToast('Feedback didn\u2019t reach the server');
+                  });
                 logEvent('feedback_negative', { msgId: target.msgId, category: negFeedbackCategory });
-                setNegFeedbackFor(null);
+                fb.closeNegFeedback();
                 showToast('Feedback sent');
               }}
                 style={{
@@ -2838,6 +3433,400 @@ ${cmdList}
           </div>
         </div>
       )}
+      {/* ========== CORRECT-THIS MODAL (c2-433 / #350) ========== */}
+      {/* Distinct from the negative-feedback modal above — that one captures
+          a complaint ("this was wrong, here's the category"); this one
+          captures a *correction* ("here's what you should have said"). The
+          backend stores rating='correct' + correction text and the Classroom
+          feedback queue surfaces these for ingestion. The user's prior
+          query + the AI reply are echoed in the modal so the user knows
+          which exchange they're correcting (chat may have scrolled). */}
+      {correctFeedbackFor && (
+        <div onClick={() => fb.closeCorrectFeedback()}
+          style={{
+            position: 'fixed', inset: 0, zIndex: T.z.modal + 60,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: T.spacing.lg,
+          }}>
+          <div role='dialog' aria-modal='true' aria-labelledby='lfi-correct-title'
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: '520px',
+              background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
+              padding: T.spacing.xl, boxShadow: T.shadows.modal,
+              maxHeight: '90dvh', overflowY: 'auto',
+            }}>
+            <h3 id='lfi-correct-title' style={{
+              margin: '0 0 6px', fontSize: T.typography.sizeXl,
+              fontWeight: T.typography.weightBold, color: C.text,
+            }}>Teach the system</h3>
+            <p style={{ margin: '0 0 14px', fontSize: T.typography.sizeMd, color: C.textSecondary, lineHeight: T.typography.lineLoose }}>
+              Paste what the AI <em>should</em> have said. Your correction goes into the Classroom feedback queue for ingestion.
+            </p>
+            {correctFeedbackFor.userQuery && (
+              <div style={{
+                fontSize: '11px', color: C.textMuted, marginBottom: '6px',
+                textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+                fontWeight: T.typography.weightSemibold,
+              }}>You asked</div>
+            )}
+            {correctFeedbackFor.userQuery && (
+              <div style={{
+                padding: '8px 10px', marginBottom: '12px',
+                background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+                borderRadius: T.radii.md, fontSize: '12px', color: C.textSecondary,
+                maxHeight: '80px', overflowY: 'auto', whiteSpace: 'pre-wrap',
+              }}>{correctFeedbackFor.userQuery.length > 280 ? correctFeedbackFor.userQuery.slice(0, 280) + '…' : correctFeedbackFor.userQuery}</div>
+            )}
+            <div style={{
+              fontSize: '11px', color: C.textMuted, marginBottom: '6px',
+              textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+              fontWeight: T.typography.weightSemibold,
+            }}>It replied</div>
+            <div style={{
+              padding: '8px 10px', marginBottom: '14px',
+              background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+              borderRadius: T.radii.md, fontSize: '12px', color: C.textSecondary,
+              maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap',
+            }}>{correctFeedbackFor.lfiReply.length > 400 ? correctFeedbackFor.lfiReply.slice(0, 400) + '…' : correctFeedbackFor.lfiReply}</div>
+            <label style={{ fontSize: T.typography.sizeSm, fontWeight: T.typography.weightSemibold, color: C.textMuted, textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose }}>
+              The right answer
+            </label>
+            <textarea autoFocus
+              value={correctFeedbackText}
+              onChange={(e) => setCorrectFeedbackText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  const submitBtn = (e.currentTarget.closest('[role="dialog"]')?.querySelector('button[data-role="submit-correction"]')) as HTMLButtonElement | null;
+                  submitBtn?.click();
+                }
+              }}
+              aria-label='Correct response'
+              autoComplete='off' spellCheck={true}
+              placeholder='Type the response the AI should have given. (Cmd/Ctrl+Enter to send)'
+              maxLength={4000}
+              style={{
+                width: '100%', marginTop: '6px', minHeight: '120px',
+                padding: '10px 12px', background: C.bgInput,
+                border: `1px solid ${C.borderSubtle}`, color: C.text,
+                borderRadius: T.radii.md, fontFamily: 'inherit', fontSize: T.typography.sizeBody,
+                resize: 'vertical', boxSizing: 'border-box',
+              }} />
+            <div style={{ display: 'flex', gap: T.spacing.sm, justifyContent: 'flex-end', marginTop: T.spacing.lg }}>
+              <button onClick={() => fb.closeCorrectFeedback()}
+                style={{
+                  padding: '10px 18px', background: 'transparent',
+                  border: `1px solid ${C.border}`, color: C.textMuted,
+                  borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: T.typography.sizeMd,
+                }}>Cancel</button>
+              <button data-role='submit-correction'
+                disabled={correctFeedbackText.trim().length === 0}
+                onClick={() => {
+                  const target = correctFeedbackFor!;
+                  const correction = correctFeedbackText.trim();
+                  if (!correction) return;
+                  fetch(`http://${getHost()}:3000/api/feedback`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      conversation_id: currentConversationId,
+                      message_id: target.msgId,
+                      conclusion_id: target.conclusionId,
+                      user_query: target.userQuery,
+                      lfi_reply: target.lfiReply,
+                      rating: 'correct',
+                      correction,
+                    }),
+                  }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+                    .catch((e) => {
+                      console.warn('feedback (correct) POST failed', e);
+                      showToast('Correction didn\u2019t reach the server');
+                    });
+                  logEvent('feedback_correct', { msgId: target.msgId, len: correction.length });
+                  fb.closeCorrectFeedback();
+                  showToast('Correction sent — thanks for teaching');
+                }}
+                style={{
+                  padding: '10px 18px',
+                  background: correctFeedbackText.trim().length === 0 ? C.bgInput : C.accent,
+                  border: 'none',
+                  color: correctFeedbackText.trim().length === 0 ? C.textDim : '#fff',
+                  borderRadius: T.radii.md,
+                  cursor: correctFeedbackText.trim().length === 0 ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit', fontSize: T.typography.sizeMd,
+                  fontWeight: T.typography.weightSemibold,
+                }}>Send correction</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ========== FACT-KEY POPOVER (c2-433 / #317) ========== */}
+      {/* Anchored at the click coordinates rather than centered — the popover
+          is a glance affordance, not a modal. Fixed-positioned + clamped to
+          the viewport edges so it doesn't paint offscreen on phones. Esc /
+          outside-click closes via the keydown handler chain + the backdrop. */}
+      {factPopover && (() => {
+        const W = 320;  // popover width
+        const margin = 8;
+        const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 768;
+        const left = Math.min(Math.max(factPopover.x - W / 2, margin), vw - W - margin);
+        const maxH = Math.max(160, vh - factPopover.y - margin - 20);
+        return (
+          <>
+            <div onClick={() => setFactPopover(null)}
+              style={{
+                position: 'fixed', inset: 0, zIndex: T.z.modal + 40,
+                background: 'transparent', cursor: 'default',
+              }} />
+            <div role='dialog' aria-modal='false' aria-label={`Fact ${factPopover.key}`}
+              style={{
+                position: 'fixed', left, top: factPopover.y,
+                width: `${W}px`, maxHeight: `${maxH}px`,
+                background: C.bgCard, border: `1px solid ${C.border}`,
+                borderRadius: T.radii.lg, boxShadow: T.shadows.modal,
+                zIndex: T.z.modal + 41, overflow: 'hidden',
+                display: 'flex', flexDirection: 'column',
+                animation: 'lfi-fadein 0.12s ease-out',
+              }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: T.spacing.sm, padding: '8px 12px',
+                borderBottom: `1px solid ${C.borderSubtle}`, background: C.bgInput,
+              }}>
+                {/* c2-433 / task 242: clicking the key copies it to clipboard
+                    so users can reference the fact-id in docs / tickets /
+                    Slack without manual select. Tiny visual feedback (key
+                    text flips to "copied" green for 1s). */}
+                <button onClick={(e) => {
+                  try { navigator.clipboard.writeText(factPopover.key); } catch { /* clipboard blocked */ }
+                  const btn = e.currentTarget;
+                  const orig = btn.textContent;
+                  btn.textContent = 'copied';
+                  btn.style.color = C.green;
+                  window.setTimeout(() => { btn.textContent = orig; btn.style.color = C.accent; }, 1000);
+                }}
+                  title='Copy fact key to clipboard'
+                  aria-label={`Copy fact key ${factPopover.key}`}
+                  style={{
+                    background: 'transparent', border: 'none',
+                    fontSize: '11px', fontWeight: T.typography.weightBold, color: C.accent,
+                    fontFamily: T.typography.fontMono, letterSpacing: '0.04em',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    flex: 1, minWidth: 0, textAlign: 'left',
+                    cursor: 'pointer', padding: 0,
+                  }}>{factPopover.key}</button>
+                {/* c2-433 / task 240: structured ↔ raw toggle. Hidden until
+                    data lands so the toggle doesn't tease an empty switch
+                    during loading. */}
+                {factPopover.data && !factPopover.loading && (
+                  <button onClick={() => setFactPopoverRaw(v => !v)}
+                    title={factPopoverRaw ? 'Show structured view' : 'Show raw JSON'}
+                    aria-label={factPopoverRaw ? 'Show structured view' : 'Show raw JSON'}
+                    aria-pressed={factPopoverRaw}
+                    style={{
+                      background: factPopoverRaw ? C.accentBg : 'transparent',
+                      border: `1px solid ${factPopoverRaw ? C.accentBorder : C.borderSubtle}`,
+                      color: factPopoverRaw ? C.accent : C.textMuted,
+                      cursor: 'pointer', padding: '2px 6px', fontSize: '9px',
+                      fontFamily: T.typography.fontMono, fontWeight: T.typography.weightBold,
+                      lineHeight: 1, borderRadius: T.radii.sm,
+                      textTransform: 'uppercase', letterSpacing: '0.04em',
+                      flexShrink: 0,
+                    }}>JSON</button>
+                )}
+                <button onClick={() => setFactPopover(null)}
+                  aria-label='Close fact popover'
+                  style={{
+                    background: 'transparent', border: 'none', color: C.textMuted,
+                    cursor: 'pointer', padding: '0 4px', fontSize: '16px',
+                    fontFamily: 'inherit', lineHeight: 1,
+                    flexShrink: 0,
+                  }}>×</button>
+              </div>
+              <div style={{ padding: '10px 12px', overflowY: 'auto', fontSize: T.typography.sizeSm }}>
+                {factPopover.loading && (
+                  <div style={{ color: C.textMuted, fontStyle: 'italic' }}>Loading…</div>
+                )}
+                {factPopover.error && !factPopover.loading && (
+                  <div style={{ color: C.red, fontSize: T.typography.sizeXs, lineHeight: T.typography.lineLoose }}>
+                    Couldn't fetch this fact: {factPopover.error}.<br/>
+                    Backend may not yet expose <code style={{ fontFamily: T.typography.fontMono }}>/api/library/fact/:key/ancestry</code>, <code style={{ fontFamily: T.typography.fontMono }}>/api/facts/:key</code>, or <code style={{ fontFamily: T.typography.fontMono }}>/api/provenance/:key</code>.
+                  </div>
+                )}
+                {factPopover.data && !factPopover.loading && (() => {
+                  const d = factPopover.data;
+                  const rows: Array<{ label: string; value: React.ReactNode; mono?: boolean }> = [];
+                  if (d.subj || d.subject) rows.push({ label: 'Subject', value: d.subj || d.subject, mono: true });
+                  if (d.pred || d.predicate) rows.push({ label: 'Predicate', value: d.pred || d.predicate, mono: true });
+                  if (d.obj || d.object) rows.push({ label: 'Object', value: d.obj || d.object, mono: true });
+                  if (d.source) rows.push({ label: 'Source', value: d.source });
+                  if (d.psl_status || d.psl) rows.push({ label: 'PSL', value: d.psl_status || d.psl });
+                  if (typeof d.trust === 'number') rows.push({ label: 'Trust', value: d.trust.toFixed(2), mono: true });
+                  if (d.temporal_class || d.tier) rows.push({ label: 'Tier', value: d.temporal_class || d.tier });
+                  if (d.explanation) rows.push({ label: 'Note', value: d.explanation });
+                  // c2-433 / #299: ancestry payload arrays (versions /
+                  // contradictions / inbound_edges / outbound_edges) — render
+                  // each as a count-headed section with the first few items
+                  // inline. 320px width means we show preview text, not full
+                  // structured rows. Users who need the raw data hit JSON.
+                  const versions: any[] = Array.isArray(d.versions) ? d.versions : [];
+                  const contradictions: any[] = Array.isArray(d.contradictions) ? d.contradictions : [];
+                  const inbound: any[] = Array.isArray(d.inbound_edges) ? d.inbound_edges : [];
+                  const outbound: any[] = Array.isArray(d.outbound_edges) ? d.outbound_edges : [];
+                  const hasAncestry = versions.length + contradictions.length + inbound.length + outbound.length > 0;
+                  // c2-433 / task 240: raw view forced by toggle, OR the
+                  // structured render found nothing recognisable in the
+                  // payload. Either way the user gets the underlying JSON.
+                  if (factPopoverRaw || (rows.length === 0 && !hasAncestry)) {
+                    return (
+                      <pre style={{
+                        margin: 0, fontFamily: T.typography.fontMono,
+                        fontSize: '10px', color: C.textSecondary,
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      }}>{JSON.stringify(d, null, 2).slice(0, 4000)}</pre>
+                    );
+                  }
+                  const section = (label: string, items: any[], render: (it: any, i: number) => React.ReactNode, tone?: string) => (
+                    items.length > 0 ? (
+                      <div key={label} style={{ marginTop: '10px', paddingTop: '8px', borderTop: `1px dashed ${C.borderSubtle}` }}>
+                        <div style={{
+                          fontSize: '10px', color: tone || C.textMuted, fontWeight: 700,
+                          textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px',
+                        }}>{label} <span style={{ color: C.textMuted, fontWeight: 500 }}>({items.length})</span></div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          {items.slice(0, 5).map((it, i) => (
+                            <div key={i} style={{
+                              fontSize: '11px', color: C.textSecondary,
+                              fontFamily: T.typography.fontMono, wordBreak: 'break-word',
+                              lineHeight: 1.35,
+                            }}>{render(it, i)}</div>
+                          ))}
+                          {items.length > 5 && (
+                            <div style={{ fontSize: '10px', color: C.textMuted, fontStyle: 'italic' }}>
+                              + {items.length - 5} more (toggle JSON to see all)
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null
+                  );
+                  const edgeText = (e: any): string => {
+                    if (typeof e === 'string') return e;
+                    if (!e || typeof e !== 'object') return String(e);
+                    const pred = e.pred || e.predicate || e.relation || e.rel || '';
+                    const tgt = e.target || e.tgt || e.to || e.obj || e.object || e.subj || e.subject || e.key || '';
+                    const w = typeof e.weight === 'number' ? ` (${e.weight.toFixed(2)})` : '';
+                    return pred && tgt ? `${pred} → ${tgt}${w}` : JSON.stringify(e).slice(0, 80);
+                  };
+                  const versionText = (v: any): string => {
+                    if (typeof v === 'string') return v;
+                    if (!v || typeof v !== 'object') return String(v);
+                    const when = v.at || v.timestamp || v.created_at || '';
+                    const val = v.value || v.obj || v.object || v.explanation || '';
+                    const trust = typeof v.trust === 'number' ? ` [t=${v.trust.toFixed(2)}]` : '';
+                    return when ? `${String(when).slice(0, 19)}${trust} — ${val}` : (val || JSON.stringify(v).slice(0, 80));
+                  };
+                  const contradictionText = (c: any): string => {
+                    if (typeof c === 'string') return c;
+                    if (!c || typeof c !== 'object') return String(c);
+                    const a = c.side_a || c.a || c.this || '';
+                    const b = c.side_b || c.b || c.other || '';
+                    return a && b ? `${a}  ↔  ${b}` : JSON.stringify(c).slice(0, 100);
+                  };
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {rows.map(r => (
+                        <div key={r.label} style={{ display: 'flex', gap: '8px', alignItems: 'baseline' }}>
+                          <span style={{
+                            fontSize: '10px', color: C.textMuted, fontWeight: 700,
+                            textTransform: 'uppercase', letterSpacing: '0.06em',
+                            minWidth: '64px', flexShrink: 0,
+                          }}>{r.label}</span>
+                          <span style={{
+                            color: C.text, fontSize: T.typography.sizeSm,
+                            fontFamily: r.mono ? T.typography.fontMono : 'inherit',
+                            wordBreak: 'break-word',
+                          }}>{r.value}</span>
+                        </div>
+                      ))}
+                      {section('Versions', versions, versionText)}
+                      {section('Contradictions', contradictions, contradictionText, C.red)}
+                      {section('Inbound', inbound, edgeText)}
+                      {section('Outbound', outbound, edgeText)}
+                    </div>
+                  );
+                })()}
+              </div>
+              {/* c2-433 / #337 followup: FSRS review footer. When the fact
+                  popover is open AND we have a key + no active error, show
+                  the 4-rating row (Again / Hard / Good / Easy → 1-4). Click
+                  POSTs /api/fsrs/review + toasts + closes the popover. If
+                  the fact isn't in fsrs_cards yet, the backend will 404 and
+                  we surface a friendly "Not in FSRS" toast. Gives users a
+                  one-click grade path for any [fact:KEY] they see in chat
+                  — no KB modal round-trip. Hidden during load/error. */}
+              {factPopover.data && !factPopover.loading && !factPopover.error && (
+                <div style={{
+                  display: 'flex', gap: '4px', padding: '8px 10px',
+                  borderTop: `1px solid ${C.borderSubtle}`, background: C.bgInput,
+                }}>
+                  {([
+                    { r: 1 as const, label: 'Again', hint: 'Forgot — schedule soon',   bg: C.redBg,                border: C.redBorder,    fg: C.red },
+                    { r: 2 as const, label: 'Hard',  hint: 'Recalled with effort',    bg: C.yellowBg || C.bgInput, border: C.yellow,       fg: C.yellow },
+                    { r: 3 as const, label: 'Good',  hint: 'Recalled normally',       bg: C.accentBg,              border: C.accentBorder, fg: C.accent },
+                    { r: 4 as const, label: 'Easy',  hint: 'Trivial — longer interval', bg: C.greenBg || C.bgInput, border: C.green,       fg: C.green },
+                  ]).map(b => (
+                    <button key={b.r} disabled={factReviewing}
+                      onClick={async () => {
+                        const key = factPopover.key;
+                        setFactReviewing(true);
+                        try {
+                          const r = await fetch(`http://${getHost()}:3000/api/fsrs/review`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ fact_key: key, rating: b.r }),
+                          });
+                          if (!r.ok) {
+                            if (r.status === 404) {
+                              showToast(`This fact isn't in FSRS yet — grade unchanged`);
+                            } else {
+                              throw new Error(`HTTP ${r.status}`);
+                            }
+                          } else {
+                            showToast(`Reviewed: ${b.label}`);
+                            logEvent('fsrs_reviewed', { fact_key: key, rating: b.r, via: 'popover' });
+                          }
+                          knowledgeLastFetchedRef.current = 0;
+                          setFactPopover(null);
+                        } catch (e: any) {
+                          showToast(`Review failed: ${String(e?.message || e || 'unknown error')}`);
+                        } finally {
+                          setFactReviewing(false);
+                        }
+                      }}
+                      title={`${b.hint} (${b.r})`}
+                      aria-label={`Rate this fact: ${b.label}`}
+                      style={{
+                        flex: 1, padding: '5px 6px', fontSize: '10px',
+                        fontWeight: T.typography.weightBold,
+                        background: b.bg, color: b.fg,
+                        border: `1px solid ${b.border}`,
+                        borderRadius: T.radii.sm,
+                        cursor: factReviewing ? 'wait' : 'pointer',
+                        opacity: factReviewing ? 0.5 : 1,
+                        fontFamily: 'inherit', letterSpacing: '0.02em',
+                        textTransform: 'uppercase',
+                      }}>{b.label}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        );
+      })()}
       {/* ========== MESSAGE RIGHT-CLICK CONTEXT MENU ========== */}
       {/* c2-400 / task 185: floating menu anchored at the right-click coords.
           Invisible full-screen backdrop catches outside clicks; Esc closes
@@ -2888,7 +3877,7 @@ ${cmdList}
               {m.role === 'user' && (
                 <>
                   <button role='menuitem' style={btnStyle} onMouseEnter={onBtnHover} onMouseLeave={onBtnLeave}
-                    onClick={() => { setEditingMsgId(m.msgId); setEditText(m.content); close(); }}>Edit and resend</button>
+                    onClick={() => { me.begin(m.msgId, m.content); close(); }}>Edit and resend</button>
                   <button role='menuitem' style={btnStyle} onMouseEnter={onBtnHover} onMouseLeave={onBtnLeave}
                     onClick={() => {
                       // Fork: slice from this user message forward, preload the
@@ -2896,7 +3885,7 @@ ${cmdList}
                       // the new turn as a branch. Matches the edit path.
                       const idx = messages.findIndex(mm => mm.id === m.msgId);
                       if (idx >= 0) setMessages(prev => prev.slice(0, idx));
-                      setInput(m.content);
+                      setInputAndResize(m.content);
                       pendingBranchFromRef.current = m.msgId;
                       inputRef.current?.focus();
                       logEvent('message_forked', { via: 'context-menu' });
@@ -2924,7 +3913,7 @@ ${cmdList}
             // The Undo button still wins via stopPropagation in its handler
             // so accidental clicks near the Undo affordance don't race.
             <div key={t.id} role='status' aria-live='polite'
-              onClick={() => setToasts(prev => prev.filter(tt => tt.id !== t.id))}
+              onClick={() => dismissToast(t.id)}
               title='Click to dismiss'
               style={{
                 padding: `${T.spacing.sm} ${T.spacing.md}`,
@@ -2942,7 +3931,7 @@ ${cmdList}
                   e.stopPropagation(); // don't also fire the dismiss
                   t.onUndo?.();
                   // Dismiss just this toast, leave any siblings alone.
-                  setToasts(prev => prev.filter(tt => tt.id !== t.id));
+                  dismissToast(t.id);
                 }}
                   style={{
                     background: 'transparent', border: `1px solid ${C.accentBorder}`,
@@ -3210,6 +4199,7 @@ ${cmdList}
           facts={knowledgeFacts}
           concepts={knowledgeConcepts}
           due={knowledgeDue}
+          fsrsMeta={knowledgeFsrsMeta}
           loading={knowledgeLoading}
           error={knowledgeError}
           onRetry={fetchKnowledge}
@@ -3220,6 +4210,28 @@ ${cmdList}
             setShowKnowledge(false);
             setAdminInitialTab('training');
             setShowAdmin(true);
+          }}
+          // c2-433 / #337: FSRS review POST handler. Grades a card (1-4)
+          // against /api/fsrs/review, then refetches the due list so the
+          // just-graded card disappears from view (or stays, with updated
+          // mastery, if it was rated Again). Tiny toast on success, red
+          // toast on failure. logEvent tracks the rating for the activity
+          // log. Only runs when the due payload carried a fact_key.
+          onReview={async (factKey, rating) => {
+            try {
+              const r = await fetch(`http://${getHost()}:3000/api/fsrs/review`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fact_key: factKey, rating }),
+              });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              showToast(`Reviewed: ${['Again','Hard','Good','Easy'][rating - 1]}`);
+              logEvent('fsrs_reviewed', { fact_key: factKey, rating });
+              knowledgeLastFetchedRef.current = 0;
+              fetchKnowledge();
+            } catch (e: any) {
+              showToast(`Review failed: ${String(e?.message || e || 'unknown error')}`);
+            }
           }}
         />
       )}
@@ -3264,10 +4276,8 @@ ${cmdList}
             id: `theme-${t}`, label: `Theme: ${t}`, hint: 'Apply this color scheme', group: 'Appearance',
             onRun: () => setSettings(s => ({ ...s, theme: t })),
           })),
-          ...(['Pulse','Bridge','BigBrain']).map(tier => ({
-            id: `tier-${tier}`, label: `Model: ${tier}`, hint: tier === 'Pulse' ? 'Fast' : tier === 'Bridge' ? 'Balanced' : 'Deepest', group: 'Model',
-            onRun: () => { handleTierSwitch(tier); },
-          })),
+          // c2-428 / #339 pivot: Model:Pulse/Bridge/BigBrain palette entries
+          // removed. LFI is post-LLM — no transformer tiers.
           ...skills.filter(s => s.available).map(s => ({
             id: `skill-${s.id}`, label: `Use ${s.label}`, hint: s.hint, group: 'Skills',
             onRun: () => { setActiveSkill(s.id); inputRef.current?.focus(); },
@@ -3278,6 +4288,14 @@ ${cmdList}
           { id: 'view-classroom', label: 'Go to Classroom', hint: 'Training, grades, datasets', group: 'Navigate',
             shortcut: '$mod+2',
             onRun: () => { setActiveView('classroom'); setShowAdmin(false); } },
+          // c2-433 / deep-link entries for the three live dashboards.
+          // Clicking jumps to Classroom AND sets the sub-tab in one step.
+          { id: 'view-classroom-ledger', label: 'Go to Ledger', hint: 'Pending contradictions', group: 'Navigate',
+            onRun: () => { openClassroomSub('ledger'); } },
+          { id: 'view-classroom-drift', label: 'Go to Drift', hint: 'System health trends', group: 'Navigate',
+            onRun: () => { openClassroomSub('drift'); } },
+          { id: 'view-classroom-runs', label: 'Go to Ingest Runs', hint: 'Active + recent ingest history', group: 'Navigate',
+            onRun: () => { openClassroomSub('runs'); } },
           { id: 'view-admin', label: 'Open Admin console', hint: 'Dashboard, domains, system', group: 'Navigate',
             shortcut: '$mod+3',
             onRun: () => { setShowAdmin(true); } },
@@ -3292,6 +4310,8 @@ ${cmdList}
           { id: 'open-logs', label: 'Open activity logs', hint: 'Chat log + UI events', group: 'Navigate',
             shortcut: '$mod+Shift+L',
             onRun: () => { setAdminInitialTab('logs'); setShowAdmin(true); fetchChatLog(50); } },
+          { id: 'open-admin-tokens', label: 'Open Admin → Tokens', hint: 'Issue / list / revoke capability tokens', group: 'Navigate',
+            onRun: () => { setAdminInitialTab('tokens'); setShowAdmin(true); } },
           { id: 'toggle-dev', label: `${settings.developerMode ? 'Disable' : 'Enable'} developer mode`, hint: 'Telemetry + plan panel', group: 'Navigate',
             shortcut: '$mod+D',
             onRun: () => { setSettings(s => ({ ...s, developerMode: !s.developerMode })); } },
@@ -3363,6 +4383,11 @@ ${cmdList}
           qosReport={qosReport}
           onRefreshQos={fetchQos}
           onRefreshFacts={fetchFacts}
+          onClearLocalEvents={() => {
+            setLocalEvents([]);
+            showToast('Event log cleared');
+            logEvent('events_cleared', {});
+          }}
         />
       )}
 
@@ -3536,6 +4561,27 @@ ${cmdList}
               <line x1="9" y1="4" x2="9" y2="20"/>
             </svg>
           </button>
+          {/* c2-433 / task 235: mobile-only New Chat button. Desktop has the
+              prominent New Chat button in the open sidebar; mobile users had
+              to open the drawer + tap inside it (3 taps). This collapses the
+              flow to 1 tap. Hidden on tablet/desktop where the sidebar is
+              persistent and the in-sidebar button serves. */}
+          {isMobile && (
+            <button onClick={() => createNewConversation()}
+              title='New chat' aria-label='Start a new chat'
+              style={{
+                width: '36px', height: '36px', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: C.accentBg, border: `1px solid ${C.accentBorder}`,
+                color: C.accent, borderRadius: T.radii.lg,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
+          )}
           {/* c2-415 / BIG #218 mobile: the "PlausiDen AI" wordmark eats ~90px
               on narrow viewports; tabs + hamburger + avatar already identify
               the app. Keep the incognito shield indicator — it's a security
@@ -3567,19 +4613,46 @@ ${cmdList}
           )}
         </div>
 
-        {/* Center: view switcher — Chat / Classroom / Admin (c0-027). */}
-        <div role='tablist' aria-label='App sections'
-          style={{ display: 'flex', gap: '2px', order: 2, flexShrink: 0 }}>
-          {([
+        {/* Center: view switcher — Chat / Classroom / Admin (c0-027).
+            c2-433 / task 272: WAI-ARIA kbd nav (Arrow/Home/End + roving
+            tabindex) per #178. Cmd+1/2/3 still work as the global jump;
+            arrow-nav is the within-tablist standard. */}
+        {(() => {
+          const VIEWS = [
             { id: 'chat' as const,      label: 'Chat',      onClick: () => { setActiveView('chat'); setShowAdmin(false); } },
             { id: 'classroom' as const, label: 'Classroom', onClick: () => { setActiveView('classroom'); setShowAdmin(false); } },
             { id: 'admin' as const,     label: 'Admin',     onClick: () => { setShowAdmin(true); } },
-          ]).map(v => {
+          ];
+          const activeIdx = VIEWS.findIndex(v => (v.id === 'admin' ? showAdmin : (activeView === v.id && !showAdmin)));
+          const onTabKey = (e: React.KeyboardEvent) => {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+            e.preventDefault();
+            let next = activeIdx < 0 ? 0 : activeIdx;
+            if (e.key === 'ArrowLeft') next = (next - 1 + VIEWS.length) % VIEWS.length;
+            else if (e.key === 'ArrowRight') next = (next + 1) % VIEWS.length;
+            else if (e.key === 'Home') next = 0;
+            else if (e.key === 'End') next = VIEWS.length - 1;
+            VIEWS[next].onClick();
+          };
+          return (
+        <div role='tablist' aria-label='App sections' onKeyDown={onTabKey}
+          style={{ display: 'flex', gap: '2px', order: 2, flexShrink: 0 }}>
+          {VIEWS.map(v => {
             const isActive = v.id === 'admin' ? showAdmin : (activeView === v.id && !showAdmin);
+            // c2-433 / #298: Classroom tab gets a small red badge with the
+            // pending-contradictions count (from /api/contradictions/recent
+            // polled every 30s). Only rendered when count > 0 — no zero-
+            // state noise. Compact number formatting keeps the badge narrow
+            // even at 100+ pending.
+            const badge = (v.id === 'classroom' && typeof contradictionsPending === 'number' && contradictionsPending > 0)
+              ? contradictionsPending : null;
             return (
               <button key={v.id} onClick={v.onClick}
                 role='tab' aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
+                title={badge !== null ? `${badge} pending contradiction${badge === 1 ? '' : 's'} in the ledger` : undefined}
                 style={{
+                  position: 'relative',
                   padding: isMobile ? '6px 10px' : '7px 14px',
                   fontSize: T.typography.sizeSm, fontWeight: 600,
                   background: isActive ? C.accentBg : 'transparent',
@@ -3587,10 +4660,30 @@ ${cmdList}
                   color: isActive ? C.accent : C.textMuted,
                   borderRadius: T.radii.md, cursor: 'pointer', fontFamily: 'inherit',
                   whiteSpace: 'nowrap',
-                }}>{v.label}</button>
+                }}>
+                {v.label}
+                {badge !== null && (
+                  <span key={contradictionsPulseId}
+                    aria-label={`${badge} pending contradictions`}
+                    style={{
+                      position: 'absolute', top: '-4px', right: '-4px',
+                      minWidth: '16px', height: '16px', padding: '0 4px',
+                      background: C.red, color: '#fff',
+                      fontSize: '9px', fontWeight: 800,
+                      borderRadius: '8px', lineHeight: '16px',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      border: `1.5px solid ${C.bg}`,
+                      fontFamily: T.typography.fontMono, letterSpacing: 0,
+                      animation: contradictionsPulseId > 0 ? 'scc-badge-rise-pulse 1.8s ease-out 2' : undefined,
+                      transformOrigin: 'center',
+                    }}>{badge > 99 ? '99+' : badge}</span>
+                )}
+              </button>
             );
           })}
         </div>
+          );
+        })()}
 
         {/* c2-367 / task 94: prominent New Chat button. Sits in the header
             cluster just before the account menu so power users don't have
@@ -3640,15 +4733,29 @@ ${cmdList}
               border: `1px solid ${showAccountMenu ? C.border : 'transparent'}`,
               borderRadius: T.radii.xl, cursor: 'pointer', fontFamily: 'inherit',
             }}>
-            {/* Avatar */}
+            {/* Avatar — c2-433 / task 252b: mobile-only connection status
+                dot rendered as a small ring on the avatar's bottom-right.
+                Online = green, Offline = red. Mobile users have no other
+                visual cue (the "Online" text label is desktop-only). */}
             <div style={{
               width: '30px', height: '30px', borderRadius: '50%',
               background: settings.avatarDataUrl ? `url(${settings.avatarDataUrl}) center/cover` : (settings.avatarGradient || `linear-gradient(135deg, ${C.accent}, ${C.purple})`),
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0, fontSize: T.typography.sizeMd, fontWeight: 800, color: '#fff',
               boxShadow: `0 0 0 1px ${C.border}`,
+              position: 'relative',
             }}>
               {!settings.avatarDataUrl && (settings.displayName.trim().charAt(0).toUpperCase() || 'U')}
+              {isMobile && (
+                <span aria-label={isConnected ? 'Connected' : 'Offline'}
+                  title={isConnected ? 'Connected to backend' : 'Backend offline'}
+                  style={{
+                    position: 'absolute', bottom: '-2px', right: '-2px',
+                    width: '10px', height: '10px', borderRadius: '50%',
+                    background: isConnected ? C.green : C.red,
+                    border: `2px solid ${C.bg}`,
+                  }} />
+              )}
             </div>
             {!isMobile && (
               <div style={{ textAlign: 'left', lineHeight: 1.15 }}>
@@ -3658,8 +4765,39 @@ ${cmdList}
                 <div style={{
                   fontSize: '10px', color: isConnected ? C.green : C.red,
                   fontWeight: 700, letterSpacing: '0.04em', marginTop: '2px',
+                  display: 'flex', alignItems: 'center', gap: '6px',
                 }}>
-                  {isConnected ? 'Online' : 'Offline'}
+                  <span>{isConnected ? 'Online' : 'Offline'}</span>
+                  {/* c2-433 / task 236: substrate fill chip — concepts (RAG
+                      facts in the HDC store) + axioms (PSL constraints
+                      registered). Tells the user the substrate is non-empty
+                      without making them open Knowledge or Library. Hidden
+                      until first poll resolves so the chip doesn't render
+                      with placeholder zeros. */}
+                  {substrateStats && (
+                    /* c2-433 / task 249+252: substrate chip is a clickable
+                       drill-down — opens the Knowledge Browser. Now also
+                       carries the lifetime chat count from /api/metrics
+                       so users see how much the system has handled at a
+                       glance. */
+                    <button
+                      onClick={() => { setShowKnowledge(true); fetchKnowledge(); }}
+                      title={`${substrateStats.concepts.toLocaleString()} knowledge concepts · ${substrateStats.axioms.toLocaleString()} PSL axioms · ${substrateStats.chatTotal.toLocaleString()} chats handled lifetime${hdcCache ? ` · HDC cache coverage ${(hdcCache.coverage * 100).toFixed(0)}% (${hdcCache.sample_cached}/${hdcCache.sample_size})` : ''} — click to browse`}
+                      aria-label='Open Knowledge Browser'
+                      style={{
+                        color: C.textDim, fontWeight: 600,
+                        fontFamily: T.typography.fontMono, letterSpacing: 0,
+                        background: 'transparent', border: 'none', padding: 0,
+                        cursor: 'pointer',
+                      }}>
+                      · {compactNum(substrateStats.concepts)} facts · {substrateStats.axioms} ax{substrateStats.chatTotal > 0 ? ` · ${compactNum(substrateStats.chatTotal)} chats` : ''}{hdcCache && hdcCache.sample_size > 0 ? ` · ` : ''}
+                      {hdcCache && hdcCache.sample_size > 0 && (
+                        <span style={{
+                          color: hdcCache.coverage >= 0.8 ? C.green : hdcCache.coverage >= 0.4 ? C.yellow : C.red,
+                        }}>cache {(hdcCache.coverage * 100).toFixed(0)}%</span>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -4230,25 +5368,23 @@ ${cmdList}
                       draggable={!!c.pinned}
                       onDragStart={(e) => {
                         if (!c.pinned) return;
-                        setDraggedConvoId(c.id);
+                        cd.begin(c.id);
                         try { e.dataTransfer.setData('text/plain', c.id); e.dataTransfer.effectAllowed = 'move'; } catch { /* not available in jsdom */ }
                       }}
                       onDragOver={(e) => {
                         if (!c.pinned || !draggedConvoId || draggedConvoId === c.id) return;
                         e.preventDefault();
                         try { e.dataTransfer.dropEffect = 'move'; } catch { /* */ }
-                        if (dragOverConvoId !== c.id) setDragOverConvoId(c.id);
+                        cd.hover(c.id);
                       }}
-                      onDragLeave={() => {
-                        if (dragOverConvoId === c.id) setDragOverConvoId(null);
-                      }}
+                      onDragLeave={() => cd.leave(c.id)}
                       onDrop={(e) => {
                         if (!c.pinned || !draggedConvoId) return;
                         e.preventDefault();
                         reorderPinned(draggedConvoId, c.id);
-                        setDraggedConvoId(null); setDragOverConvoId(null);
+                        cd.end();
                       }}
-                      onDragEnd={() => { setDraggedConvoId(null); setDragOverConvoId(null); }}
+                      onDragEnd={() => cd.end()}
                       style={{
                         padding: '10px 12px', borderRadius: T.radii.md,
                         cursor: c.pinned ? (draggedConvoId === c.id ? 'grabbing' : 'grab') : 'pointer',
@@ -4331,6 +5467,39 @@ ${cmdList}
                         <div style={{ fontSize: '10px', color: C.textDim, marginTop: '2px' }}>
                           {c.messages.length} msg &middot; {formatRelative(c.updatedAt)}
                         </div>
+                        {/* c2-433 / task 251 + 258: body-match snippet. When
+                            the search query landed in a message body (not the
+                            title), show ±20 chars around the first match
+                            with the match wrapped in <mark> for consistency
+                            with the title highlighter. Title matches are
+                            already highlighted by highlightConvoTitle. */}
+                        {(() => {
+                          const q = deferredConvoSearch.trim();
+                          if (!q) return null;
+                          if (c.title.toLowerCase().includes(q.toLowerCase())) return null;
+                          const ql = q.toLowerCase();
+                          for (const m of c.messages) {
+                            const idx = m.content.toLowerCase().indexOf(ql);
+                            if (idx < 0) continue;
+                            const start = Math.max(0, idx - 20);
+                            const end = Math.min(m.content.length, idx + q.length + 30);
+                            const before = m.content.slice(start, idx).replace(/\s+/g, ' ');
+                            const matched = m.content.slice(idx, idx + q.length);
+                            const after = m.content.slice(idx + q.length, end).replace(/\s+/g, ' ');
+                            return (
+                              <div style={{
+                                fontSize: '10px', color: C.textMuted, marginTop: '2px',
+                                fontStyle: 'italic',
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}>
+                                {start > 0 ? '\u2026' : ''}{before}
+                                <mark style={{ background: 'rgba(255,211,107,0.45)', color: 'inherit', padding: '0 1px', borderRadius: T.radii.xs }}>{matched}</mark>
+                                {after}{end < m.content.length ? '\u2026' : ''}
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                       {/* Action icons — hover-only per design review. Uses
                           CSS class toggled by the parent's onMouseEnter/Leave.
@@ -4340,17 +5509,28 @@ ${cmdList}
                           is too hidden as a primary affordance. */}
                       <div className='convo-actions'
                         style={{
-                          display: 'flex', gap: '2px',
+                          display: 'flex', gap: isMobile ? '4px' : '2px',
                           opacity: isMobile ? 0.7 : (isActive ? 0.7 : 0),
                           transition: 'opacity 0.12s',
                         }}>
+                        {/* c2-433 / task 257: convo-row action buttons. Mobile
+                            tap-target was ~14px (well under Bible §6.1 44px
+                            minimum). Bumped padding + min-width on mobile so
+                            the touchable area is at least ~30x32px (still
+                            tight, but balanced against row height + density).
+                            Desktop unchanged — hover still works fine at small
+                            target sizes with mouse precision. */}
                         <button onClick={(e) => { e.stopPropagation(); toggleStarred(c.id); }}
                           title={c.starred ? 'Unstar' : 'Star'}
                           aria-label={c.starred ? `Unstar ${c.title}` : `Star ${c.title}`}
                           style={{
                             background: 'transparent', border: 'none',
                             color: c.starred ? C.yellow : C.textDim,
-                            cursor: 'pointer', fontSize: T.typography.sizeSm, padding: '2px 3px',
+                            cursor: 'pointer',
+                            fontSize: isMobile ? T.typography.sizeMd : T.typography.sizeSm,
+                            padding: isMobile ? '6px 8px' : '2px 3px',
+                            minWidth: isMobile ? '32px' : 'auto',
+                            minHeight: isMobile ? '30px' : 'auto',
                           }}>{c.starred ? '\u2605' : '\u2606'}</button>
                         <button onClick={(e) => { e.stopPropagation(); togglePinned(c.id); }}
                           title={c.pinned ? 'Unpin' : 'Pin'}
@@ -4358,7 +5538,11 @@ ${cmdList}
                           style={{
                             background: 'transparent', border: 'none',
                             color: c.pinned ? C.yellow : C.textDim,
-                            cursor: 'pointer', fontSize: T.typography.sizeXs, padding: '2px 3px',
+                            cursor: 'pointer',
+                            fontSize: isMobile ? T.typography.sizeMd : T.typography.sizeXs,
+                            padding: isMobile ? '6px 8px' : '2px 3px',
+                            minWidth: isMobile ? '32px' : 'auto',
+                            minHeight: isMobile ? '30px' : 'auto',
                           }}>{'\u{1F4CC}'}</button>
                         {/* c2-414 / BIG #218 mobile: rename + export are
                             hidden on touch to keep the row compact. Users
@@ -4402,7 +5586,11 @@ ${cmdList}
                           style={{
                             background: 'transparent', border: 'none',
                             color: c.archived ? C.accent : C.textDim,
-                            cursor: 'pointer', fontSize: T.typography.sizeXs, padding: '2px 3px',
+                            cursor: 'pointer',
+                            fontSize: isMobile ? T.typography.sizeMd : T.typography.sizeXs,
+                            padding: isMobile ? '6px 8px' : '2px 3px',
+                            minWidth: isMobile ? '32px' : 'auto',
+                            minHeight: isMobile ? '30px' : 'auto',
                           }}>{'\u{1F5C3}'}</button>
                         <button onClick={(e) => {
                           e.stopPropagation();
@@ -4411,7 +5599,11 @@ ${cmdList}
                         }} title='Delete' aria-label={`Delete ${c.title}`}
                           style={{
                             background: 'transparent', border: 'none', color: C.textDim,
-                            cursor: 'pointer', fontSize: T.typography.sizeXs, padding: '2px 3px',
+                            cursor: 'pointer',
+                            fontSize: isMobile ? T.typography.sizeMd : T.typography.sizeXs,
+                            padding: isMobile ? '6px 8px' : '2px 3px',
+                            minWidth: isMobile ? '32px' : 'auto',
+                            minHeight: isMobile ? '30px' : 'auto',
                           }}>{'\u2715'}</button>
                       </div>
                     </div>
@@ -4629,7 +5821,7 @@ ${cmdList}
                 party-shaped JSON from /api/admin/dashboard. A malformed field
                 should scope to the Classroom pane, not the whole app. */}
             <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
-              <ClassroomView C={C} host={host} isDesktop={isDesktop} localEvents={localEvents} />
+              <ClassroomView C={C} host={host} isDesktop={isDesktop} localEvents={localEvents} onOpenFactKey={openFactKey} initialSub={classroomInitialSub} />
             </AppErrorBoundary>
           </React.Suspense>
         )}
@@ -4754,12 +5946,24 @@ ${cmdList}
             const jumpMatch = (dir: 1 | -1) => {
               const q = chatSearch.toLowerCase();
               if (!q) return;
+              // c2-433 / fix: in 'filter' mode the rendered list is the
+              // filtered subset, so scrollToIndex needs an index INTO that
+              // subset, not into the full messages array. In 'highlight'
+              // mode the rendered list is the full one. Compute indices
+              // against the same list ChatView is rendering.
+              const renderedList = chatSearchMode === 'filter'
+                ? messages.filter(m => m.content?.toLowerCase().includes(q))
+                : messages;
               const indices: number[] = [];
-              messages.forEach((m, i) => { if (m.content?.toLowerCase().includes(q)) indices.push(i); });
+              renderedList.forEach((m, i) => { if (m.content?.toLowerCase().includes(q)) indices.push(i); });
               if (indices.length === 0) return;
               const nextCursor = (chatSearchCursor + dir + indices.length) % indices.length;
               setChatSearchCursor(nextCursor);
-              chatViewRef.current?.scrollToIndex(indices[nextCursor]);
+              const targetIdx = indices[nextCursor];
+              chatViewRef.current?.scrollToIndex(targetIdx);
+              // c2-433 / task 245: shared flash helper — see util.ts.
+              const targetMsg = renderedList[targetIdx];
+              if (targetMsg) flashMessageById(targetMsg.id, C.yellow);
             };
             const matchCount = chatSearch
               ? messages.filter(m => m.content?.toLowerCase().includes(chatSearch.toLowerCase())).length
@@ -4780,13 +5984,17 @@ ${cmdList}
                 placeholder='Search messages… (Enter to jump to next match)'
                 autoComplete='off' spellCheck={false}
                 value={chatSearch}
-                onChange={(e) => { setChatSearch(e.target.value); setChatSearchCursor(0); }}
+                onChange={(e) => setChatSearch(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Escape') { setShowChatSearch(false); setChatSearch(''); return; }
-                  // c2-256 / #118: Enter / Shift+Enter cycles through match
-                  // indices in highlight mode. Filter mode already hides non-
-                  // matches, so jumping would be redundant.
-                  if (e.key === 'Enter' && chatSearchMode === 'highlight' && chatSearch.trim()) {
+                  if (e.key === 'Escape') { cs.close(); return; }
+                  // c2-256 / #118 + c2-433 fix: Enter / Shift+Enter cycles
+                  // through match indices. Now active in BOTH modes — the
+                  // filter-mode block was a stale assumption ("jumping is
+                  // redundant"); for long convos with 30+ matches, stepping
+                  // through them in order is useful even when non-matches
+                  // are hidden. jumpMatch already adapts indices to the
+                  // rendered list (filter or highlight).
+                  if (e.key === 'Enter' && chatSearch.trim()) {
                     e.preventDefault();
                     jumpMatch(e.shiftKey ? -1 : 1);
                   }
@@ -4801,15 +6009,14 @@ ${cmdList}
               <span style={{ fontSize: T.typography.sizeXs, color: C.textMuted, fontFamily: T.typography.fontMono }}>
                 {!chatSearch
                   ? `${messages.length} msgs`
-                  : chatSearchMode === 'highlight' && matchCount > 0
+                  : matchCount > 0
                     ? `${Math.min(chatSearchCursor + 1, matchCount)} / ${matchCount}`
-                    : `${matchCount} of ${messages.length}`}
+                    : `0 of ${messages.length}`}
               </span>
-              {/* c2-257 / #119: visible prev/next match buttons, shown only
-                  in highlight mode with at least one match so they never
-                  render as dead controls. Mouse users can cycle without
-                  re-focusing the input. */}
-              {chatSearchMode === 'highlight' && chatSearch && matchCount > 0 && (
+              {/* c2-257 / #119 + c2-433 fix: visible prev/next match buttons.
+                  Now shown in both modes once Enter-jump is enabled in filter
+                  mode too. */}
+              {chatSearch && matchCount > 0 && (
                 <>
                   <button onClick={() => jumpMatch(-1)} aria-label='Previous match' title='Previous match (Shift+Enter)'
                     style={{
@@ -4842,7 +6049,7 @@ ${cmdList}
                   borderRadius: T.radii.sm, cursor: 'pointer',
                   fontFamily: 'inherit', textTransform: 'uppercase',
                 }}>{chatSearchMode}</button>
-              <button onClick={() => { setShowChatSearch(false); setChatSearch(''); }}
+              <button onClick={() => { cs.close(); }}
                 aria-label='Close search'
                 style={{
                   background: 'transparent', border: 'none', color: C.textMuted,
@@ -4876,10 +6083,19 @@ ${cmdList}
               up away from the latest message in a non-empty chat. Avoids the
               UX trap where new AI replies arrive but the user is reading
               history and never sees them. */}
-          {!chatAtBottom && messages.length > 0 && (
-            <button onClick={() => chatViewRef.current?.scrollToBottom()}
-              aria-label='Scroll to latest message'
-              title='Scroll to latest'
+          {!chatAtBottom && messages.length > 0 && (() => {
+            // c2-433 / task 249b: count new messages added since the user
+            // scrolled up. Clamped at 0 + capped display at 99+.
+            const baseLen = scrollAwayLengthRef.current;
+            const newCount = baseLen != null ? Math.max(0, messages.length - baseLen) : 0;
+            const newLabel = newCount > 99 ? '99+' : String(newCount);
+            return (
+            <button onClick={() => {
+              chatViewRef.current?.scrollToBottom();
+              scrollAwayLengthRef.current = null;
+            }}
+              aria-label={newCount > 0 ? `Scroll to latest message (${newCount} new)` : 'Scroll to latest message'}
+              title={newCount > 0 ? `${newCount} new message${newCount === 1 ? '' : 's'} below` : 'Scroll to latest'}
               style={{
                 // c2-289: bump the bottom offset by the safe-area inset so the
                 // FAB doesn't tuck behind the chat input on iPhones with a
@@ -4902,8 +6118,25 @@ ${cmdList}
                 <line x1='12' y1='5' x2='12' y2='19' />
                 <polyline points='19 12 12 19 5 12' />
               </svg>
+              {/* c2-433 / task 249b: +N badge top-right of the FAB. Anchored
+                  with negative offsets so it spills slightly outside the
+                  circle without affecting layout. Hidden when count is 0. */}
+              {newCount > 0 && (
+                <span aria-hidden='true' style={{
+                  position: 'absolute', top: '-6px', right: '-6px',
+                  minWidth: '18px', height: '18px',
+                  padding: newLabel.length > 2 ? '0 4px' : 0,
+                  fontSize: '10px', fontWeight: T.typography.weightBold,
+                  color: '#fff', background: C.accent,
+                  borderRadius: T.radii.pill, border: `2px solid ${C.bg}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontFamily: T.typography.fontMono, lineHeight: 1,
+                  boxSizing: 'border-box',
+                }}>{newLabel}</span>
+              )}
             </button>
-          )}
+            );
+          })()}
           {/* c2-396 / task 210: mirror of scroll-to-bottom. Appears when
               the user has scrolled past the start of a long conversation
               (chatTopIndex > 4 — anything less already shows the inline
@@ -4964,7 +6197,15 @@ ${cmdList}
             chatMaxWidth={chatMaxWidth}
             chatPadding={chatPadding}
             isDesktop={isDesktop}
-            onAtBottomChange={setChatAtBottom}
+            onAtBottomChange={(at) => {
+              // c2-433 / task 249b: when user leaves the bottom, snapshot
+              // the current message count so the FAB badge can compute
+              // "new since departure". When back at bottom, clear the
+              // snapshot — badge hides.
+              setChatAtBottom(at);
+              if (at) scrollAwayLengthRef.current = null;
+              else if (scrollAwayLengthRef.current == null) scrollAwayLengthRef.current = messages.length;
+            }}
             onVisibleRangeChange={(start) => setChatTopIndex(start)}
             C={C}
             // c2-362 / task 78: cluster consecutive same-role messages within
@@ -4990,8 +6231,9 @@ ${cmdList}
               return (
                 <WelcomeScreen
                   C={C} isDesktop={isDesktop}
-                  onPickPrompt={(p) => { setInput(p); inputRef.current?.focus(); }}
+                  onPickPrompt={(p) => { setInputAndResize(p); inputRef.current?.focus(); }}
                   recentContext={recentContext}
+                  substrate={substrateStats}
                 />
               );
             }}
@@ -5027,10 +6269,115 @@ ${cmdList}
                     <span style={{ color: stuck ? C.red : C.textDim, fontSize: T.typography.sizeXs, fontFamily: T.typography.fontMono }}>
                       {Math.floor(thinkingElapsed / 60) > 0 ? `${Math.floor(thinkingElapsed / 60)}m ` : ''}{thinkingElapsed % 60}s
                     </span>
-                    {stuck && (
+                    {/* c2-433 / #316: cognitive-module activity bar. Six chips
+                        (RAG / Active-Inference / Causal / Analogy / Procedural
+                        / Metacognitive) — the active one pulses accent, ones
+                        that have run this turn stay solid-on, untouched ones
+                        dim. Until the backend emits cognitive_module on
+                        progress events the bar reads "Idle" and the chips all
+                        stay dim. Hidden on mobile (the row is already busy);
+                        accessible via the activity log. */}
+                    {!isMobile && (() => {
+                      // c2-433 / #316: short labels for the chip strip. "AI"
+                      // for Active Inference was confusing — collides with
+                      // the everyday meaning of "AI"; renamed to "ActI" so
+                      // users don't read the chip as "Artificial Intelligence
+                      // module is active." Tooltip carries the full name.
+                      const mods = [
+                        { id: 'rag', label: 'RAG', long: 'Retrieval-Augmented' },
+                        { id: 'active_inference', label: 'ActI', long: 'Active Inference' },
+                        { id: 'causal', label: 'Caus', long: 'Causal' },
+                        { id: 'analogy', label: 'Anlg', long: 'Analogy' },
+                        { id: 'procedural', label: 'Proc', long: 'Procedural' },
+                        { id: 'metacognitive', label: 'Meta', long: 'Metacognitive' },
+                      ];
+                      const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
+                      const activeNorm = activeModule ? norm(activeModule) : null;
+                      const usedNorm = new Set(Array.from(modulesUsed).map(norm));
+                      // c2-433 / task 250: detect when the backend is
+                      // emitting a module name that doesn't map to any of
+                      // the 6 known IDs (substring match in either
+                      // direction). Surface as a "?" chip so users see the
+                      // unknown module + can hover for the raw name.
+                      const matchesAnyKnown = activeNorm == null || mods.some(m =>
+                        activeNorm === m.id || activeNorm.includes(m.id) || m.id.includes(activeNorm));
+                      return (
+                        <div style={{
+                          display: 'flex', gap: '4px', alignItems: 'center',
+                          marginLeft: T.spacing.sm,
+                        }}
+                          aria-label='Cognitive modules active this turn'
+                          title={activeModule ? `Active: ${activeModule}` : 'Cognitive modules — backend will light these as substrate dispatches'}>
+                          {mods.map(m => {
+                            const isActive = activeNorm != null && (activeNorm === m.id || activeNorm.includes(m.id) || m.id.includes(activeNorm));
+                            const wasUsed = !isActive && Array.from(usedNorm).some(u => u === m.id || u.includes(m.id) || m.id.includes(u));
+                            const fg = isActive ? C.accent : wasUsed ? C.text : C.textDim;
+                            const bg = isActive ? C.accentBg : wasUsed ? C.bgInput : 'transparent';
+                            const border = isActive ? C.accentBorder : C.borderSubtle;
+                            return (
+                              <span key={m.id} title={m.long}
+                                style={{
+                                  fontSize: '9px', fontWeight: 700,
+                                  color: fg, background: bg, border: `1px solid ${border}`,
+                                  padding: '2px 5px', borderRadius: T.radii.sm,
+                                  fontFamily: T.typography.fontMono,
+                                  letterSpacing: '0.04em', textTransform: 'uppercase',
+                                  animation: isActive ? 'scc-pulse 1.6s ease-in-out infinite' : undefined,
+                                }}>{m.label}</span>
+                            );
+                          })}
+                          {!matchesAnyKnown && activeModule && (
+                            <span title={`Unknown module: ${activeModule}`}
+                              style={{
+                                fontSize: '9px', fontWeight: 700,
+                                color: C.yellow, background: C.yellowBg,
+                                border: `1px solid ${C.yellow}`,
+                                padding: '2px 5px', borderRadius: T.radii.sm,
+                                fontFamily: T.typography.fontMono,
+                                letterSpacing: '0.04em', textTransform: 'uppercase',
+                                animation: 'scc-pulse 1.6s ease-in-out infinite',
+                              }}>?</span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    {stuck && thinkingElapsed < 45 && (
                       <span style={{ color: C.red, fontSize: T.typography.sizeXs, fontStyle: 'italic' }}>
                         unusually slow
                       </span>
+                    )}
+                    {/* c2-433 / #352: topic-context chip. Surfaces when the
+                        backend emits chat_progress.topic — gives users a
+                        visible signal that multi-turn pronoun resolution
+                        is anchored ("them"/"it" → topic). Hidden on mobile
+                        (row already busy) + when no topic yet. */}
+                    {!isMobile && activeTopic && (
+                      <span title={`Multi-turn topic context: ${activeTopic} — pronouns will resolve to this`}
+                        style={{
+                          fontSize: '10px', fontWeight: 700,
+                          color: C.purple, background: C.purpleBg,
+                          border: `1px solid ${C.purpleBorder}`,
+                          padding: '2px 8px', borderRadius: T.radii.sm,
+                          fontFamily: T.typography.fontMono,
+                          letterSpacing: '0.04em',
+                          maxWidth: '160px', overflow: 'hidden',
+                          textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>topic: {activeTopic}</span>
+                    )}
+                    {/* c2-430: backend-stuck guardrail. After 45s with no
+                        chunks, the thinking path is almost certainly
+                        backend-side — either the substrate pipeline is
+                        mid-refactor (post-LLM pivot is in progress) or the
+                        WS handler errored silently. Surface a clear
+                        message + Reload so the user isn't stuck staring
+                        at a spinner forever. */}
+                    {thinkingElapsed >= 45 && (
+                      <div style={{ flexBasis: '100%', marginTop: T.spacing.xs,
+                        fontSize: T.typography.sizeXs, color: C.red, lineHeight: T.typography.lineTight }}>
+                        Backend isn&apos;t streaming a response. Hit <strong>Stop</strong> below
+                        then retry, or reload if it persists — the LFI substrate pipeline
+                        may be mid-refactor per the ongoing post-LLM pivot.
+                      </div>
                     )}
                     <button onClick={() => {
                       setIsThinking(false);
@@ -5042,10 +6389,23 @@ ${cmdList}
                       title='Stop (Esc)' aria-label='Stop in-flight request'
                       style={{
                       marginLeft: 'auto', padding: '4px 12px', fontSize: T.typography.sizeSm,
-                      background: 'transparent', border: `1px solid ${C.border}`,
-                      color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
-                      fontFamily: 'inherit',
+                      background: thinkingElapsed >= 45 ? C.redBg : 'transparent',
+                      border: `1px solid ${thinkingElapsed >= 45 ? C.redBorder : C.border}`,
+                      color: thinkingElapsed >= 45 ? C.red : C.textMuted,
+                      borderRadius: T.radii.md, cursor: 'pointer',
+                      fontFamily: 'inherit', fontWeight: thinkingElapsed >= 45 ? T.typography.weightBold : T.typography.weightRegular,
                     }}>Stop</button>
+                    {thinkingElapsed >= 60 && (
+                      <button onClick={() => window.location.reload()}
+                        aria-label='Reload the dashboard'
+                        style={{
+                          padding: '4px 12px', fontSize: T.typography.sizeSm,
+                          background: 'transparent',
+                          border: `1px solid ${C.border}`,
+                          color: C.textMuted, borderRadius: T.radii.md, cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}>Reload</button>
+                    )}
                   </div>
                   );
                 })()}
@@ -5053,7 +6413,7 @@ ${cmdList}
               </>
             )}
             renderMessage={(msg, index) => (
-              <>
+              <div data-msg-id={msg.id}>
                 {(() => {
                   // Day separator: show when this message starts a new day vs
                   // the previous visible one. Sticky positioning would require
@@ -5106,24 +6466,48 @@ ${cmdList}
                     }}>Queued (offline)</span>
                   </div>
                 )}
-                {msg.role === 'user' && (msg as any)._branchedFromId != null && (
+                {msg.role === 'user' && (msg as any)._branchedFromId != null && (() => {
                   /* c2-387 / BIG #176: branch-from indicator. Same header-
                      slot shape as the Queued badge; purple palette so
                      branching reads as a neutral navigation cue rather
-                     than a warning or error. */
+                     than a warning or error.
+                     c2-433 / task 241: now clickable — tap to scroll to the
+                     parent message + flash a yellow highlight. The parent
+                     id may have been deleted from the convo (edit-and-
+                     resend trims the trailing slice), in which case the
+                     badge stays inert (button disabled, tooltip explains). */
+                  const parentId = (msg as any)._branchedFromId as number;
+                  const parentIdx = messages.findIndex(m => m.id === parentId);
+                  const found = parentIdx >= 0;
+                  return (
                   <div style={{
                     display: 'flex', justifyContent: 'flex-end',
                     marginBottom: '4px',
                   }}>
-                    <span style={{
-                      fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
-                      color: C.purple, background: C.purpleBg,
-                      border: `1px solid ${C.purpleBorder}`, borderRadius: T.radii.sm,
-                      padding: `2px ${T.spacing.sm}`,
-                      textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
-                    }}>Branch</span>
+                    <button onClick={() => {
+                      if (!found) return;
+                      chatViewRef.current?.scrollToIndex(parentIdx);
+                      // c2-433 / task 245: shared flash helper — handles
+                      // the 80ms-then-flash dance + the data-msg-id query.
+                      flashMessageById(parentId, C.yellow);
+                    }}
+                      disabled={!found}
+                      title={found ? `Branched from message #${parentId} — click to jump` : `Parent message #${parentId} no longer in this conversation`}
+                      aria-label={found ? `Jump to parent message ${parentId}` : `Parent message ${parentId} unavailable`}
+                      style={{
+                        fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+                        color: found ? C.purple : C.textDim,
+                        background: found ? C.purpleBg : 'transparent',
+                        border: `1px solid ${found ? C.purpleBorder : C.borderSubtle}`,
+                        borderRadius: T.radii.sm,
+                        padding: `2px ${T.spacing.sm}`,
+                        textTransform: 'uppercase', letterSpacing: T.typography.trackingLoose,
+                        fontFamily: 'inherit',
+                        cursor: found ? 'pointer' : 'not-allowed',
+                      }}>Branch</button>
                   </div>
-                )}
+                  );
+                })()}
                 {msg.role === 'user' && (
                   <UserMessage
                     msg={msg} C={C} isMobile={isMobile}
@@ -5134,13 +6518,13 @@ ${cmdList}
                       e.preventDefault();
                       setMsgContextMenu({ x: e.clientX, y: e.clientY, msgId: msg.id, role: 'user', content: msg.content });
                     }}
-                    onBeginEdit={() => { setEditingMsgId(msg.id); setEditText(msg.content); }}
-                    onCancelEdit={() => setEditingMsgId(null)}
+                    onBeginEdit={() => me.begin(msg.id, msg.content)}
+                    onCancelEdit={() => me.cancel()}
                     onCommitEdit={(trimmed) => {
                       const idx = messages.findIndex(m => m.id === msg.id);
                       if (idx >= 0) setMessages(prev => prev.slice(0, idx));
-                      setEditingMsgId(null);
-                      setInput(trimmed);
+                      me.cancel();
+                      setInputAndResize(trimmed);
                       // c2-387 / BIG #176: tell the next handleSend to mark
                       // the new bubble as a branch from the edited message.
                       pendingBranchFromRef.current = msg.id;
@@ -5182,35 +6566,82 @@ ${cmdList}
                     onRegenerate={regenerateLast}
                     onCopy={copyWithToast}
                     onOpenProvenance={(cid) => {
+                      // c2-433 / #315: surface fetch failures so the user
+                      // doesn't sit waiting for a system message that will
+                      // never come (offline / backend down). Success path
+                      // unchanged.
                       fetch(`http://${getHost()}:3000/api/provenance/${cid}`)
-                        .then(r => r.json())
+                        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
                         .then(d => {
+                          // c2-433 / task 245: stamp a stable id so the
+                          // flash-after-append can target it.
+                          const newId = msgId();
                           setMessages(prev => [...prev, {
-                            id: msgId(), role: 'system',
+                            id: newId, role: 'system',
                             content: `Provenance #${cid}:\n${d.explanation || JSON.stringify(d, null, 2).slice(0, 500)}`,
                             timestamp: Date.now(),
                           }]);
-                        }).catch(() => {});
+                          flashMessageById(newId, C.accent);
+                        }).catch((e) => {
+                          console.warn('provenance fetch failed', e);
+                          showToast(`Couldn\u2019t load provenance #${cid}`);
+                        });
                     }}
-                    onFollowUpChip={(chip) => { setInput(chip); inputRef.current?.focus(); }}
+                    onFollowUpChip={(chip) => { setInputAndResize(chip); inputRef.current?.focus(); }}
                     onFeedbackPositive={() => {
+                      // c2-433 / #350: rating='up' per Claude 0's spec
+                      // (POST /api/feedback {rating: up|down|correct, ...}).
+                      // conversation_id + lfi_reply included so the Classroom
+                      // queue can render context without a follow-up fetch.
+                      // c2-433 / #315: optimistically toast on send + only
+                      // surface a follow-up "Feedback failed" toast if the
+                      // network actually rejects. Keeps the happy path silent
+                      // (user sees the green toast immediately) while the
+                      // failure mode is no longer hidden.
+                      hapticTick(15);
                       logEvent('feedback_positive', { msgId: msg.id });
                       fetch(`http://${getHost()}:3000/api/feedback`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message_id: msg.id, conclusion_id: (msg as any).conclusion_id, rating: 'positive', category: null, text: '' }),
-                      }).catch(() => {});
+                        body: JSON.stringify({
+                          conversation_id: currentConversationId,
+                          message_id: msg.id,
+                          conclusion_id: (msg as any).conclusion_id,
+                          lfi_reply: msg.content,
+                          rating: 'up',
+                        }),
+                      }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+                        .catch((e) => {
+                          console.warn('feedback POST failed', e);
+                          showToast('Feedback didn\u2019t reach the server');
+                        });
                       showToast('Thanks for the feedback');
                     }}
                     onFeedbackNegative={() => {
-                      setNegFeedbackFor({ msgId: msg.id, conclusionId: (msg as any).conclusion_id });
-                      setNegFeedbackCategory('Incorrect');
-                      setNegFeedbackText('');
+                      hapticTick(15);
+                      fb.openNegFeedback({ msgId: msg.id, conclusionId: (msg as any).conclusion_id });
+                    }}
+                    onFeedbackCorrect={() => {
+                      hapticTick(15);
+                      // Find the prior user turn so we can attach `user_query`
+                      // for the Classroom queue. Walks backwards from current
+                      // index to the most recent role==='user' message.
+                      const idx = messages.findIndex(m => m.id === msg.id);
+                      let userQuery: string | undefined;
+                      for (let i = idx - 1; i >= 0; i--) {
+                        if (messages[i].role === 'user') { userQuery = messages[i].content; break; }
+                      }
+                      fb.openCorrectFeedback({
+                        msgId: msg.id,
+                        conclusionId: (msg as any).conclusion_id,
+                        lfiReply: msg.content,
+                        userQuery,
+                      });
                     }}
                     formatTime={formatTime}
                   />
                   );
                 })()}
-              </>
+              </div>
             )}
           />
 
@@ -5228,6 +6659,232 @@ ${cmdList}
               margin: '0 auto',
               position: 'relative',
             }}>
+              {/* c2-433 / task 244: post-turn modules-used pill. After a
+                  turn completes, modulesUsed retains the modules that ran
+                  for that turn (cleared on next handleSend). Surface them
+                  in a pill above the input so users get a substrate-aware
+                  after-action read without opening the activity log.
+                  Hidden during streaming (the activity bar inside the
+                  thinking indicator already shows live state) + when no
+                  modules were recorded (backend hasn't started emitting
+                  cognitive_module yet). */}
+              {/* c2-433 / #307: rate-limit chip. Replaces the preview row
+                  while the /api/explain cooldown is active. Counts down in
+                  1s ticks via explainRateLimitTick. Dashed red border so it
+                  doesn't feel alarming — the app isn't broken, just backing
+                  off. */}
+              {!isThinking && input.trim().length >= 6 && explainRateLimitUntil != null && Date.now() < explainRateLimitUntil && (() => {
+                void explainRateLimitTick;
+                const secs = Math.max(1, Math.ceil((explainRateLimitUntil - Date.now()) / 1000));
+                return (
+                  <div style={{
+                    display: 'flex', justifyContent: 'flex-end',
+                    gap: '6px', flexWrap: 'wrap', marginBottom: '4px',
+                  }}>
+                    <span title={`Preview endpoint rate-limited — resuming in ${secs}s (research cap is 10/300s)`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        padding: '2px 9px', fontSize: '10px',
+                        background: 'transparent',
+                        border: `1px dashed ${C.red}77`, color: C.red,
+                        borderRadius: T.radii.pill,
+                        fontFamily: T.typography.fontMono, letterSpacing: '0.04em',
+                      }}>
+                      <span style={{ fontWeight: 700 }}>rate-limited</span>
+                      <span style={{ color: C.red, opacity: 0.85 }}>{secs}s</span>
+                    </span>
+                  </div>
+                );
+              })()}
+              {/* c2-433 / #316 / #300: predicted-modules preview row. While
+                  the user is composing a query AND the debounced /api/explain
+                  dry-run has returned, render a chip row with the predicted
+                  speech_act, extracted concept, and active module indicators
+                  (RAG facts count, causal preview, topic stack). Dashed
+                  border + textDim color reads as "predicted, not yet run"
+                  to differentiate from the solid modulesUsed row below.
+                  Hidden during streaming (activity bar takes over), when
+                  input is empty, and when no preview lives yet. */}
+              {!isThinking && input.trim().length >= 6 && explainPreview && (() => {
+                const p = explainPreview;
+                const ragCount = Array.isArray(p.rag_top_facts) ? p.rag_top_facts.length : 0;
+                const hasCausal = p.causal_preview && (Array.isArray(p.causal_preview) ? p.causal_preview.length > 0 : Object.keys(p.causal_preview).length > 0);
+                const topic: string | null = (p.topic_stack && typeof p.topic_stack === 'object'
+                  ? (p.topic_stack.current || p.topic_stack.top || null)
+                  : (typeof p.topic_stack === 'string' ? p.topic_stack : null));
+                // c2-433 / #300 followup: gate_verdicts — tolerant to three
+                // shapes: array of {name|gate, passed|verdict}, plain object
+                // {gate_name: 'pass'|'fail'|bool}, or array of strings (=
+                // failing gates). Normalize to [{name, passed}] so the chip
+                // can report totals + tooltip-list each gate.
+                type GateV = { name: string; passed: boolean };
+                let gates: GateV[] = [];
+                const gv = p.gate_verdicts;
+                if (Array.isArray(gv)) {
+                  gates = gv.map((g: any): GateV => {
+                    if (typeof g === 'string') return { name: g, passed: false };
+                    const name = String(g.name ?? g.gate ?? g.id ?? 'gate');
+                    const verdict = g.passed ?? g.pass ?? g.ok ?? g.verdict;
+                    const passed = typeof verdict === 'boolean' ? verdict
+                      : typeof verdict === 'string' ? /^(pass|ok|true|allow|green)$/i.test(verdict)
+                      : false;
+                    return { name, passed };
+                  });
+                } else if (gv && typeof gv === 'object') {
+                  gates = Object.entries(gv).map(([name, v]: [string, any]): GateV => {
+                    const passed = typeof v === 'boolean' ? v
+                      : typeof v === 'string' ? /^(pass|ok|true|allow|green)$/i.test(v)
+                      : !!v?.passed;
+                    return { name, passed };
+                  });
+                }
+                const failedGates = gates.filter(g => !g.passed);
+                const hasGateInfo = gates.length > 0;
+                const anySignal = !!p.speech_act || !!p.extracted_concept || ragCount > 0 || hasCausal || !!topic || hasGateInfo;
+                if (!anySignal) return null;
+                const chip = (label: string, value: string, title: string) => (
+                  <span key={label} title={title} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    padding: '2px 9px', fontSize: '10px',
+                    background: 'transparent',
+                    border: `1px dashed ${C.borderSubtle}`, color: C.textDim,
+                    borderRadius: T.radii.pill,
+                    fontFamily: T.typography.fontMono,
+                    letterSpacing: '0.04em',
+                    maxWidth: '180px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                  }}>
+                    <span style={{ fontWeight: 700, color: C.textMuted }}>{label}</span>
+                    <span style={{ color: C.textSecondary }}>{value}</span>
+                  </span>
+                );
+                return (
+                  <div style={{
+                    display: 'flex', justifyContent: 'flex-end',
+                    gap: '6px', flexWrap: 'wrap',
+                    marginBottom: '4px',
+                  }}
+                    aria-label='Predicted substrate activity'
+                    title='Pre-send pipeline dry-run (/api/explain)'>
+                    {p.speech_act && chip('act', String(p.speech_act), `Detected speech act: ${p.speech_act}`)}
+                    {p.extracted_concept && chip('concept', String(p.extracted_concept), `Concept: ${p.extracted_concept}`)}
+                    {ragCount > 0 && chip('rag', `${ragCount} fact${ragCount === 1 ? '' : 's'}`, `${ragCount} retrieval hit${ragCount === 1 ? '' : 's'} queued`)}
+                    {hasCausal && chip('causal', 'preview', 'Causal reasoning available for this query')}
+                    {topic && chip('topic', topic, `Carrying topic: ${topic}`)}
+                    {/* c2-433 / #300 followup: gate-verdicts chip. Tooltip
+                        lists each gate with a check/cross. Red-bordered
+                        when any gate fails (user's query will be blocked
+                        downstream); green when all pass. Hidden when the
+                        explain response carried no gate_verdicts at all. */}
+                    {hasGateInfo && (() => {
+                      const anyFailed = failedGates.length > 0;
+                      const color = anyFailed ? C.red : C.green;
+                      const border = anyFailed ? `${C.red}77` : `${C.green}77`;
+                      const label = anyFailed
+                        ? `${failedGates.length}/${gates.length} failing`
+                        : `${gates.length} ok`;
+                      const title = 'Pipeline gates:\n' + gates.map(g => `  ${g.passed ? '\u2713' : '\u2717'} ${g.name}`).join('\n');
+                      return (
+                        <span key='gates' title={title} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '6px',
+                          padding: '2px 9px', fontSize: '10px',
+                          background: 'transparent',
+                          border: `1px dashed ${border}`, color,
+                          borderRadius: T.radii.pill,
+                          fontFamily: T.typography.fontMono,
+                          letterSpacing: '0.04em',
+                        }}>
+                          <span style={{ fontWeight: 700 }}>gates</span>
+                          <span>{label}</span>
+                        </span>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
+              {!isThinking && (modulesUsed.size > 0 || activeTopic) && (
+                <div style={{
+                  display: 'flex', justifyContent: 'flex-end',
+                  gap: '6px', flexWrap: 'wrap',
+                  marginBottom: '6px',
+                }}>
+                  {/* c2-433 / #352: persistent topic-context chip — same row
+                      as modules-used. Shows what pronouns ("them", "it")
+                      will resolve to since topic_stack persists across
+                      turns. Click clears it (covers the case where backend
+                      didn't pivot but the user wants a fresh context). */}
+                  {activeTopic && (
+                    <button onClick={() => setActiveTopic(null)}
+                      title={`Multi-turn topic: ${activeTopic} — click to clear (next turn re-detects)`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        padding: '3px 10px', fontSize: T.typography.sizeXs,
+                        background: C.purpleBg,
+                        border: `1px solid ${C.purpleBorder}`, color: C.purple,
+                        borderRadius: T.radii.pill,
+                        fontFamily: T.typography.fontMono,
+                        cursor: 'pointer',
+                        maxWidth: '240px', overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                      <span style={{ fontWeight: 700 }}>topic</span>
+                      <span style={{ color: C.text }}>{activeTopic}</span>
+                      <span style={{ opacity: 0.6, marginLeft: '2px' }}>{'\u2715'}</span>
+                    </button>
+                  )}
+                  {modulesUsed.size > 0 && (
+                    <span title='Cognitive modules that contributed to the last turn'
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        padding: '3px 10px', fontSize: T.typography.sizeXs,
+                        background: C.bgInput,
+                        border: `1px solid ${C.borderSubtle}`, color: C.textMuted,
+                        borderRadius: T.radii.pill,
+                        fontFamily: T.typography.fontMono,
+                      }}>
+                      <span style={{ color: C.accent, fontWeight: 700, fontFamily: 'inherit' }}>via</span>
+                      <span style={{ color: C.text }}>{Array.from(modulesUsed).join(' · ')}</span>
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* c2-433 / task 243: restore-last-prompt affordance. Renders
+                  above the textarea only when (a) input is empty AND (b)
+                  there's a backup AND (c) the backup is fresh (< 30s).
+                  Click restores the prior draft + focuses the input.
+                  draftBackupTick referenced so React re-evaluates the
+                  freshness check on each backup write. */}
+              {(() => {
+                void draftBackupTick;
+                if (input.length > 0) return null;
+                const b = draftBackupRef.current;
+                if (!b) return null;
+                if (Date.now() - b.at > 30_000) return null;
+                const preview = b.text.replace(/\s+/g, ' ').slice(0, 60);
+                return (
+                  <div style={{
+                    display: 'flex', justifyContent: 'flex-end',
+                    marginBottom: '6px',
+                  }}>
+                    <button onClick={restoreDraftBackup}
+                      title={`Restore: ${b.text.slice(0, 200)}${b.text.length > 200 ? '…' : ''}`}
+                      aria-label='Restore last sent prompt'
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 10px', fontSize: T.typography.sizeXs,
+                        background: 'transparent',
+                        border: `1px solid ${C.borderSubtle}`, color: C.textMuted,
+                        borderRadius: T.radii.pill, cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        maxWidth: '420px',
+                      }}>
+                      <span style={{ color: C.accent, fontWeight: 700 }}>{'\u21BA'}</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        Restore "{preview}{b.text.length > 60 ? '…' : ''}"
+                      </span>
+                    </button>
+                  </div>
+                );
+              })()}
               {/* Slash command menu — pops above the input like Discord/Slack */}
               {showSlashMenu && (() => {
                 const filtered = slashCommands.filter(c =>
@@ -5249,8 +6906,8 @@ ${cmdList}
                     </div>
                     {filtered.map((c, i) => (
                       <button key={c.cmd}
-                        onClick={() => { c.run(); setInput(''); if (inputRef.current) inputRef.current.style.height = ''; setShowSlashMenu(false); logEvent('slash_cmd', { cmd: c.cmd }); }}
-                        onMouseEnter={() => setSlashIndex(i)}
+                        onClick={() => { c.run(); setInputAndResize(''); sm.close(); logEvent('slash_cmd', { cmd: c.cmd }); }}
+                        onMouseEnter={() => sm.setIndex(i)}
                         style={{
                           width: '100%', textAlign: 'left', cursor: 'pointer',
                           padding: '8px 12px', background: i === clamped ? C.accentBg : 'transparent',
@@ -5266,18 +6923,21 @@ ${cmdList}
                 );
               })()}
 
-              {/* c2-372 / task 105: live tokens/s chip during streaming.
-                  Renders between the chat list and the input row. Hidden
-                  outside of active streams. Tokens = ceil(chars/4) (English
-                  GPT-ish ballpark); elapsed in seconds. Right-aligned so it
-                  sits over the input's right edge without shifting layout.
-                  streamTimingTick dependency keeps the chip refreshing
-                  without re-rendering the whole tree. */}
+              {/* c2-372 / task 105 / c2-433 #339 vocab sweep: live throughput
+                  chip during streaming. Was tokens/s + tokens count — replaced
+                  with chars/s + char count, the post-LLM-honest unit (no
+                  tokenizer assumed). Renders between chat list and input row,
+                  hidden outside active streams, right-aligned. The
+                  streamTimingTick dep keeps the chip refreshing without re-
+                  rendering the whole tree. */}
               {streamTiming && (() => {
+                // c2-433 / #313 pass 8: chars-per-second derived inside the
+                // hook (cstr.charsPerSecond). streamTimingTick is referenced
+                // so React re-runs this branch each tick without a manual
+                // useState dep; the void keeps the unused-var lint quiet.
                 void streamTimingTick;
-                const elapsedMs = Math.max(1, Date.now() - streamTiming.startAt);
-                const toks = Math.ceil(streamTiming.chars / 4);
-                const tps = (toks / (elapsedMs / 1000)).toFixed(1);
+                const cps = cstr.charsPerSecond ?? 0;
+                const elapsedSec = (Date.now() - streamTiming.startAt) / 1000;
                 return (
                   <div aria-live='polite' style={{
                     display: 'flex', justifyContent: 'flex-end',
@@ -5285,12 +6945,13 @@ ${cmdList}
                     fontSize: T.typography.sizeXs, color: C.textMuted,
                     fontFamily: T.typography.fontMono,
                   }}>
-                    <span style={{
-                      background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
-                      borderRadius: T.radii.sm,
-                      padding: `2px ${T.spacing.sm}`,
-                    }}>
-                      {tps} tok/s <span style={{ color: C.textDim }}>(~{toks.toLocaleString()} tok)</span>
+                    <span title={`${streamTiming.chars.toLocaleString()} characters streamed in ${elapsedSec.toFixed(1)}s`}
+                      style={{
+                        background: C.bgCard, border: `1px solid ${C.borderSubtle}`,
+                        borderRadius: T.radii.sm,
+                        padding: `2px ${T.spacing.sm}`,
+                      }}>
+                      {cps.toLocaleString()} chars/s <span style={{ color: C.textDim }}>({streamTiming.chars.toLocaleString()})</span>
                     </span>
                   </div>
                 );
@@ -5318,7 +6979,11 @@ ${cmdList}
                     onClick={() => {
                       const prompt = lastErrorRetry.userContent;
                       setLastErrorRetry(null);
-                      setInput(prompt);
+                      // c2-433: same setInputAndResize as the other recall
+                      // paths so a multi-line failed prompt isn't briefly
+                      // shown clipped in the textarea before handleSend
+                      // clears it.
+                      setInputAndResize(prompt);
                       // Give React a tick to commit the input state before
                       // handleSend reads from it.
                       setTimeout(() => { handleSend(); }, 50);
@@ -5382,23 +7047,28 @@ ${cmdList}
                     </div>
                   );
                 })()}
-                {/* c2-413 / BIG #218 mobile: unified counter chip. Always
-                    shows chars + token estimate on one line (whiteSpace:
-                    nowrap). Default subtle styling under 70% of the 100k
-                    context window; turns amber 70–95% and red >95% — the
-                    colour is the only alarm signal, layout stays identical
-                    so the chip doesn't jump between positions.
+                {/* c2-413 / BIG #218 mobile + c2-433 #339: unified char
+                    counter chip. Default subtle styling under 70% of the
+                    100k char transport cap; turns amber 70–95% and red
+                    >95% — colour is the only alarm signal, layout stays
+                    identical so the chip doesn't jump positions.
                     Positioned top-right so it doesn't collide with the
-                    Send button at bottom-right on narrow viewports. */}
+                    Send button at bottom-right on narrow viewports.
+                    Post-LLM vocabulary: "transport cap" not "context
+                    window"; no tokenizer estimate. */}
                 {input.length > 0 && (() => {
-                  const pct = input.length / 100000;
+                  // c2-433 / #339 vocab sweep: dropped "tokens" + "context
+                  // window" wording. Post-LLM positioning treats the input
+                  // as raw chars; the cap is a transport limit, not a
+                  // tokenizer-shaped budget. Title is plain "chars · cap".
+                  const CAP = 100000;
+                  const pct = input.length / CAP;
                   const loud = pct > 0.70;
                   const color = pct > 0.95 ? C.red : pct > 0.70 ? C.yellow : C.textDim;
                   const bg = pct > 0.95 ? C.redBg : pct > 0.70 ? C.accentBg : 'transparent';
-                  const tokens = Math.ceil(input.length / 4);
                   return (
                     <div aria-live={loud ? 'polite' : 'off'}
-                      title={`${input.length.toLocaleString()} chars · approx ${tokens.toLocaleString()} tokens (≈4 chars/token) · 100,000 cap`}
+                      title={`${input.length.toLocaleString()} of ${CAP.toLocaleString()} characters`}
                       style={{
                         position: 'absolute', top: '6px', right: '14px',
                         fontSize: '10px', fontWeight: loud ? 700 : 500,
@@ -5412,7 +7082,7 @@ ${cmdList}
                         // tick, so the chip doesn't dance around the corner.
                         fontVariantNumeric: 'tabular-nums',
                       }}>
-                      {input.length.toLocaleString()}c · ~{tokens.toLocaleString()}t
+                      {input.length.toLocaleString()} chars
                     </div>
                   );
                 })()}
@@ -5445,11 +7115,19 @@ ${cmdList}
                         aria-label={`Remove ${label}`}
                         title='Remove'
                         style={{
-                          position: 'absolute', top: '-6px', right: '-6px',
-                          width: '18px', height: '18px', borderRadius: '50%',
+                          position: 'absolute', top: isMobile ? '-8px' : '-6px', right: isMobile ? '-8px' : '-6px',
+                          // c2-433 / Bible §6.1 tap-target: 18px was below
+                          // the 44px recommendation. Bumped to 28px on
+                          // mobile (still tight but visually proportional
+                          // to a 56px thumbnail) so finger taps land
+                          // reliably without accidentally missing.
+                          width: isMobile ? '28px' : '18px',
+                          height: isMobile ? '28px' : '18px',
+                          borderRadius: '50%',
                           background: C.bg, color: C.text,
                           border: `1px solid ${C.border}`,
-                          fontSize: T.typography.sizeXs, lineHeight: '16px', padding: 0, cursor: 'pointer',
+                          fontSize: isMobile ? T.typography.sizeSm : T.typography.sizeXs,
+                          lineHeight: 1, padding: 0, cursor: 'pointer',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>{'\u2715'}</button>
                     </div>
@@ -5481,9 +7159,11 @@ ${cmdList}
                     const file = it.getAsFile();
                     if (!file) continue;
                     if (file.size > MAX_BYTES) {
-                      setMessages(prev => [...prev, { id: msgId(), role: 'system',
-                        content: `Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 5MB.`,
-                        timestamp: Date.now() }]);
+                      // c2-433 / task 268: was a system message in the chat
+                      // — clutters the convo history with a one-shot
+                      // ephemeral error. Toast is the right surface for
+                      // "your action couldn't complete because X."
+                      showToast(`Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB) — max 5MB`);
                       continue;
                     }
                     const reader = new FileReader();
@@ -5502,28 +7182,47 @@ ${cmdList}
                     const filtered = slashCommands.filter(c =>
                       !slashFilter || c.cmd.slice(1).startsWith(slashFilter) || c.label.toLowerCase().includes(slashFilter)
                     );
-                    if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, filtered.length - 1)); return; }
-                    if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return; }
+                    if (e.key === 'ArrowDown') { e.preventDefault(); sm.moveDown(filtered.length); return; }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); sm.moveUp(); return; }
                     if (e.key === 'Enter' || e.key === 'Tab') {
                       e.preventDefault();
                       const picked = filtered[Math.min(slashIndex, filtered.length - 1)];
-                      if (picked) { picked.run(); setInput(''); if (inputRef.current) inputRef.current.style.height = ''; setShowSlashMenu(false); logEvent('slash_cmd', { cmd: picked.cmd }); }
+                      if (picked) { picked.run(); setInputAndResize(''); sm.close(); logEvent('slash_cmd', { cmd: picked.cmd }); }
                       return;
                     }
-                    if (e.key === 'Escape') { setShowSlashMenu(false); return; }
+                    if (e.key === 'Escape') { sm.close(); return; }
                   }
-                  // Shift+ArrowUp in an empty input recalls the most-recent
-                  // sent user message for quick edit-and-resend.
-                  if (e.key === 'ArrowUp' && e.shiftKey && !input.trim()) {
-                    const lastUser = [...messages].reverse().find(m => m.role === 'user');
-                    if (lastUser) {
+                  // c2-433 / task 250: prompt-history navigation via
+                  // Shift+ArrowUp/Down. Walks the ring buffer of last 10
+                  // sent prompts. ArrowUp from "not navigating" lands at
+                  // the most recent. ArrowDown past the recent end clears
+                  // the input. Falls back to the messages-array recall when
+                  // the ring buffer is empty (legacy behavior on first use).
+                  if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                    const buf = promptHistoryRef.current;
+                    if (buf.length === 0) {
+                      // Legacy fallback: pull the most recent user message
+                      // from the messages array if there's no ring entries
+                      // yet (fresh tab, no sends in this session).
+                      if (e.key === 'ArrowUp' && !input.trim()) {
+                        const lastUser = [...messages].reverse().find(m => m.role === 'user');
+                        if (lastUser) {
+                          e.preventDefault();
+                          setInputAndResize(lastUser.content);
+                          return;
+                        }
+                      }
+                    } else {
                       e.preventDefault();
-                      setInput(lastUser.content);
-                      // Move cursor to end after the next render.
-                      setTimeout(() => {
-                        const el = inputRef.current;
-                        if (el) { el.selectionStart = el.selectionEnd = el.value.length; }
-                      }, 0);
+                      let cursor = promptHistoryCursorRef.current;
+                      if (e.key === 'ArrowUp') {
+                        cursor = cursor < 0 ? buf.length - 1 : Math.max(0, cursor - 1);
+                      } else {
+                        cursor = cursor < 0 ? -1 : Math.min(buf.length, cursor + 1);
+                      }
+                      promptHistoryCursorRef.current = cursor;
+                      const value = (cursor >= 0 && cursor < buf.length) ? buf[cursor] : '';
+                      setInputAndResize(value);
                       return;
                     }
                   }
@@ -5536,7 +7235,17 @@ ${cmdList}
                   if (!settings.sendOnEnter) return;
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
                 }}
-                placeholder='Ask PlausiDen anything…'
+                placeholder={
+                  // c2-433 / task 267: context-aware placeholder. Mirrors
+                  // current state (offline → queue, thinking → stop-first)
+                  // so users get the most relevant nudge at a glance
+                  // instead of a static "Ask PlausiDen anything…".
+                  !isConnected
+                    ? 'Backend offline — type to queue, sends on reconnect'
+                    : isThinking
+                      ? 'Type your next question — current reply is in flight'
+                      : 'Ask PlausiDen anything…'
+                }
                 maxLength={100000}
                 style={{
                   background: 'transparent', border: 'none', outline: 'none',
@@ -5551,9 +7260,17 @@ ${cmdList}
                 }}
                 rows={2}
               />
+              {/* c2-432 mobile compaction: tighter gap + padding; never wrap
+                  (extra overflow falls through to horizontal scroll) so the
+                  Send button stays reachable without a row break. */}
               <div style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '6px 10px 10px', position: 'relative',
+                display: 'flex', alignItems: 'center',
+                gap: isMobile ? '4px' : '6px',
+                padding: isMobile ? '4px 6px 8px' : '6px 10px 10px',
+                position: 'relative',
+                flexWrap: 'nowrap',
+                overflowX: 'auto',
+                scrollbarWidth: 'none',
               }}>
                 {/* Skills "+" button — opens popover with all skills. Cleaner
                     than a wide scrolling row when you have 7+ tools. */}
@@ -5728,16 +7445,16 @@ ${cmdList}
                     <line x1="8" y1="23" x2="16" y2="23"/>
                   </svg>
                 </button>
-                {/* Model selector — replaces the header tier dropdown, right
-                    where ChatGPT/Gemini put theirs. Labels user-friendly.
-                    c2-418: restored on mobile (previously hidden in c2-415
-                    to reclaim horizontal space). Mobile gets short labels
-                    (just the tier name) and tighter padding so it fits;
-                    full descriptive labels remain on desktop. */}
+                {/* c2-428 / #339 pivot: architecturally LFI is post-LLM
+                    (HDC/VSA/PSL/HDLM per LFI_SUPERSOCIETY_ARCHITECTURE.md)
+                    so "tier" is cosmetic for now. Kept at the user's
+                    explicit request until the activity-bar / cognitive
+                    module surface (#316) lands to replace it with
+                    something accurate. c2-429 restore. */}
                 <select value={currentTier} disabled={tierSwitching}
                   onChange={(e) => handleTierSwitch(e.target.value)}
-                  title='Model'
-                  aria-label='Model tier'
+                  title={`Response tier — Pulse: fast / Bridge: balanced / BigBrain: deepest. Currently: ${currentTier}.`}
+                  aria-label={`Response tier (currently ${currentTier})`}
                   style={{
                     padding: isMobile ? '6px 22px 6px 8px' : '7px 28px 7px 12px',
                     fontSize: isMobile ? T.typography.sizeSm : T.typography.sizeMd,
@@ -5750,51 +7467,72 @@ ${cmdList}
                     backgroundRepeat: 'no-repeat', backgroundPosition: isMobile ? 'right 6px center' : 'right 10px center',
                     flexShrink: 0,
                   }}>
-                  <option value="Pulse">{isMobile ? 'Pulse' : 'LFI Pulse \u00B7 fast'}</option>
-                  <option value="Bridge">{isMobile ? 'Bridge' : 'LFI Bridge \u00B7 balanced'}</option>
-                  <option value="BigBrain">{isMobile ? 'BigBrain' : 'LFI BigBrain \u00B7 deepest'}</option>
+                  <option value="Pulse">{isMobile ? 'Pulse' : 'Pulse \u00B7 fast'}</option>
+                  <option value="Bridge">{isMobile ? 'Bridge' : 'Bridge \u00B7 balanced'}</option>
+                  <option value="BigBrain">{isMobile ? 'BigBrain' : 'BigBrain \u00B7 deepest'}</option>
                 </select>
-                <div style={{ flex: 1 }} />
-                {/* Active-skill chip: visible when non-default so the user
-                    always knows which pipeline their next send will use. */}
+                <div style={{ flex: 1, minWidth: isMobile ? '0' : '4px' }} />
+                {/* c2-432 mobile: active-skill chip collapses to icon-only
+                    on mobile so it doesn't push the Send button off-screen.
+                    Desktop keeps icon + label. */}
                 {activeSkill !== 'chat' && (
                   <button onClick={() => setActiveSkill('chat')}
-                    title='Clear active skill'
-                    aria-label='Clear active skill'
+                    title={`Clear active skill (${activeSkillMeta.label})`}
+                    aria-label={`Clear active skill: ${activeSkillMeta.label}`}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: '6px',
-                      padding: '5px 10px', fontSize: '11.5px', fontWeight: 600,
+                      display: 'flex', alignItems: 'center', gap: isMobile ? '4px' : '6px',
+                      padding: isMobile ? '5px 8px' : '5px 10px',
+                      fontSize: '11.5px', fontWeight: 600,
                       background: C.accentBg, border: `1px solid ${C.accentBorder}`,
                       color: C.accent, borderRadius: T.radii.pill,
-                      cursor: 'pointer', fontFamily: 'inherit',
+                      cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
                     }}>
                     {activeSkillMeta.icon}
-                    <span>{activeSkillMeta.label}</span>
+                    {!isMobile && <span>{activeSkillMeta.label}</span>}
                     <span style={{ opacity: 0.7, fontSize: '10px', marginLeft: '2px' }}>{'\u2715'}</span>
                   </button>
                 )}
-                <span style={{ fontSize: T.typography.sizeXs, color: C.textDim, paddingRight: '4px' }}>
-                  {input.length > 0 ? `${input.length} chars` : ''}
-                </span>
+                {/* c2-432 mobile: removed redundant `N chars` inline counter —
+                    the top-right counter chip (c2-413) already shows
+                    chars + tokens in one line. */}
                 {/* Send */}
                 <button
                   onClick={handleSend}
-                  // c2-303: mirror the handleSend guard — an empty text box
-                  // with pasted images queued is a valid send. Previously the
-                  // button stayed disabled even when pastedImages had entries.
-                  disabled={(!input.trim() && pastedImages.length === 0) || !isConnected || isThinking}
+                  // c2-303 + c2-433 / task 287: mirror the handleSend guard —
+                  // an empty text box with pasted images queued is a valid
+                  // send. Offline is no longer a disable condition: the
+                  // outbox path persists the message + drains on reconnect.
+                  // Title/aria already steer the user (Backend offline —
+                  // message will queue) so enabling matches the affordance.
+                  disabled={(!input.trim() && pastedImages.length === 0) || isThinking}
                   className="scc-send-btn"
-                  title='Send (Enter)'
+                  // c2-433 / task 277: title + aria-label reflect the actual
+                  // gating state. Disabled-because-offline / disabled-because-
+                  // empty / disabled-because-thinking each get their own
+                  // hover hint instead of a generic "Send (Enter)".
+                  title={
+                    isThinking ? 'AI is replying — wait or hit Stop'
+                      : !isConnected ? 'Backend offline — message will queue'
+                      : (!input.trim() && pastedImages.length === 0) ? 'Type a message to send'
+                      : 'Send (Enter)'
+                  }
                   aria-label={isThinking ? 'Sending…' : 'Send message'}
                   aria-busy={isThinking}
                   style={{
                     width: '36px', height: '36px',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: input.trim() && isConnected ? C.accent : C.bgInput,
-                    border: `1px solid ${input.trim() && isConnected ? C.accent : C.border}`,
+                    // c2-433 / task 287: accent applies whenever the action
+                    // will succeed — including the offline-queue path.
+                    // Drops to bgInput only when truly disabled (empty +
+                    // no images, or mid-stream).
+                    background: input.trim() && !isThinking ? C.accent : C.bgInput,
+                    border: `1px solid ${input.trim() && !isThinking ? C.accent : C.border}`,
                     borderRadius: T.radii.lg,
-                    color: input.trim() && isConnected ? (settings.theme === 'light' ? '#fff' : '#000') : C.textDim,
-                    cursor: input.trim() && isConnected ? 'pointer' : 'default',
+                    color: input.trim() && !isThinking ? (settings.theme === 'light' ? '#fff' : '#000') : C.textDim,
+                    // c2-433 / task 278: distinguish "wait" (mid-stream) from
+                    // "default" (disabled because empty). 'wait' cursor on
+                    // thinking matches user expectations for inflight async.
+                    cursor: isThinking ? 'wait' : (input.trim() ? 'pointer' : 'default'),
                     flexShrink: 0, transition: 'all 0.15s',
                   }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -5832,7 +7570,7 @@ ${cmdList}
                   onClick={() => { setShowCmdPalette(true); setCmdQuery(''); setCmdIndex(0); }}>
                   {modKey('K')}
                 </span>
-                <span style={{ cursor: 'pointer', color: C.textMuted }} onClick={() => { setInput('/'); setShowSlashMenu(true); setSlashFilter(''); inputRef.current?.focus(); }}>
+                <span style={{ cursor: 'pointer', color: C.textMuted }} onClick={() => { setInput('/'); sm.open(''); inputRef.current?.focus(); }}>
                   / commands
                 </span>
                 <a href="https://plausiden.com" target="_blank" rel="noopener noreferrer"
@@ -5969,6 +7707,16 @@ ${cmdList}
           100% { box-shadow: 0 0 0 0 transparent; }
         }
         .lfi-send-pulse { animation: lfi-send-pulse 0.4s ease-out; }
+        /* c2-433 / #298 followup: contradictions-badge rise pulse. Fires
+           when a new contradiction lands. Scale-up + color-flash + subtle
+           ring, then settles back. Runs twice (animation: ... 2) so it's
+           noticeable but not flashy. */
+        @keyframes scc-badge-rise-pulse {
+          0%   { transform: scale(1);    box-shadow: 0 0 0 0 ${C.red}aa; }
+          30%  { transform: scale(1.45); box-shadow: 0 0 0 5px ${C.red}22; }
+          60%  { transform: scale(1.1);  box-shadow: 0 0 0 3px ${C.red}11; }
+          100% { transform: scale(1);    box-shadow: 0 0 0 0 transparent; }
+        }
         @keyframes lfi-fadein {
           0% { opacity: 0; transform: translateY(8px); }
           100% { opacity: 1; transform: translateY(0); }
@@ -6104,6 +7852,15 @@ ${cmdList}
              chord with a thumb. Marker class makes them opt-in; keeps
              the ShortcutsModal content (which is informational) visible. */
           kbd.lfi-shortcut-chip { display: none !important; }
+          /* c2-432 mobile: hide the webkit scrollbar on overflow:auto rows
+             (chat input action bar, admin/classroom tab bars). The chrome
+             looks dated on touch; scrolling still works via the finger. */
+          ::-webkit-scrollbar { display: none; }
+          /* Notch / dynamic-island safe area: the app-root sits under
+             whatever OS chrome the page is drawn behind (viewport-fit=cover
+             in index.html). Add the top inset so the header doesn't hide
+             under a notch. Left/right handled via margin-auto + max-width. */
+          .lfi-app-root { padding-top: env(safe-area-inset-top, 0px); }
         }
         /* c2-417: reverted the blanket full-screen-modal rule from c2-415.
            The Command Palette is a top-anchored popover, not a

@@ -70,7 +70,7 @@ impl CurriculumScheduler {
         drop(time_stmt);
         drop(conn);
 
-        let max_count = domains.iter().map(|(_, c, _)| *c).max().unwrap_or(1);
+        let _max_count = domains.iter().map(|(_, c, _)| *c).max().unwrap_or(1);
 
         let mut sessions: Vec<TrainingSession> = domains.iter().map(|(domain, count, avg_q)| {
             let mut priority = 0.0f64;
