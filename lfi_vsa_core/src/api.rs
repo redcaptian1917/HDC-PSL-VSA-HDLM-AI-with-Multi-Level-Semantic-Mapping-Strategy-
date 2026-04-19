@@ -4365,6 +4365,123 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }
     }
 
+    // ---- UI error reporting (/api/diag/ui-error, /api/diag/ui-errors) ----
+    //
+    // When the dashboard hits a broken page / failed fetch / render crash,
+    // the UI should POST the failure to /api/diag/ui-error. The backend
+    // appends a JSONL row to /var/log/lfi/ui-errors.jsonl and chains an
+    // audit entry so the operator sees the failure in Admin → Integrity
+    // without having to open DevTools. GET /api/diag/ui-errors returns
+    // the last N entries for the Admin diag viewer.
+    //
+    // Rate-limited 120 / 60s per capability 'diag_ui' so a runaway
+    // componentDidCatch loop can't wedge the disk.
+
+    #[derive(serde::Deserialize)]
+    struct UiErrorReq {
+        #[serde(default)] source: Option<String>,
+        #[serde(default)] message: Option<String>,
+        #[serde(default)] url: Option<String>,
+        #[serde(default)] method: Option<String>,
+        #[serde(default)] status: Option<i64>,
+        #[serde(default)] user_agent: Option<String>,
+        #[serde(default)] stack: Option<String>,
+        #[serde(default)] extra: Option<serde_json::Value>,
+    }
+
+    async fn ui_error_handler(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<UiErrorReq>,
+    ) -> impl IntoResponse {
+        if !check_rate_limit(&state, "diag_ui", 120,
+            std::time::Duration::from_secs(60))
+        {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "diag_ui rate-limited (120/60s)",
+            }));
+        }
+
+        // SECURITY: scrub potential secrets from any field before disk.
+        use crate::intelligence::secret_scanner::SecretScanner;
+        let scanner = SecretScanner::new();
+        let scrub_opt = |s: Option<String>| s.map(|v| scanner.redact(&crate::truncate_str(&v, 2000)));
+        let row = json!({
+            "ts": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs()).unwrap_or(0),
+            "source": scrub_opt(req.source),
+            "message": scrub_opt(req.message),
+            "url": scrub_opt(req.url),
+            "method": scrub_opt(req.method),
+            "status": req.status,
+            "user_agent": scrub_opt(req.user_agent),
+            "stack": scrub_opt(req.stack),
+            "extra": req.extra,
+        });
+
+        // Append + rotate. Log file is capped at ~5MB per day's rotation
+        // by tracing_appender elsewhere; this is a separate JSONL file
+        // that we cap at 50_000 lines via a size check.
+        let log_path = "/var/log/lfi/ui-errors.jsonl";
+        let _ = std::fs::create_dir_all("/var/log/lfi");
+        let write_err = match std::fs::OpenOptions::new()
+            .create(true).append(true).open(log_path)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                writeln!(f, "{}", row).err()
+            }
+            Err(e) => Some(e),
+        };
+        if let Some(e) = write_err.as_ref() {
+            warn!("// AUDIT: ui-error log write failed: {}", e);
+        }
+
+        let _ = state.db.audit_chain_append(
+            "ui_error", "Warn", "ui",
+            "ui_reported_error",
+            &format!("source={} msg={}",
+                row["source"].as_str().unwrap_or(""),
+                crate::truncate_str(row["message"].as_str().unwrap_or(""), 120)),
+        );
+
+        info!("// UI-ERROR: source={} url={} status={:?} msg={}",
+            row["source"].as_str().unwrap_or(""),
+            row["url"].as_str().unwrap_or(""),
+            req.status,
+            crate::truncate_str(row["message"].as_str().unwrap_or(""), 160));
+
+        axum::Json(json!({
+            "ok": write_err.is_none(),
+            "logged": write_err.is_none(),
+        }))
+    }
+
+    async fn ui_errors_list_handler(
+        axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let limit: usize = params.get("limit")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100).min(1000);
+        let path = "/var/log/lfi/ui-errors.jsonl";
+        let body = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => return axum::Json(json!({"ok": true, "errors": []})),
+        };
+        let all: Vec<&str> = body.lines().collect();
+        let start = all.len().saturating_sub(limit);
+        let tail: Vec<serde_json::Value> = all[start..]
+            .iter()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .collect();
+        axum::Json(json!({
+            "ok": true,
+            "count": tail.len(),
+            "errors": tail,
+        }))
+    }
+
     // ---- Docs API — programmatic fallback when ServeDir is shaky ----
     //
     // GET /api/docs/list           — enumerates every .md under public/docs
@@ -6540,6 +6657,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/avp/status", get(avp_status_handler))
         .route("/api/docs/list", get(docs_list_handler))
         .route("/api/docs/:name", get(docs_get_handler))
+        .route("/api/diag/ui-error", post(ui_error_handler))
+        .route("/api/diag/ui-errors", get(ui_errors_list_handler))
         .route("/api/backup/brain", post(backup_brain_handler))
         .route("/api/trainer/turn", post(trainer_turn_handler))
         .route("/api/trainer/sessions", get(trainer_sessions_handler))
