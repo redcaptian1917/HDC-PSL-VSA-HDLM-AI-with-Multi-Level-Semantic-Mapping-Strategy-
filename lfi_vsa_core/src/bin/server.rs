@@ -8,10 +8,17 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize standard tracing
-    // Structured logging to both stdout and /var/log/lfi/server.log
-    let _ = std::fs::create_dir_all("/var/log/lfi");
-    let file_appender = tracing_appender::rolling::daily("/var/log/lfi", "server.log");
+    // #407b Structured logging — default to $HOME/LFI-data/logs/ (same
+    // partition as brain.db + LFI-data) instead of /var/log which tends
+    // to sit on the small root partition. User reported disk pressure
+    // 94% on root while home had 70 GB free. Env override
+    // LFI_LOG_DIR honored when set.
+    let log_dir = std::env::var("LFI_LOG_DIR").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        format!("{}/LFI-data/logs", home)
+    });
+    let _ = std::fs::create_dir_all(&log_dir);
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "server.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)

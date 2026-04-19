@@ -35,6 +35,22 @@ use crate::telemetry::MaterialAuditor;
 use rusqlite::params;
 use crate::intelligence::web_search::WebSearchEngine;
 
+/// Resolve `<log-dir>/<name>`. Reads LFI_LOG_DIR env first, falls back
+/// to `$HOME/LFI-data/logs`, then `/var/log/lfi` as a last resort.
+/// User reported 94% disk pressure on root while home had 70 GB free —
+/// relocating logs to home is the fix. Callers must pass just the
+/// bare filename (e.g. "chat.jsonl"), not a full path.
+pub fn lfi_log_path(name: &str) -> String {
+    let dir = std::env::var("LFI_LOG_DIR").unwrap_or_else(|_| {
+        match std::env::var("HOME") {
+            Ok(h) => format!("{}/LFI-data/logs", h),
+            Err(_) => "/var/log/lfi".into(),
+        }
+    });
+    let _ = std::fs::create_dir_all(&dir);
+    format!("{}/{}", dir, name)
+}
+
 /// Shared application state across all handlers.
 pub struct AppState {
     pub tx: broadcast::Sender<String>,
@@ -848,7 +864,7 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                             if let Err(e) = std::fs::create_dir_all("/var/log/lfi") {
                                 warn!("// AUDIT: chat log dir create failed: {}", e);
                             } else if let Ok(mut f) = std::fs::OpenOptions::new()
-                                .create(true).append(true).open("/var/log/lfi/chat.jsonl")
+                                .create(true).append(true).open(lfi_log_path("chat.jsonl").as_str())
                             {
                                 use std::io::Write;
                                 if let Err(e) = writeln!(f, "{}", log_line) {
@@ -1352,7 +1368,7 @@ async fn chat_log_handler(
     // AUDIT FIX #9: Don't load unbounded file. Read last 1MB max.
     let max_bytes: u64 = 1_024_1024;
     let mut lines: Vec<serde_json::Value> = Vec::new();
-    if let Ok(file) = std::fs::File::open("/var/log/lfi/chat.jsonl") {
+    if let Ok(file) = std::fs::File::open(lfi_log_path("chat.jsonl").as_str()) {
         use std::io::{Read, Seek, SeekFrom};
         let mut file = file;
         let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -5377,6 +5393,232 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    /// POST /api/ingest/url
+    /// Body: { url, title?, source?, tag?, min_len? }
+    ///
+    /// #407 Fetches URL body, strips HTML, routes through the #406 paste
+    /// sentence-split pipeline. Use case: "ingest this wikipedia article,"
+    /// "absorb this blog post," "add this documentation page." No full
+    /// HTML parser — simple tag stripper keeps the implementation
+    /// bounded; lossy but good enough for prose.
+    ///
+    /// Bounds: url ≤ 2048 chars, fetch timeout 15s, body cap 500_000
+    /// bytes (we slice before stripping so the HTML itself can't OOM).
+    /// Scheme must be http or https — file:/ftp:/data: are rejected
+    /// so a token leak can't drop-read a local secret file.
+    ///
+    /// Rate-limited 10/60s per capability 'url_ingest' — reasonable for
+    /// human-paced ingestion without giving an attacker a DoS lever.
+    async fn ingest_url_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let url = body.get("url").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let title_arg = body.get("title").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let source_name = body.get("source").and_then(|v| v.as_str())
+            .unwrap_or("url_ingest").trim();
+        let tag = body.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+        let min_len = body.get("min_len").and_then(|v| v.as_u64())
+            .unwrap_or(20).clamp(5, 200) as usize;
+
+        if url.is_empty() || url.len() > 2048 {
+            return axum::Json(json!({"ok": false, "error": "url required, ≤ 2048 chars"}));
+        }
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "only http:// or https:// urls accepted",
+            }));
+        }
+        if !check_rate_limit(&state, "url_ingest", 10,
+            std::time::Duration::from_secs(60))
+        {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "url_ingest rate-limited (10/60s)",
+            }));
+        }
+
+        info!("// URL-INGEST: fetching {}", url);
+
+        let agent_ua = "PlausiDen-LFI/1.0 (+https://localhost)";
+        let fetch_res = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(15))
+            .user_agent(agent_ua)
+            .build()
+            .get(url)
+            .call();
+
+        let raw_body = match fetch_res {
+            Ok(resp) => {
+                let status = resp.status();
+                if status < 200 || status >= 400 {
+                    return axum::Json(json!({
+                        "ok": false,
+                        "error": format!("fetch returned HTTP {}", status),
+                    }));
+                }
+                match resp.into_string() {
+                    Ok(s) => {
+                        if s.len() > 500_000 { s[..500_000].to_string() } else { s }
+                    }
+                    Err(e) => {
+                        warn!("// URL-INGEST: body read failed: {}", e);
+                        return axum::Json(json!({
+                            "ok": false,
+                            "error": "body read failed",
+                        }));
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("// URL-INGEST: fetch failed: {}", crate::truncate_str(&e.to_string(), 200));
+                return axum::Json(json!({
+                    "ok": false,
+                    "error": "fetch failed (network / DNS / timeout)",
+                }));
+            }
+        };
+
+        // HTML strip: nuke script/style content, then drop remaining tags.
+        // Character-level state machine — no regex dep.
+        let text = strip_html_body(&raw_body);
+        if text.trim().is_empty() {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "no text content extracted (empty body or all markup)",
+            }));
+        }
+
+        // Secret scrub before persistence.
+        use crate::intelligence::secret_scanner::SecretScanner;
+        let scanner = SecretScanner::new();
+        let cleaned = scanner.redact(&text);
+        let had_secret = cleaned != text;
+
+        // Sentence split — same rules as #406 paste.
+        let mut sentences: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for ch in cleaned.chars() {
+            current.push(ch);
+            if matches!(ch, '.' | '!' | '?' | '\n') {
+                let trimmed = current.trim().to_string();
+                if trimmed.len() >= min_len && trimmed.len() <= 1000 {
+                    sentences.push(trimmed);
+                }
+                current.clear();
+            }
+        }
+        let trimmed_tail = current.trim().to_string();
+        if trimmed_tail.len() >= min_len && trimmed_tail.len() <= 1000 {
+            sentences.push(trimmed_tail);
+        }
+
+        if sentences.is_empty() {
+            return axum::Json(json!({
+                "ok": false,
+                "error": format!("no sentences extracted (min_len={})", min_len),
+                "bytes_fetched": raw_body.len(),
+            }));
+        }
+
+        let title = if title_arg.is_empty() {
+            crate::truncate_str(url, 120).to_string()
+        } else { title_arg.to_string() };
+        let cap = sentences.len().min(2000);
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+        let slug: String = title.chars()
+            .take(24)
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .collect();
+        let tag_suffix = if tag.is_empty() { String::new() } else { format!("_{}", tag) };
+        let mut keys: Vec<String> = Vec::with_capacity(cap);
+        for (i, sentence) in sentences.iter().take(cap).enumerate() {
+            let key = format!("url_{}_{}_{:04}{}", slug, secs, i, tag_suffix);
+            state.db.upsert_fact(&key, sentence, source_name, 0.70);
+            keys.push(key);
+        }
+        let _ = state.db.audit_chain_append(
+            "ingest", "Info", "url",
+            "url_ingested",
+            &format!("url={} count={} source={} had_secret={}",
+                crate::truncate_str(url, 80), cap, source_name, had_secret),
+        );
+
+        axum::Json(json!({
+            "ok": true,
+            "url": url,
+            "bytes_fetched": raw_body.len(),
+            "text_bytes": text.len(),
+            "ingested_count": cap,
+            "skipped": sentences.len().saturating_sub(cap),
+            "source": source_name,
+            "tag": tag,
+            "title": title,
+            "secrets_scrubbed": had_secret,
+            "sample_keys": keys.iter().take(5).cloned().collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Character-level HTML → text stripper. Drops <script>…</script>
+    /// and <style>…</style> blocks entirely, then removes all remaining
+    /// tags. Lossy but fast + zero dependency. For full DOM-aware text
+    /// extraction, wire in a proper HTML parser in #373.
+    fn strip_html_body(html: &str) -> String {
+        // Pass 1 — remove script / style blocks.
+        let lower = html.to_ascii_lowercase();
+        let mut out = String::with_capacity(html.len());
+        let mut i = 0usize;
+        let bytes = html.as_bytes();
+        while i < bytes.len() {
+            let lb = &lower[i..];
+            if lb.starts_with("<script") {
+                if let Some(end) = lb.find("</script>") { i += end + "</script>".len(); continue; }
+                break;
+            }
+            if lb.starts_with("<style") {
+                if let Some(end) = lb.find("</style>") { i += end + "</style>".len(); continue; }
+                break;
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+
+        // Pass 2 — drop remaining tags + decode the handful of common
+        // HTML entities that matter for readable prose.
+        let mut text = String::with_capacity(out.len());
+        let mut in_tag = false;
+        for ch in out.chars() {
+            match ch {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                c if !in_tag => text.push(c),
+                _ => {}
+            }
+        }
+        text = text
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'");
+
+        // Collapse whitespace runs.
+        let mut compact = String::with_capacity(text.len());
+        let mut last_ws = false;
+        for ch in text.chars() {
+            if ch.is_whitespace() {
+                if !last_ws { compact.push(' '); last_ws = true; }
+            } else {
+                compact.push(ch); last_ws = false;
+            }
+        }
+        compact.trim().to_string()
+    }
+
     /// POST /api/ingest/start
     /// Body: { run_id, corpus, tuples_requested?, pid? }
     async fn ingest_start_handler(
@@ -6525,7 +6767,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
 
         // Read chat log
         if module.is_empty() || module == "chat" {
-            if let Ok(content) = std::fs::read_to_string("/var/log/lfi/chat.jsonl") {
+            if let Ok(content) = std::fs::read_to_string(lfi_log_path("chat.jsonl").as_str()) {
                 for line in content.lines().rev().take(limit) {
                     logs.push(json!({"source": "chat", "line": line}));
                 }
@@ -6634,6 +6876,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/corpus/marketplace", get(corpus_marketplace_handler))
         .route("/api/library/quality", get(library_quality_handler))
         .route("/api/ingest/paste", post(ingest_paste_handler))
+        .route("/api/ingest/url", post(ingest_url_handler))
         .route("/api/ingest/start", post(ingest_start_handler))
         .route("/api/ingest/progress", post(ingest_progress_handler))
         .route("/api/ingest/finish", post(ingest_finish_handler))
