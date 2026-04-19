@@ -5,7 +5,12 @@
   "main": "index.js",
   "scripts": {
     "start": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "mobile-lint": "bash scripts/mobile-lint.sh",
+    "mobile-smoke": "echo 'Paste scripts/mobile-smoke.js into DevTools console at mobile emulation sizes — this is a runtime harness, not a CLI test.' && exit 0",
+    "audit": "npm run mobile-lint",
+    "prebuild": "npm run audit",
+    "ci": "npm run audit && npm run build"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
