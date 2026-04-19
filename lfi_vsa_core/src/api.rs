@@ -233,7 +233,35 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let rate_window = std::time::Duration::from_secs(60);
     let max_messages_per_window: usize = 10;
 
-    while let Some(Ok(msg)) = socket.recv().await {
+    // #403 WS keepalive. Intermediate proxies (reverse proxies, WireGuard
+    // NAT, phone LTE) commonly drop WebSocket connections after ~60 s of
+    // silence. A server-side Ping every 25 s keeps the path warm; if the
+    // next Ping can't be sent, the loop breaks so the UI's auto-reconnect
+    // can kick in rather than leaving the user staring at a dead socket.
+    //
+    // Browsers auto-Pong any server Ping transparently so this does not
+    // require UI changes. The 25s interval is well below the 45s
+    // "Backend isn't streaming" banner the UI shows on dead streams.
+    let keepalive = std::time::Duration::from_secs(25);
+
+    loop {
+        let msg = match tokio::time::timeout(keepalive, socket.recv()).await {
+            Ok(Some(Ok(m))) => m,
+            Ok(Some(Err(e))) => {
+                debug!("// AUDIT: WS recv error: {}", e);
+                break;
+            }
+            Ok(None) => break,                       // client closed
+            Err(_) => {
+                // No message in 25 s → send a server Ping to keep the
+                // TCP path alive through proxies.
+                if socket.send(Message::Ping(vec![])).await.is_err() {
+                    break;
+                }
+                continue;
+            }
+        };
+        {
         // Rate limit check
         let now = std::time::Instant::now();
         while message_timestamps.front().map(|t| now.duration_since(*t) > rate_window).unwrap_or(false) {
@@ -940,6 +968,7 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
             Message::Close(_) => break,
             _ => {}
         }
+        } // <-- closes the inner `{` opened above so the old loop body stays indented.
     }
 
     info!("// AUDIT: SCC Chat client disconnected.");
@@ -3760,6 +3789,72 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Generic preferences (theme / notifyOnReply / erudaMode / etc.) ----
+    //
+    // #403 The UI fires a POST /api/settings { key, value } whenever a
+    // preference toggles so the pref follows the user across devices. We
+    // previously had no handler, so these all 405'd + counted as failures
+    // in the diag tab. Persist into user_profile under the
+    // "ui_pref" category so they round-trip via the existing profile
+    // plumbing without a new table.
+    //
+    // The public endpoints (GET returning all ui_prefs; POST upserting
+    // one) are intentionally unauthenticated — these are client-side UX
+    // toggles, not security-sensitive state. Values are length-capped
+    // and secret-scrubbed before hitting the DB.
+
+    async fn settings_post_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let key = body.get("key").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let value_raw = match body.get("value") {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(v) => v.to_string(),
+            None => return axum::Json(json!({
+                "ok": false,
+                "error": "body must include {key, value}",
+            })),
+        };
+        if key.is_empty() || key.len() > 64 || value_raw.len() > 2048 {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "key ≤ 64 chars, value ≤ 2048 chars",
+            }));
+        }
+        // SECURITY: route through the secret scanner before persisting
+        // so a paste of "theme=secret-api-key" can't land in the DB.
+        use crate::intelligence::secret_scanner::SecretScanner;
+        let scrubbed = SecretScanner::new().redact(&value_raw);
+        state.db.save_profile(key, &scrubbed, "ui_pref");
+        axum::Json(json!({ "ok": true, "key": key }))
+    }
+
+    async fn settings_get_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        // Fetch all ui_pref rows from user_profile.
+        let prefs = {
+            let conn = match state.db.conn.lock() {
+                Ok(c) => c,
+                Err(_) => return axum::Json(json!({"ok": false, "error": "db lock"})),
+            };
+            let mut stmt = match conn.prepare(
+                "SELECT key, value FROM user_profile WHERE category='ui_pref'"
+            ) {
+                Ok(s) => s,
+                Err(_) => return axum::Json(json!({"ok": true, "prefs": {}})),
+            };
+            let rows: Vec<(String, String)> = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+            let mut map = serde_json::Map::new();
+            for (k, v) in rows { map.insert(k, json!(v)); }
+            serde_json::Value::Object(map)
+        };
+        axum::Json(json!({ "ok": true, "prefs": prefs }))
+    }
+
     // ---- Workspace RAM cap (#397 / #398) ----
 
     /// GET /api/settings/workspace — current workspace capacity + footprint.
@@ -5576,6 +5671,9 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/settings/workspace",
                get(settings_workspace_get_handler)
                .put(settings_workspace_set_handler))
+        .route("/api/settings",
+               get(settings_get_handler)
+               .post(settings_post_handler))
         .route("/api/capability/tokens",
                get(capability_token_list_handler)
                .post(capability_token_issue_handler))
