@@ -3752,6 +3752,65 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Cross-lingual concept map (#274) ----
+
+    /// POST /api/concepts/link
+    /// Body: { concept_id, language, text }
+    async fn concept_link_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let cid = body.get("concept_id").and_then(|v| v.as_str()).unwrap_or("");
+        let lang = body.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        if cid.is_empty() || cid.len() > 128
+            || lang.is_empty() || lang.len() > 16
+            || text.is_empty() || text.len() > 256 {
+            return axum::Json(json!({"error":
+                "concept_id 1..=128, language 1..=16, text 1..=256"}));
+        }
+        let inserted = state.db.link_translation(cid, lang, text);
+        axum::Json(json!({
+            "linked": inserted, "concept_id": cid,
+            "language": lang, "text": text,
+        }))
+    }
+
+    /// GET /api/concepts/:id/translations
+    async fn concept_translations_handler(
+        State(state): State<Arc<AppState>>,
+        Path(id): Path<String>,
+    ) -> impl IntoResponse {
+        let rows = state.db.translations_of(&id);
+        let items: Vec<serde_json::Value> = rows.into_iter()
+            .map(|(lang, text)| json!({"language": lang, "text": text}))
+            .collect();
+        axum::Json(json!({
+            "concept_id": id,
+            "translations": items,
+            "count": items.len(),
+        }))
+    }
+
+    /// GET /api/concepts/resolve?language=en&text=water
+    /// Returns the canonical concept_id for a surface string (or the
+    /// normalised text when unlinked).
+    async fn concept_resolve_handler(
+        State(state): State<Arc<AppState>>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let lang = params.get("language").cloned().unwrap_or_default();
+        let text = params.get("text").cloned().unwrap_or_default();
+        if text.is_empty() {
+            return axum::Json(json!({"error": "text required"}));
+        }
+        let concept_id = state.db.resolve_concept(&lang, &text);
+        axum::Json(json!({
+            "input": { "language": lang, "text": text },
+            "concept_id": concept_id,
+        }))
+    }
+
     // ---- Capability tokens (#303) ----
 
     /// POST /api/capability/tokens (authenticated-only)
@@ -5110,6 +5169,9 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
                .post(capability_token_issue_handler))
         .route("/api/capability/tokens/:id/revoke",
                post(capability_token_revoke_handler))
+        .route("/api/concepts/link", post(concept_link_handler))
+        .route("/api/concepts/:id/translations", get(concept_translations_handler))
+        .route("/api/concepts/resolve", get(concept_resolve_handler))
         .route("/api/fsrs/due", get(fsrs_due_handler))
         .route("/api/fsrs/review", post(fsrs_review_handler))
         .route("/api/explain", post(explain_query_handler))

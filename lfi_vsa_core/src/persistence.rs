@@ -282,6 +282,23 @@ impl BrainDb {
             CREATE INDEX IF NOT EXISTS idx_sac_cat ON security_audit_chain(category);
             CREATE INDEX IF NOT EXISTS idx_sac_actor ON security_audit_chain(actor);
 
+            -- #274 Cross-lingual concept map. Maps a surface string
+            -- in some language to a canonical concept_id that multiple
+            -- translations share. water (en), agua (es), water-kanji
+            -- (zh) all link to the same concept_id → same HDC vector
+            -- via role_binding seeded on the concept_id rather than
+            -- the surface text. Makes analogy language-free.
+            CREATE TABLE IF NOT EXISTS concept_translations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                concept_id TEXT NOT NULL,
+                language TEXT NOT NULL,
+                text TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(language, text)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ct_concept ON concept_translations(concept_id);
+            CREATE INDEX IF NOT EXISTS idx_ct_lang ON concept_translations(language);
+
             -- #303 Capability tokens: bearer credentials granting a
             -- named capability (ingest, admin_read, chain_append, etc).
             -- Distinct from the sovereign passphrase: tokens can be
@@ -752,6 +769,52 @@ impl BrainDb {
              PRAGMA mmap_size=8589934592;"
         )?;
         Ok(conn)
+    }
+
+    // ---- Cross-lingual concept map (#274) ----
+
+    /// Link a surface string in a language to a canonical concept_id.
+    /// Idempotent on (language, text). Returns true if a new row was
+    /// inserted, false if the pair already existed.
+    pub fn link_translation(
+        &self, concept_id: &str, language: &str, text: &str,
+    ) -> bool {
+        if concept_id.is_empty() || language.is_empty() || text.is_empty() {
+            return false;
+        }
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.execute(
+            "INSERT OR IGNORE INTO concept_translations \
+             (concept_id, language, text) VALUES (?1, ?2, ?3)",
+            params![concept_id, language, text],
+        ).map(|n| n > 0).unwrap_or(false)
+    }
+
+    /// Resolve a surface string to its canonical concept_id, if linked.
+    /// Returns the concept_id; falls back to the normalised text when
+    /// unlinked so callers have a deterministic seed either way.
+    pub fn resolve_concept(&self, language: &str, text: &str) -> String {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        conn.query_row(
+            "SELECT concept_id FROM concept_translations \
+             WHERE language = ?1 AND text = ?2 LIMIT 1",
+            params![language, text],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_else(|_| text.trim().to_lowercase())
+    }
+
+    /// List all translations for a concept_id — ordered by language.
+    pub fn translations_of(&self, concept_id: &str)
+        -> Vec<(String, String)>
+    {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = match conn.prepare(
+            "SELECT language, text FROM concept_translations \
+             WHERE concept_id = ?1 ORDER BY language ASC"
+        ) { Ok(s) => s, Err(_) => return Vec::new() };
+        stmt.query_map(params![concept_id], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+        ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     }
 
     // ---- Capability tokens (#303) ----
@@ -2474,6 +2537,27 @@ mod tests {
             rusqlite::params!["k1"], |r| r.get(0),
         ).unwrap();
         assert_eq!(v, "v1");
+    }
+
+    #[test]
+    fn cross_lingual_link_and_resolve() {
+        let db = temp_db();
+        assert!(db.link_translation("c_water", "en", "water"));
+        assert!(db.link_translation("c_water", "es", "agua"));
+        // Re-link same pair is a no-op.
+        assert!(!db.link_translation("c_water", "en", "water"));
+
+        // Surface text resolves to concept_id.
+        assert_eq!(db.resolve_concept("en", "water"), "c_water");
+        assert_eq!(db.resolve_concept("es", "agua"), "c_water");
+        // Unknown surface → normalised text fallback (not an error).
+        assert_eq!(db.resolve_concept("en", "unknown"), "unknown");
+
+        let trans = db.translations_of("c_water");
+        assert_eq!(trans.len(), 2);
+        // Ordered by language — en, es.
+        assert_eq!(trans[0].0, "en");
+        assert_eq!(trans[1].0, "es");
     }
 
     #[test]
