@@ -712,6 +712,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           {tab === 'dashboard' && (
             <div>
               {err.dashboard && <ErrorAlert C={C} message={err.dashboard} onRetry={() => loadTab('dashboard')} retrying={loading === 'dashboard'} />}
+              {/* claude-0 13:18 ship: one-click SQLite hot backup. Posts
+                  /api/backup/brain, rate-limited 4/hr backend-side.
+                  Prominent top-of-dashboard action so solo operators can
+                  snapshot brain.db before a risky ingest run. */}
+              <BackupBrainCard C={C} host={host} />
+
               {/* Skeleton loader — only shown while the first fetch is in
                   flight AND we don't yet have any cached data. Subsequent
                   refreshes render fresh data silently. Per c0-020. */}
@@ -2846,6 +2852,93 @@ const renderDocsMarkdown = (src: string, C: any): React.ReactNode[] => {
 // manager_guide.md) and renders it in-app. Falls back to a helpful
 // "not yet shipped" card when the endpoint 404s so older deployments
 // don't show a broken tab.
+// claude-0 13:18 ask: Backup brain.db one-click. POSTs /api/backup/brain,
+// which writes a hot SQLite .backup to /home/user/LFI-data/brain.db.<epoch>.bak.
+// Rate-limited 4/hr server-side — 429 surfaces friendly message.
+const BackupBrainCard: React.FC<{ C: any; host: string }> = ({ C, host }) => {
+  const [running, setRunning] = React.useState(false);
+  const [result, setResult] = React.useState<{ ok: boolean; text: string } | null>(null);
+  const fmtSize = (bytes: number) => {
+    if (!isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0, b = bytes;
+    while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
+    return `${b.toFixed(b >= 100 ? 0 : b >= 10 ? 1 : 2)} ${units[i]}`;
+  };
+  const run = async () => {
+    setRunning(true); setResult(null);
+    try {
+      const r = await fetch(`http://${host}:3000/api/backup/brain`, { method: 'POST' });
+      if (r.status === 429) {
+        const d: any = await r.json().catch(() => ({}));
+        setResult({ ok: false, text: `Rate limited — ${d?.retry_after_secs ?? '?'}s until next backup allowed` });
+        return;
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d: any = await r.json();
+      if (d?.ok) {
+        const path = d.path || '';
+        const filename = path.split('/').pop() || path || 'backup';
+        const size = typeof d.bytes === 'number' ? fmtSize(d.bytes)
+          : typeof d.bytes_mb === 'number' ? `${d.bytes_mb.toFixed(1)} MB`
+          : '?';
+        setResult({ ok: true, text: `Backup saved: ${size} to ${filename}` });
+      } else {
+        setResult({ ok: false, text: `Backup reported failure: ${JSON.stringify(d).slice(0, 120)}` });
+      }
+    } catch (e: any) {
+      setResult({ ok: false, text: `Backup failed: ${String(e?.message || e || 'unknown')}` });
+    } finally {
+      setRunning(false);
+    }
+  };
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: T.spacing.md, flexWrap: 'wrap',
+      padding: T.spacing.md, marginBottom: T.spacing.lg,
+      background: C.bgInput, border: `1px solid ${C.borderSubtle}`,
+      borderRadius: T.radii.md,
+    }}>
+      <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+        <div style={{
+          fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+          color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em',
+          marginBottom: 2,
+        }}>Backup</div>
+        <div style={{ fontSize: T.typography.sizeSm, color: C.text, fontWeight: T.typography.weightSemibold }}>
+          brain.db hot snapshot
+        </div>
+        <div style={{ fontSize: '11px', color: C.textMuted, marginTop: 2 }}>
+          Writes a SQLite .backup to LFI-data/. Rate-limited to 4/hour.
+        </div>
+      </div>
+      <button onClick={run} disabled={running}
+        title='POST /api/backup/brain — hot SQLite .backup to LFI-data/brain.db.<epoch>.bak'
+        style={{
+          padding: '8px 18px',
+          background: running ? C.bgCard : C.accent, color: running ? C.textMuted : '#fff',
+          border: 'none', borderRadius: T.radii.md,
+          fontFamily: 'inherit', fontSize: T.typography.sizeSm,
+          fontWeight: T.typography.weightBold,
+          cursor: running ? 'wait' : 'pointer',
+          whiteSpace: 'nowrap',
+        }}>{running ? 'Backing up…' : 'Backup brain.db'}</button>
+      {result && (
+        <div role='status' style={{
+          flexBasis: '100%',
+          padding: '6px 10px',
+          background: result.ok ? (C.greenBg || `${C.green}18`) : C.redBg,
+          color: result.ok ? C.green : C.red,
+          border: `1px solid ${result.ok ? C.green : C.red}55`,
+          borderRadius: T.radii.sm,
+          fontSize: T.typography.sizeXs, lineHeight: 1.4,
+          fontFamily: T.typography.fontMono,
+        }}>{result.text}</div>
+      )}
+    </div>
+  );
+};
+
 const DocsTab: React.FC<{ C: any; host: string }> = ({ C, host }) => {
   const [text, setText] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
