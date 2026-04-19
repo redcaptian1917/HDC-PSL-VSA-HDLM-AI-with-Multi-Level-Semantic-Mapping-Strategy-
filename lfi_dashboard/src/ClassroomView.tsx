@@ -2407,6 +2407,11 @@ const DriftTab: React.FC<{ C: any; host: string; onJumpTo?: (sub: string) => voi
     // NO-OP semantic means they could still be anything. Higher = more
     // claims have been through the verifier.
     proof_verified_ratio?: number;
+    // c2-433 / #397 forward-compat: Global Workspace memory footprint as
+    // a fraction of the configured cap. Higher = closer to eviction
+    // pressure. Shipped as a ratio so a 64MB and a 2GB cap render on the
+    // same card.
+    workspace_fill_ratio?: number;
   };
   // c2-433 / #284 followup: hydrate Drift history from localStorage on mount
   // so the trend survives a reload. Capped at 60 entries (1h @ 60s). Stale
@@ -2566,6 +2571,17 @@ const DriftTab: React.FC<{ C: any; host: string; onJumpTo?: (sub: string) => voi
       format: v => v == null ? '—' : `${(v * 100).toFixed(0)}%`,
       rating: v => v == null ? C.textMuted : v >= 0.5 ? C.green : v >= 0.2 ? C.yellow : C.red,
       thresholds: 'green ≥50% · yellow ≥20% · red below',
+    },
+    {
+      // c2-433 / #397 forward-compat: workspace fill ratio. Memory
+      // footprint / configured cap. High ratio = eviction pressure. If
+      // this stays > 80% for a while operators should bump the cap via
+      // Settings → Behavior → Workspace capacity.
+      key: 'workspace_fill_ratio', label: 'Workspace fill', isPct: true, polarity: 'down',
+      hint: 'Global Workspace footprint as a fraction of the configured memory cap. High = eviction pressure; bump the cap in Settings → Behavior.',
+      format: v => v == null ? '—' : `${(v * 100).toFixed(0)}%`,
+      rating: v => v == null ? C.textMuted : v <= 0.4 ? C.green : v <= 0.75 ? C.yellow : C.red,
+      thresholds: 'green ≤40% · yellow ≤75% · red above',
     },
   ];
 
