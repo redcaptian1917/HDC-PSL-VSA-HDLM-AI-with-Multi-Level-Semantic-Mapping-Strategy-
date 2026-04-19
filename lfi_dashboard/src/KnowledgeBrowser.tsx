@@ -51,6 +51,9 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
   // (name), and due (name) by case-insensitive substring. Useful when the
   // KB grows past ~50 entries.
   const [filter, setFilter] = useState<string>('');
+  // Pagination cap for the due list — KB with 1000+ due cards can OOM the
+  // DOM if rendered all at once. Start at 100, "Show more" bumps by 100.
+  const [dueVisible, setDueVisible] = useState<number>(100);
   const fLower = filter.trim().toLowerCase();
   const filteredFacts = fLower
     ? facts.filter(f => f.key.toLowerCase().includes(fLower) || f.value.toLowerCase().includes(fLower))
@@ -235,7 +238,7 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
                 </span>
               )}
             </div>
-            {filteredDue.map((d, i) => {
+            {filteredDue.slice(0, dueVisible).map((d, i) => {
               const canReview = !!(onReview && d.fact_key);
               const isReviewing = canReview && reviewing[d.fact_key!] === true;
               return (
@@ -299,6 +302,18 @@ export const KnowledgeBrowser: React.FC<KnowledgeBrowserProps> = ({ C, facts, co
               </div>
               );
             })}
+            {filteredDue.length > dueVisible && (
+              <button onClick={() => setDueVisible(v => v + 100)}
+                style={{
+                  marginTop: T.spacing.sm, padding: '8px 14px',
+                  background: C.accentBg, color: C.accent,
+                  border: `1px solid ${C.accentBorder}`, borderRadius: T.radii.md,
+                  fontSize: T.typography.sizeSm, fontWeight: T.typography.weightBold,
+                  cursor: 'pointer', width: '100%', fontFamily: 'inherit',
+                }}>
+                Show more ({filteredDue.length - dueVisible} remaining)
+              </button>
+            )}
           </div>
         )}
 

@@ -197,7 +197,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     try { return await fetchJson<FleetShape>('/api/orchestrator/dashboard', signal, 3001); }
     catch { return await fetchJson<FleetShape>('/api/orchestrator/dashboard', signal, 3000); }
   };
+  // Auto-retry attempt counter per tab. Reset on success; bumped on fail.
+  // Backoff: 1st retry 1s, 2nd 3s. After 2 retries, error surfaces for real.
+  const autoRetryAttemptsRef = useRef<Partial<Record<AdminTab, number>>>({});
+  const autoRetryTimersRef = useRef<Partial<Record<AdminTab, number>>>({});
   const loadTab = async (t: AdminTab) => {
+    // Cancel any pending auto-retry for this tab when a fresh load kicks off.
+    const pendingTimer = autoRetryTimersRef.current[t];
+    if (pendingTimer != null) {
+      window.clearTimeout(pendingTimer);
+      delete autoRetryTimersRef.current[t];
+    }
     setLoading(t);
     setErr(e => ({ ...e, [t]: null }));
     const ctrl = new AbortController();
@@ -260,6 +270,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       // Nested catches above (dashboard + logs fallbacks) shallow-swallow
       // per-endpoint failures, so reaching here means the tab is usable.
       setLastLoadedAt(prev => ({ ...prev, [t]: Date.now() }));
+      // Clear retry counter on success — the next failure restarts backoff.
+      autoRetryAttemptsRef.current[t] = 0;
     } catch (e: any) {
       const m = String(e?.message || e || 'fetch failed');
       // Distinguish AbortError from real HTTP errors so the user knows
@@ -267,7 +279,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       const friendly = m.includes('abort') || m.includes('aborted')
         ? 'Backend is busy — request timed out after 10s. It may be running a long DB transaction (e.g. WAL checkpoint). Click Refresh to retry.'
         : m.startsWith('HTTP') ? `${m} — backend returned an error. Is the route registered?` : m;
-      setErr(x => ({ ...x, [t]: friendly }));
+      // Auto-retry with backoff: 2 attempts before surfacing the error. Scheduled
+      // timer is cancelled if the user switches tabs or manually refreshes.
+      const attempts = (autoRetryAttemptsRef.current[t] || 0) + 1;
+      autoRetryAttemptsRef.current[t] = attempts;
+      if (attempts <= 2) {
+        const delay = attempts === 1 ? 1000 : 3000;
+        setErr(x => ({ ...x, [t]: `${friendly} — auto-retrying (${attempts}/2 in ${delay / 1000}s)` }));
+        const timerId = window.setTimeout(() => {
+          delete autoRetryTimersRef.current[t];
+          loadTab(t);
+        }, delay);
+        autoRetryTimersRef.current[t] = timerId;
+      } else {
+        setErr(x => ({ ...x, [t]: friendly }));
+        autoRetryAttemptsRef.current[t] = 0;
+      }
     } finally {
       clearTimeout(to);
       setLoading(null);

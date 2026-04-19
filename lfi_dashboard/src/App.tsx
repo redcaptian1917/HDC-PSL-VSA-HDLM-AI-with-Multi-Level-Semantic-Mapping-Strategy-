@@ -3341,8 +3341,12 @@ ${cmdList}
     });
     setFactPopoverRaw(false);
     logEvent('fact_key_opened', { key });
+    // Cache-bust query param so a post-verify re-open bypasses the 5-10s
+    // backend /api/facts cache. Cheap — the backend ignores unknown params.
+    const bust = `_t=${Date.now()}`;
     const tryFetch = async (path: string) => {
-      const r = await fetch(`http://${getHost()}:3000${path}`);
+      const sep = path.includes('?') ? '&' : '?';
+      const r = await fetch(`http://${getHost()}:3000${path}${sep}${bust}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     };
@@ -4234,9 +4238,20 @@ ${cmdList}
                             const v: string = data.verdict ?? data.proof_status ?? data.status ?? 'done';
                             showToast(`Verify: ${v}`);
                             logEvent('proof_verify_triggered', { fact_key: key, verdict: v });
-                            // Re-open popover to pull the updated verdict
+                            // Optimistic local patch: update popover data immediately
+                            // with the verdict the server just returned. Backend
+                            // /api/facts cache can take 5-10s to invalidate, so
+                            // an immediate re-fetch returns the OLD proof_status.
+                            // We patch now + schedule a cache-busted refetch
+                            // after 3s so the popover stays accurate through the
+                            // cache window.
+                            setFactPopover(prev => prev && prev.key === key && prev.data
+                              ? { ...prev, data: { ...prev.data, proof_status: v, verdict: v, checked_at: new Date().toISOString() } }
+                              : prev);
                             const pr = factPopover;
-                            if (pr) openFactKey(pr.key, new DOMRect(pr.x - 10, pr.y - 26, 20, 20));
+                            if (pr) window.setTimeout(() => {
+                              openFactKey(pr.key, new DOMRect(pr.x - 10, pr.y - 26, 20, 20));
+                            }, 3000);
                           }
                         } catch (e: any) {
                           showToast(`Verify failed: ${String(e?.message || e || 'unknown')}`);
