@@ -317,6 +317,54 @@ Response:
  "kinds":["CreateAdversarial","DowngradeQuality","CreateFact"]}
 ```
 
+## 10.9 Admin + management basics
+
+### Authenticate as sovereign
+Hit the Admin tab. If not authenticated, the tab shows a key prompt.
+POST `/api/auth { "key": "<your passphrase>" }` — the response is
+`{ "status": "authenticated", "tier": "Sovereign" }` when the
+constant-time check passes. Auth is rate-limited 5/60s; exceeded
+attempts are chained to the audit log. Auth flips on admin-only
+endpoints (training controls, tokens, integrity, diag event ring).
+
+### Issue a capability token
+Admin → Tokens. Types:
+- `ingest` — bulk corpus loading (POST /api/ingest/*)
+- `admin_read` — read-only dashboards (GET /api/admin/*)
+- `chain_append` — add security-audit entries
+- `auth` / `research` / `hdc_encode` — rotate API access
+
+Hash is SHA-256 stored; the raw token is shown ONCE at issue.
+Rotate frequently + use scoped tokens rather than the sovereign key.
+
+### Audit integrity + datasets
+- Admin → Integrity: reads `/api/audit/chain/verify` — every audit
+  event is Merkle-chained, any tamper shows here with the broken
+  link highlighted.
+- Admin → Dataset audit: hits `/api/audit/datasets` — 6 checks run
+  in ~360 ms on prod: edge orphans, source mono-culture, FTS5
+  freshness, contradiction backlog, source-trust coverage, schema
+  parity. Each returns `{name, passed, detail, metric}`.
+
+### Run a training routine from the UI
+Classroom → Ingestion Control. POST `/api/admin/training/start`
+with `{ routine: "adaptive" | "rotate", model_tier, iterations,
+batch_size }`. Watch progress in the Runs tab + `/var/log/lfi/*`
+tails. Stop: `/api/admin/training/stop`.
+
+### Watch metrics in real time
+- Classroom → Drift: 11 live metrics + sparklines. Click any tile
+  to jump to the corresponding remediation tab.
+- Admin → Diag: ring-buffer of warn/error events; no DevTools
+  required. Exports to JSON for a ticket.
+- `/api/health/extended`: one-call bundle for dashboards.
+
+### Evaluate a source's trust manually
+Library tab sorts every source by composite (trust × quality ×
+vetted × log-size). Click the source row → see its per-source
+fact sample + trust slider. 0 = ignored; 0.5 = default; 1.0 = wins
+every contradiction.
+
 ## 11. Knowing what to ask
 
 LFI is substrate-first. It's good at:

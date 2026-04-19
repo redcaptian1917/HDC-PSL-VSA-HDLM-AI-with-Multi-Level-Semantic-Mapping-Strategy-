@@ -884,7 +884,13 @@ ${cmdList}
     // surfaces. Also private-mode browsers return '' from localStorage
     // (not '1'), so without isAuthenticated gating the tour would auto-
     // launch every session.
+    //
+    // Order of intro flow: Consent (tosAccepted) → Welcome → Tour. Each
+    // later step waits for the earlier to clear, so tour never pops over
+    // the welcome modal.
     if (!isAuthenticated) return;
+    if (!tosAccepted) return;
+    if (showWelcome) return;
     let seen = '1';
     try { seen = localStorage.getItem('lfi_tour_seen_v1') || ''; } catch (e) {
       diag.warn('tour', 'localStorage unavailable for seen-flag', e);
@@ -895,11 +901,11 @@ ${cmdList}
     // overlay — otherwise the spotlight lands on an element that's still
     // mounting + jumping.
     const id = window.setTimeout(() => {
-      diag.info('tour', 'first-visit autolaunch');
+      diag.info('tour', 'first-visit autolaunch (post-consent + post-welcome)');
       setShowTour(true);
     }, 1500);
     return () => window.clearTimeout(id);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, tosAccepted, showWelcome]);
   const [teachText, setTeachText] = useState('');
   const [teachSending, setTeachSending] = useState(false);
   const teachDialogRef = useRef<HTMLDivElement>(null);
@@ -3043,9 +3049,20 @@ ${cmdList}
   // open by default. Uses innerWidth directly so the decision doesn't wait
   // for the useBreakpoint effect to flush.
   const [showConvoSidebar, setShowConvoSidebar] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    return window.innerWidth >= 768;
+    // User directive 2026-04-19: sidebar should start minimized by default
+    // on desktop too — the toggle hint is more discoverable when users
+    // actively open it. Respects a persisted override from previous sessions.
+    try {
+      const stored = localStorage.getItem('lfi_sidebar_open');
+      if (stored === '1') return true;
+      if (stored === '0') return false;
+    } catch { /* silent */ }
+    return false;
   });
+  // Persist sidebar open/closed across sessions.
+  useEffect(() => {
+    try { localStorage.setItem('lfi_sidebar_open', showConvoSidebar ? '1' : '0'); } catch { /* silent */ }
+  }, [showConvoSidebar]);
   const [showPlanSidebar, setShowPlanSidebar] = useState<boolean>(true);
   const [showArchived, setShowArchived] = useState<boolean>(false);
   // Inline rename state for sidebar conversations (replaces browser prompt()).
@@ -5450,50 +5467,75 @@ ${cmdList}
           {
             key: 'intro',
             title: 'Welcome to PlausiDen',
-            body: <>LFI is a post-LLM substrate — it only answers from what it knows. This 60-second tour shows how to use it and how to teach it new facts. You can skip any time with <kbd>Esc</kbd> or the ✕ button.</>,
+            body: <>LFI is a post-LLM substrate — it only answers from what it knows. This tour visits every view (Agora → Classroom → Admin → Fleet → Library → Auditorium). Use Back/Next, swipe, or keyboard arrows. Skip with <kbd>Esc</kbd>.</>,
+            onEnter: () => { setActiveView('chat'); setShowAdmin(false); },
+          },
+          {
+            key: 'chats-sidebar',
+            target: '[data-tour="chats-toggle"], [aria-label*="sidebar" i]',
+            title: 'Your conversations live here',
+            body: <>Every chat is saved. Click the sidebar toggle (top-left) or press <kbd>Cmd/Ctrl+B</kbd> to show/hide the list. Start a new one with <kbd>Cmd/Ctrl+N</kbd>.</>,
+            onEnter: () => { setActiveView('chat'); setShowAdmin(false); },
           },
           {
             key: 'chat-input',
             target: '[data-tour="chat-input"]',
-            title: 'Ask a question',
-            body: <>Type here and press Enter. If LFI has the facts, you get substrate-composed prose with clickable <code>[fact:KEY]</code> citations. If it doesn't, you get an honest refusal — no fabrication.</>,
+            title: 'Ask a question — the Agora',
+            body: <>Type here and press Enter. LFI gives substrate-composed prose with clickable <code>[fact:KEY]</code> chips. If it doesn't know, it refuses honestly (no fabrication).</>,
+            onEnter: () => { setActiveView('chat'); setShowAdmin(false); },
           },
           {
             key: 'teach',
             title: 'Teach LFI proactively',
-            body: <>Press <kbd>Cmd/Ctrl+K</kbd> and choose "Teach LFI a fact", or type <code>/teach</code> in the chat input. Write a plain-English fact — LFI extracts tuples automatically. This is how you train it between refusals.</>,
-          },
-          {
-            key: 'refusal',
-            title: 'On refusal: one-click teach',
-            body: <>When LFI refuses ("No HDC match" or "nothing clears the 0.70 trust threshold"), a yellow Teach LFI card appears right on the reply. Click it, write the answer, and LFI learns. Ask again — now it knows.</>,
-          },
-          {
-            key: 'knowledge',
-            target: 'aside [aria-label*="Knowledge"], [aria-label="Open knowledge browser"]',
-            title: 'Browse and review',
-            body: <>Open the Knowledge Browser to see everything LFI has learned, filter by keyword, and review due cards with FSRS (Again / Hard / Good / Easy). Reviewing is how LFI consolidates memory.</>,
+            body: <>Press <kbd>Cmd/Ctrl+K</kbd> → "Teach LFI a fact" or type <code>/teach</code>. On every refusal there's also an inline Teach button — one-click to fix.</>,
           },
           {
             key: 'classroom',
-            title: 'Classroom: drill into training state',
-            body: <>The Classroom view (<kbd>Cmd/Ctrl+2</kbd>) has 12 sub-tabs covering ingestion runs, contradictions, drift, and reports. The Drift tab has one-click Kick-ingest / Encode-HDC / Auto-resolve-ledger buttons.</>,
+            title: 'Classroom — training state',
+            body: <>12 sub-tabs: Profile, Ingestion Control, Curriculum, Gradebook, Lesson Plans, Test Center, Reports, Office Hours, Library, Ledger, Drift, Ingest Runs. The Drift tab has one-click Kick-ingest / Encode-HDC / Auto-resolve-ledger.</>,
+            onEnter: () => { setActiveView('classroom'); setShowAdmin(false); },
+          },
+          {
+            key: 'fleet',
+            title: 'Fleet — orchestrator instances',
+            body: <>Live view of Claude/AI instances running against this stack: heartbeats, task timeline, session health. Open via <kbd>Cmd/Ctrl+4</kbd>.</>,
+            onEnter: () => { setActiveView('fleet'); setShowAdmin(false); },
+          },
+          {
+            key: 'library',
+            title: 'Library — source inventory',
+            body: <>365+ ingested sources with per-source trust sliders, quality dimensions, and the top-10 marketplace rank. Tune trust to influence what LFI pulls first. <kbd>Cmd/Ctrl+5</kbd>.</>,
+            onEnter: () => { setActiveView('library'); setShowAdmin(false); },
+          },
+          {
+            key: 'auditorium',
+            title: 'Auditorium — AVP-2 audit state',
+            body: <>6 tiers × 36 passes adversarial-validation status. Live passes_completed / findings_total / fix-ratio security_score from /api/avp/status. <kbd>Cmd/Ctrl+6</kbd>.</>,
+            onEnter: () => { setActiveView('auditorium'); setShowAdmin(false); },
           },
           {
             key: 'admin',
-            title: 'Admin: backup, docs, diagnostics',
-            body: <>The Admin console (<kbd>Cmd/Ctrl+3</kbd>) has 12 tabs: Dashboard (with Backup brain.db + Recent Teach Activity), Proof, Diag, and Docs (the full user guide). Use Backup before a risky ingest run.</>,
+            title: 'Admin console',
+            body: <>12 tabs: Dashboard (Backup brain.db + Recent Teach Activity), Inventory, Domains, Training, Quality, System, Fleet, Logs, Tokens, Proof, Diag, Docs. <kbd>Cmd/Ctrl+3</kbd> opens it.</>,
+            onEnter: () => { setActiveView('chat'); setShowAdmin(true); setAdminInitialTab('dashboard'); },
+          },
+          {
+            key: 'docs',
+            title: 'Docs tab — the full user guide',
+            body: <>This tab always renders the USER_GUIDE.md (bundled fallback so it works offline). Reading the UI, teach paths, troubleshooting, keyboard reference, exports.</>,
+            onEnter: () => { setShowAdmin(true); setAdminInitialTab('docs'); },
           },
           {
             key: 'help',
             target: '[data-tour="help-button"]',
             title: 'Find help from anywhere',
-            body: <>This <strong>Help & guide</strong> button opens the full manual. You can also hit <kbd>?</kbd> for the keyboard cheatsheet, <kbd>Cmd/Ctrl+K</kbd> → "Open user guide", or <code>/guide</code> in chat.</>,
+            body: <>The sidebar <strong>Help & guide</strong> button or <kbd>?</kbd> cheatsheet or <kbd>Cmd/Ctrl+K</kbd> → "Open user guide" all land the same place.</>,
+            onEnter: () => { setShowAdmin(false); setActiveView('chat'); },
           },
           {
             key: 'done',
             title: "You're ready",
-            body: <>That's the tour. Everything needed to use + train LFI is one click from anywhere. Re-run from <kbd>Cmd/Ctrl+K</kbd> → "Start guided tour" any time.</>,
+            body: <>Re-run the tour any time from <kbd>Cmd/Ctrl+K</kbd> → "Start guided tour". Every page has its own per-surface hints when you first visit.</>,
           },
         ] as TourStep[]} />
         </AppErrorBoundary>
@@ -5650,22 +5692,28 @@ ${cmdList}
         {/* Left: sidebar toggle + status/inline stats */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button onClick={() => setShowConvoSidebar(v => !v)}
-            title={showConvoSidebar ? 'Hide chats sidebar' : 'Show chats sidebar'}
+            data-tour="chats-toggle"
+            title={showConvoSidebar ? 'Hide chats sidebar (⌘B)' : 'Show chats sidebar (⌘B)'}
             aria-label={showConvoSidebar ? 'Hide chats sidebar' : 'Show chats sidebar'}
             aria-pressed={showConvoSidebar}
             style={{
-              width: '36px', height: '36px', flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              display: 'flex', alignItems: 'center', gap: '6px',
+              height: '36px', flexShrink: 0,
+              padding: showConvoSidebar ? '0 10px' : '0 12px',
               background: showConvoSidebar ? C.accentBg : 'transparent',
               border: `1px solid ${showConvoSidebar ? C.accentBorder : C.border}`,
               borderRadius: T.radii.lg,
               color: showConvoSidebar ? C.accent : C.textMuted,
               cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: T.typography.sizeSm, fontWeight: T.typography.weightBold,
             }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="4" width="18" height="16" rx="2"/>
               <line x1="9" y1="4" x2="9" y2="20"/>
             </svg>
+            {/* Label makes the chats control obvious to first-time visitors.
+                Hidden on narrow viewports where the icon alone is enough. */}
+            {!isMobile && <span>Chats</span>}
           </button>
           {/* c2-433 / task 235: mobile-only New Chat button. Desktop has the
               prominent New Chat button in the open sidebar; mobile users had

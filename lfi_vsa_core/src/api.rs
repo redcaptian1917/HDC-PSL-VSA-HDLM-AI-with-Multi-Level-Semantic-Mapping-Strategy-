@@ -4308,6 +4308,86 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }
     }
 
+    // ---- Docs API — programmatic fallback when ServeDir is shaky ----
+    //
+    // GET /api/docs/list           — enumerates every .md under public/docs
+    // GET /api/docs/:name          — returns one doc body (.md assumed)
+    //
+    // The UI falls back to these when /docs/<name>.md direct fetch fails
+    // (proxy caching, CORS, or ServeDir path mismatch). Bounds the name
+    // to prevent path traversal; strips any leading ../ or / segments.
+
+    async fn docs_list_handler(
+        State(_state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let mut found: Vec<serde_json::Value> = Vec::new();
+        for dir in &[
+            "/root/LFI/lfi_dashboard/public/docs",
+            "/root/LFI/lfi_dashboard/public",
+            "/root/LFI/docs",
+        ] {
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for entry in rd.filter_map(|r| r.ok()) {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                        if let (Some(stem), Ok(meta)) = (
+                            path.file_stem().and_then(|s| s.to_str()),
+                            entry.metadata(),
+                        ) {
+                            found.push(json!({
+                                "name": stem,
+                                "file": path.display().to_string(),
+                                "bytes": meta.len(),
+                                "url": format!("/api/docs/{}", stem),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        // Dedupe by name — first hit wins (public/docs preferred).
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        found.retain(|v| seen.insert(v["name"].as_str().unwrap_or("").to_string()));
+        axum::Json(json!({ "ok": true, "docs": found }))
+    }
+
+    async fn docs_get_handler(
+        axum::extract::Path(name): axum::extract::Path<String>,
+    ) -> axum::response::Response {
+        use axum::http::StatusCode;
+        // SECURITY: strip path-traversal attempts; only accept a bare
+        // name or name.md — nothing with /, \, .., or leading dots.
+        let clean: String = name.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            .collect();
+        if clean.is_empty() || clean.starts_with('.') || clean.contains("..") {
+            return (StatusCode::BAD_REQUEST,
+                [("content-type", "text/plain")],
+                "invalid doc name").into_response();
+        }
+        let stem = clean.strip_suffix(".md").unwrap_or(&clean);
+        for dir in &[
+            "/root/LFI/lfi_dashboard/public/docs",
+            "/root/LFI/lfi_dashboard/public",
+            "/root/LFI/docs",
+        ] {
+            let path = format!("{}/{}.md", dir, stem);
+            if let Ok(body) = std::fs::read_to_string(&path) {
+                return (
+                    StatusCode::OK,
+                    [
+                        ("content-type", "text/markdown; charset=utf-8"),
+                        ("cache-control", "public, max-age=60"),
+                    ],
+                    body,
+                ).into_response();
+            }
+        }
+        (StatusCode::NOT_FOUND,
+         [("content-type", "text/plain")],
+         format!("doc '{}' not found", stem)).into_response()
+    }
+
     // ---- AVP-2 status surface (#403 Auditorium tab) ----
     //
     // The UI's Auditorium view polls /api/avp/status for the 6-tier / 36-pass
@@ -6282,6 +6362,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
                get(settings_get_handler)
                .post(settings_post_handler))
         .route("/api/avp/status", get(avp_status_handler))
+        .route("/api/docs/list", get(docs_list_handler))
+        .route("/api/docs/:name", get(docs_get_handler))
         .route("/api/backup/brain", post(backup_brain_handler))
         .route("/api/trainer/turn", post(trainer_turn_handler))
         .route("/api/trainer/sessions", get(trainer_sessions_handler))

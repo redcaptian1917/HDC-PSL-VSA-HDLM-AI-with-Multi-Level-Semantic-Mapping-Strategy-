@@ -5,6 +5,7 @@ import { T } from './tokens';
 import { typography as dsType } from './design-system';
 // c2-346 / task 24: shared uppercase meta-label component.
 import { Label } from './components/Label';
+import { StatCard } from './components/StatCard';
 // c2-348 / task 28: shared error banner.
 import { ErrorAlert } from './components/ErrorAlert';
 // c2-349 / task 29: shared shimmer skeleton.
@@ -216,9 +217,11 @@ export const ClassroomView: React.FC<ClassroomViewProps> = ({ C, host, isDesktop
     try {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), 4000);
+      // CSP connect-src = 'self' only, so :3002 fetches throw before
+      // reaching the network. Route to the main backend path instead.
       const [ovRes, domRes] = await Promise.all([
-        fetch(`http://${host}:3002/analytics/overview`, { signal: ctrl.signal }),
-        fetch(`http://${host}:3002/analytics/domains`, { signal: ctrl.signal }),
+        fetch(`http://${host}:3000/api/analytics/overview`, { signal: ctrl.signal }),
+        fetch(`http://${host}:3000/api/analytics/domains`, { signal: ctrl.signal }),
       ]);
       clearTimeout(to);
       if (!ovRes.ok || !domRes.ok) throw new Error(`HTTP overview=${ovRes.status} domains=${domRes.status}`);
@@ -1919,9 +1922,8 @@ const LibraryTab: React.FC<{ C: any; host: string; domains: Array<{ domain: stri
     };
     (async () => {
       try {
-        let data: any;
-        try { data = await tryFetch(3002); }
-        catch { data = await tryFetch(3000); }
+        // CSP blocks :3002; go straight to :3000 main backend.
+        const data: any = await tryFetch(3000);
         const arr: SourceRow[] = Array.isArray(data?.sources) ? data.sources : Array.isArray(data) ? data : [];
         setSources(arr);
       } catch (e: any) {

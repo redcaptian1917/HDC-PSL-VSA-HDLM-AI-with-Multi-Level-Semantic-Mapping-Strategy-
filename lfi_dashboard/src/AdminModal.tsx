@@ -190,12 +190,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json() as Promise<T>;
   };
-  // c2-322 / c0-035 #2: orchestrator fleet data lives on :3001. Try there
-  // first; fall back to :3000 during rollout so older deployments without
-  // the split service still render the Fleet tab.
+  // c2-322 / c0-035 #2 (updated): orchestrator dashboard — CSP connect-src
+  // is locked to 'self' ws: wss:, so cross-port (3001) fetches are blocked
+  // before the network layer. Stick to :3000 where the main backend now
+  // mounts /api/orchestrator/* directly.
   const fetchFleet = async (signal: AbortSignal): Promise<FleetShape> => {
-    try { return await fetchJson<FleetShape>('/api/orchestrator/dashboard', signal, 3001); }
-    catch { return await fetchJson<FleetShape>('/api/orchestrator/dashboard', signal, 3000); }
+    return await fetchJson<FleetShape>('/api/orchestrator/dashboard', signal, 3000);
   };
   // Auto-retry attempt counter per tab. Reset on success; bumped on fail.
   // Backoff: 1st retry 1s, 2nd 3s. After 2 retries, error surfaces for real.

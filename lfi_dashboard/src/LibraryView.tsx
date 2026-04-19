@@ -83,7 +83,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ C, host, isDesktop }) 
     };
     try {
       let data: any;
-      try { data = await tryPort(3002); } catch { data = await tryPort(3000); }
+      // CSP connect-src 'self' blocks cross-port fetches; go straight to :3000.
+      data = await tryPort(3000);
       const arr: SourceRow[] = Array.isArray(data?.sources) ? data.sources : Array.isArray(data) ? data : [];
       setSources(arr);
       setLastUpdated(Date.now());

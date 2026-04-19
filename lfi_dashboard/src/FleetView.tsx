@@ -59,7 +59,8 @@ export const FleetView: React.FC<FleetViewProps> = ({ C, host, isDesktop }) => {
     };
     try {
       let data: FleetShape;
-      try { data = await tryPort(3001); } catch { data = await tryPort(3000); }
+      // CSP connect-src 'self' blocks cross-port fetches; go straight to :3000.
+      data = await tryPort(3000);
       setFleet(data);
       setLastUpdated(Date.now());
     } catch (e: any) {
