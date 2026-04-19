@@ -949,6 +949,56 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                     }
                 }
 
+                // #384 Streaming chat. Before the final chat_response,
+                // chunk the text body into 3-5 word runs and emit as
+                // chat_chunk frames with small delays — the UI's
+                // existing chat_chunk handler accumulates the text into
+                // a _streaming message for progressive render. The
+                // user sees the first words land in ~100ms instead of
+                // waiting for the whole reply. After chunks, we still
+                // emit the canonical chat_response (which carries all
+                // metadata — tier, confidence, facts_used, conclusion_id,
+                // plan, etc.). Claude 2 (UI) dedupes by recognizing
+                // _streaming-prefix content in the following chat_response
+                // and dropping the streamed stub.
+                //
+                // Tunables: chunk size ~4 words, inter-chunk delay 30ms
+                // (so a 200-word reply streams in ~1.5s).
+                let content_for_stream = response_payload.get("content")
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let stream_ok = content_for_stream.len() >= 40
+                    && content_for_stream.split_whitespace().count() >= 6;
+                if stream_ok {
+                    let words: Vec<&str> = content_for_stream.split_whitespace().collect();
+                    let chunk_words = 4;
+                    let mut i = 0;
+                    let stream_t0 = std::time::Instant::now();
+                    while i < words.len() {
+                        let end = (i + chunk_words).min(words.len());
+                        // Preserve a trailing space so concatenation reads naturally
+                        // on the client side.
+                        let text = if end < words.len() {
+                            format!("{} ", words[i..end].join(" "))
+                        } else {
+                            words[i..end].join(" ")
+                        };
+                        let chunk = json!({
+                            "type": "chat_chunk",
+                            "text": text,
+                        });
+                        if socket.send(Message::Text(chunk.to_string())).await.is_err() {
+                            info!("// CHAT-TRACE[{:08x}] chunk_send_failed +{}ms",
+                                _turn_id, _turn_t0.elapsed().as_millis());
+                            break;
+                        }
+                        i = end;
+                        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    }
+                    info!("// CHAT-TRACE[{:08x}] chunks_sent +{}ms ({} words / {}ms stream)",
+                        _turn_id, _turn_t0.elapsed().as_millis(),
+                        words.len(), stream_t0.elapsed().as_millis());
+                }
+
                 info!("// CHAT-TRACE[{:08x}] response_send +{}ms payload={}b",
                     _turn_id, _turn_t0.elapsed().as_millis(),
                     response_payload.to_string().len());
@@ -959,6 +1009,13 @@ async fn handle_chat_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 }
                 info!("// CHAT-TRACE[{:08x}] response_sent_ok +{}ms",
                     _turn_id, _turn_t0.elapsed().as_millis());
+
+                // #384 Close the stream so UI's chat_done handler drops the
+                // timing chip + module pulse. Fires regardless of whether
+                // stream_ok was true — non-streamed responses also reach
+                // completion and Claude 2's cstr.end() expects it.
+                let done = json!({ "type": "chat_done" });
+                let _ = socket.send(Message::Text(done.to_string())).await;
 
                 // Streaming Ollama enrichment: stream deeper responses for any
                 // substantive query. The initial chat_response gives immediate

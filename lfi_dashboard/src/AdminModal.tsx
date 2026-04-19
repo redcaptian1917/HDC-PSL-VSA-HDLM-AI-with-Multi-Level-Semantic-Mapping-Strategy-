@@ -188,6 +188,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const fetchJson = async <T,>(path: string, signal: AbortSignal, port: number = 3000): Promise<T> => {
     const res = await fetch(`http://${host}:${port}${path}`, { signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Guard against an SPA catch-all that returns index.html on an
+    // unknown API path — .json() would throw "Unexpected token '<',
+    // '<!DOCTYPE ...'". Surface a friendlier message so the user knows
+    // the endpoint isn't mounted rather than seeing a raw parse error.
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('json')) {
+      const preview = (await res.text()).slice(0, 80).replace(/\s+/g, ' ');
+      throw new Error(`Endpoint returned ${ct || 'non-JSON'} (preview: ${preview}…) — route likely not registered on backend.`);
+    }
     return res.json() as Promise<T>;
   };
   // c2-322 / c0-035 #2 (updated): orchestrator dashboard — CSP connect-src
