@@ -5854,9 +5854,12 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             }
         }
 
-        let conn = match state.db.conn.lock() {
+        let conn = match state.db.conn.try_lock() {
             Ok(c) => c,
-            Err(_) => return axum::Json(json!({"error": "db lock"})),
+            Err(_) => return axum::Json(json!({
+                "ok": false, "sources": [], "status": "warming",
+                "error": "db busy — retry in a few seconds",
+            })),
         };
 
         // Per-source aggregates over the recent-50k sample (same pattern
@@ -5987,9 +5990,12 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             }
         }
 
-        let conn = match state.db.conn.lock() {
+        let conn = match state.db.conn.try_lock() {
             Ok(c) => c,
-            Err(_) => return axum::Json(json!({"error": "db lock"})),
+            Err(_) => return axum::Json(json!({
+                "ok": false, "sources": [], "status": "warming",
+                "error": "db busy — retry in a few seconds",
+            })),
         };
         // BUG ASSUMPTION: GROUP BY source on a 58M-row prod table
         // exceeds the 2-minute curl timeout. Instead, sample the most
@@ -6257,7 +6263,33 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
                 }
             }
         }
-        let rows = state.db.list_source_trust();
+        // try_lock so a busy DB doesn't queue this request behind a
+        // multi-minute refresher — return stale-if-present or empty.
+        let rows = match state.db.conn.try_lock() {
+            Ok(conn) => {
+                let mut stmt = match conn.prepare(
+                    "SELECT source, trust, notes, updated_at FROM source_trust \
+                     ORDER BY trust DESC, source ASC"
+                ) { Ok(s) => s, Err(_) => {
+                    return axum::Json(json!({
+                        "ok": false, "sources": [],
+                        "error": "query prep failed",
+                    }));
+                }};
+                stmt.query_map([], |r| Ok((
+                    r.get::<_, String>(0)?, r.get::<_, f64>(1)?,
+                    r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?,
+                ))).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                   .unwrap_or_default()
+            }
+            Err(_) => {
+                // DB busy — serve empty + warming signal.
+                return axum::Json(json!({
+                    "ok": false, "sources": [], "status": "warming",
+                    "error": "db busy — retry in a few seconds",
+                }));
+            }
+        };
         let items: Vec<serde_json::Value> = rows.into_iter()
             .map(|(source, trust, notes, updated_at)| json!({
                 "source": source,
@@ -6917,11 +6949,35 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
 
         let mut logs = Vec::new();
 
-        // Read server log
+        // Read server log — now lives under LFI_LOG_DIR. Try the
+        // daily-rolled file first, fall back to any *.log in the dir.
         if module.is_empty() || module == "server" {
-            if let Ok(content) = std::fs::read_to_string("/tmp/lfi_server.log") {
-                for line in content.lines().rev().take(limit) {
-                    logs.push(json!({"source": "server", "line": line}));
+            let today = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() / 86400).unwrap_or(0);
+            // ymd format matches tracing_appender::rolling::daily
+            let y = 1970 + (today / 365);
+            let _ = y; // we can't easily format YMD without chrono; scan dir instead
+            let log_dir = std::env::var("LFI_LOG_DIR").unwrap_or_else(|_|
+                format!("{}/LFI-data/logs",
+                    std::env::var("HOME").unwrap_or_else(|_| "/root".into())));
+            // Find the most recent server.log.* in the dir.
+            if let Ok(rd) = std::fs::read_dir(&log_dir) {
+                let mut candidates: Vec<std::path::PathBuf> = rd
+                    .filter_map(|r| r.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.starts_with("server.log"))
+                        .unwrap_or(false))
+                    .collect();
+                candidates.sort();
+                if let Some(p) = candidates.last() {
+                    if let Ok(content) = std::fs::read_to_string(p) {
+                        for line in content.lines().rev().take(limit) {
+                            logs.push(json!({"source": "server", "line": line}));
+                        }
+                    }
                 }
             }
         }
@@ -7072,6 +7128,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/docs/:name", get(docs_get_handler))
         .route("/api/diag/ui-error", post(ui_error_handler))
         .route("/api/diag/ui-errors", get(ui_errors_list_handler))
+        .route("/api/diag/report", post(ui_error_handler))
         .route("/api/backup/brain", post(backup_brain_handler))
         .route("/api/privacy/report", get(privacy_report_handler))
         .route("/api/trainer/turn", post(trainer_turn_handler))
