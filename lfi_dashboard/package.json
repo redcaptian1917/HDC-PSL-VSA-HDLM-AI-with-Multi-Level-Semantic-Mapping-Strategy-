@@ -6,9 +6,12 @@
   "scripts": {
     "start": "vite",
     "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "typecheck:summary": "bash scripts/typecheck-summary.sh",
+    "stale-refs": "bash scripts/stale-refs.sh",
     "mobile-lint": "bash scripts/mobile-lint.sh",
     "mobile-smoke": "echo 'Paste scripts/mobile-smoke.js into DevTools console at mobile emulation sizes — this is a runtime harness, not a CLI test.' && exit 0",
-    "audit": "npm run mobile-lint",
+    "audit": "npm run mobile-lint && npm run stale-refs && npm run typecheck:summary",
     "prebuild": "npm run audit",
     "ci": "npm run audit && npm run build"
   },
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "typescript": "^5.9.3",
     "vite": "^4.4.0"
   }
 }

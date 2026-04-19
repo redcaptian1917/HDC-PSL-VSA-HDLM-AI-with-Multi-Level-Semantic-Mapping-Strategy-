@@ -177,7 +177,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // takes over and this becomes hidden.
   const [lastChainVerifiedAt, setLastChainVerifiedAt] = useState<number | null>(null);
   const [err, setErr] = useState<Record<AdminTab, string | null>>({
-    dashboard: null, inventory: null, domains: null, training: null, quality: null, system: null, fleet: null, logs: null, tokens: null, proof: null, diag: null,
+    dashboard: null, inventory: null, domains: null, training: null, quality: null, system: null, fleet: null, logs: null, tokens: null, proof: null, diag: null, docs: null,
   });
   const [loading, setLoading] = useState<AdminTab | null>(null);
   // c2-272: per-tab last-successful-load timestamp. Mirrors the Classroom

@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { THEMES } from './themes';
 import { AVATAR_PRESETS } from './catalogs';
 import { useModalFocus } from './useModalFocus';
