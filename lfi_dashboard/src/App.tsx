@@ -886,7 +886,10 @@ ${cmdList}
     // launch every session.
     if (!isAuthenticated) return;
     let seen = '1';
-    try { seen = localStorage.getItem('lfi_tour_seen_v1') || ''; } catch { /* silent */ }
+    try { seen = localStorage.getItem('lfi_tour_seen_v1') || ''; } catch (e) {
+      diag.warn('tour', 'localStorage unavailable for seen-flag', e);
+    }
+    diag.debug('tour', 'auth-gate check', { isAuthenticated, seen });
     if (seen === '1') return;
     // Delay 1.5s to let the first-paint settle before introducing the
     // overlay — otherwise the spotlight lands on an element that's still
@@ -1344,6 +1347,19 @@ ${cmdList}
   // flash the Admin-tab red-dot.
   useEffect(() => {
     diag.install();
+    // Post-install mount fingerprint so every Diag export starts with
+    // the build + viewport + connection context. Makes "my phone is
+    // flickering but my desktop isn't" diagnosable at a glance.
+    try {
+      const conn: any = (navigator as any).connection;
+      diag.info('mount', 'App mounted', {
+        href: window.location.href,
+        ua: navigator.userAgent.slice(0, 160),
+        viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
+        connection: conn ? { type: conn.effectiveType, saveData: !!conn.saveData, downlink: conn.downlink } : null,
+        online: navigator.onLine,
+      });
+    } catch { /* silent */ }
     const unsub = diag.subscribe((e) => {
       if (e.level === 'error') {
         setDiagUnseenErrors(n => n + 1);
@@ -2009,16 +2025,19 @@ ${cmdList}
       });
       const data = await res.json();
       console.debug("// SCC: Auth response:", data);
+      diag.info('auth', `response status=${data?.status || 'unknown'}`, { keys: Object.keys(data || {}) });
       if (data.status === 'authenticated') setIsAuthenticated(true);
       else setAuthError('Sovereign key rejected.');
     } catch (e) {
       console.error("// SCC: Auth error:", e);
+      diag.error('auth', 'POST /api/auth failed — backend unreachable', e);
       setAuthError('Backend unreachable. Is the server running on port 3000?');
     } finally { setAuthLoading(false); }
   };
 
   const handleLogout = () => {
     console.debug("// SCC: Logout");
+    diag.info('auth', 'logout');
     localStorage.removeItem('lfi_auth');
     chatWsRef.current?.close();
     telemetryWsRef.current?.close();

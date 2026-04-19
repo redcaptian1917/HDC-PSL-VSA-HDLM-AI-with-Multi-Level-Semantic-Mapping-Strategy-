@@ -9,6 +9,7 @@
  * boolean deps flip triggers).
  */
 import { useEffect, useState } from 'react';
+import { diag } from './diag';
 
 export const usePageVisible = (): boolean => {
   const [visible, setVisible] = useState<boolean>(() => {
@@ -17,7 +18,11 @@ export const usePageVisible = (): boolean => {
   });
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const onChange = () => setVisible(document.visibilityState !== 'hidden');
+    const onChange = () => {
+      const next = document.visibilityState !== 'hidden';
+      diag.debug('page-visible', `visibility ${document.visibilityState}`, { visible: next });
+      setVisible(next);
+    };
     document.addEventListener('visibilitychange', onChange);
     return () => document.removeEventListener('visibilitychange', onChange);
   }, []);

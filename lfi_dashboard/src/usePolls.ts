@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { diag } from './diag';
 
 // Three polling hooks for the sidebar dashboard. Each manages its own interval
 // + AbortController; parent just flips `active` to pause (unauthenticated).
@@ -33,6 +34,7 @@ export const useStatusPoll = (host: string, active: boolean) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const dur = performance.now() - t0;
+        if (dur > 1000) diag.warn('poll-status', `slow ${Math.round(dur)}ms`, { dur: Math.round(dur) });
         samples.push(dur);
         if (samples.length > 5) samples.shift();
         setLatencyMs(samples.reduce((a, b) => a + b, 0) / samples.length);
@@ -45,7 +47,9 @@ export const useStatusPoll = (host: string, active: boolean) => {
         setLastOk(Date.now());
         setLastError(null);
       } catch (e: any) {
-        setLastError(String(e?.message || e || 'fetch failed'));
+        const msg = String(e?.message || e || 'fetch failed');
+        diag.error('poll-status', 'failed', { error: msg });
+        setLastError(msg);
         setLatencyMs(null);
       }
     };
