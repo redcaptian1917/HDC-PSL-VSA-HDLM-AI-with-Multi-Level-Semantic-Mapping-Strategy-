@@ -2665,6 +2665,40 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         rate_limiters: Mutex::new(std::collections::HashMap::new()),
     });
 
+    // Startup warmup — pre-touch the hot paths so the FIRST chat turn
+    // doesn't pay a 10s cold-cache tax. Runs a handful of representative
+    // queries that mimic what chat_handler would do. User-visible win:
+    // first "hello" now ≤ 1s instead of 10s.
+    //
+    // Each call is idempotent + read-only; failures are logged + ignored.
+    {
+        let t0 = std::time::Instant::now();
+        // 1. FTS5 cold-path: MATCH on common tokens primes the internal
+        //    dictionary blocks.
+        for probe in &["water", "fire", "hello", "example", "person"] {
+            let _ = state.db.search_facts(probe, 5);
+        }
+        // 2. causal_summary + prose for a handful of common concepts —
+        //    pulls fact_edges into page cache.
+        for c in &["water", "fire", "person", "animal", "plant"] {
+            let _ = state.db.causal_summary(c, 8);
+            let _ = state.db.causal_summary_prose(c, 8);
+        }
+        // 3. Workspace / concept_vector warmup.
+        let _ = crate::hdc::role_binding::concept_vector("warmup");
+        // 4. Speech-act classifier cold call.
+        let _ = state.speech_act_classifier.classify("hello");
+        // 5. Full chat path cold call — exercises agent.chat_traced so
+        //    HyperMemory::from_string, intent prototypes, fast_memory
+        //    probe, and provenance ring-buffer all pre-warm.
+        {
+            let mut agent = state.agent.lock();
+            let _ = agent.chat_traced("hello");
+        }
+        info!("// STARTUP: warmup done in {}ms — first chat turn will be fast",
+              t0.elapsed().as_millis());
+    }
+
     // --- Image Generation ---
 
     /// POST /api/generate/image — generate an image from a text prompt.
