@@ -6535,7 +6535,7 @@ ${cmdList}
                       color: C.textDim, textTransform: 'uppercase',
                       letterSpacing: T.typography.trackingLoose,
                       userSelect: 'none',
-                    }}>{g.label} <span style={{ color: C.textMuted, fontWeight: T.typography.weightMedium }}>{'\u00B7 '}{g.convos.length}</span></div>
+                    }}>{g.label} <span style={{ color: C.textMuted, fontWeight: T.typography.weightMedium }}>{'\u00B7 '}{g.items.length}</span></div>
                   );
                 };
                 // c2-388: row render extracted so GroupedVirtuoso's
