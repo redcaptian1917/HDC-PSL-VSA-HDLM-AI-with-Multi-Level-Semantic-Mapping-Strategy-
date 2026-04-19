@@ -3792,6 +3792,84 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- brain.db backup (#403 solo operator) ----
+    //
+    // POST /api/backup/brain — live SQLite `.backup` of the active
+    // brain.db into /home/user/LFI-data/brain.db.<yyyymmddHHMM>.bak.
+    // The operator runs this from the Admin UI when they're about to
+    // do something risky (try a new corpus, adjust trust, etc.). Uses
+    // the sqlite3 shell tool because its `.backup` command is
+    // crash-safe + hot (doesn't require stopping the server).
+    //
+    // Not authenticated — but rate-limited per capability "backup"
+    // at 4 / hour so a loose credential can't DoS the disk.
+
+    async fn backup_brain_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        if !check_rate_limit(&state, "backup", 4, std::time::Duration::from_secs(3600)) {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "backup rate-limited (4/hr). Wait before retrying.",
+            }));
+        }
+        // Find the live DB file. Prefer BrainDb's configured path; fall
+        // back to the default.
+        let db_path = std::env::var("LFI_BRAIN_DB").unwrap_or_else(|_|
+            std::env::var("HOME")
+                .map(|h| format!("{}/.local/share/plausiden/brain.db", h))
+                .unwrap_or_else(|_| "/home/user/.local/share/plausiden/brain.db".into())
+        );
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+        let ts = format!("{}", secs);
+        let backup_dir = std::env::var("LFI_BACKUP_DIR").unwrap_or_else(|_| "/home/user/LFI-data".into());
+        let _ = std::fs::create_dir_all(&backup_dir);
+        let out = format!("{}/brain.db.{}.bak", backup_dir, ts);
+
+        // SECURITY: argv-form invocation — no shell; the path strings are
+        // not attacker-controlled but we avoid sh -c anyway.
+        let sql_cmd = format!(".backup '{}'", out.replace('\'', ""));
+        let res = std::process::Command::new("sqlite3")
+            .arg(&db_path)
+            .arg(&sql_cmd)
+            .output();
+
+        match res {
+            Ok(o) if o.status.success() => {
+                let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+                let _ = state.db.audit_chain_append(
+                    "backup", "Info", "rest_client",
+                    "brain_backup_ok",
+                    &format!("path={} bytes={}", out, size),
+                );
+                axum::Json(json!({
+                    "ok": true,
+                    "path": out,
+                    "bytes": size,
+                    "bytes_mb": (size as f64 / (1024.0 * 1024.0) * 100.0).round() / 100.0,
+                }))
+            }
+            Ok(o) => {
+                let stderr = crate::sanitize_for_log(
+                    &String::from_utf8_lossy(&o.stderr), 400);
+                warn!("// AUDIT: backup_brain stderr: {}", stderr);
+                axum::Json(json!({
+                    "ok": false,
+                    "error": "sqlite3 backup returned non-zero",
+                }))
+            }
+            Err(e) => {
+                warn!("// AUDIT: backup_brain spawn failed: {}", e);
+                axum::Json(json!({
+                    "ok": false,
+                    "error": "sqlite3 not available (install sqlite3 package)",
+                }))
+            }
+        }
+    }
+
     // ---- AVP-2 status surface (#403 Auditorium tab) ----
     //
     // The UI's Auditorium view polls /api/avp/status for the 6-tier / 36-pass
@@ -5766,6 +5844,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
                get(settings_get_handler)
                .post(settings_post_handler))
         .route("/api/avp/status", get(avp_status_handler))
+        .route("/api/backup/brain", post(backup_brain_handler))
         .route("/api/capability/tokens",
                get(capability_token_list_handler)
                .post(capability_token_issue_handler))
