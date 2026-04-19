@@ -3682,6 +3682,43 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Domain-gap scheduler (#308) ----
+
+    /// GET /api/ingest/gaps?limit=N
+    /// Returns the next-N domains ranked by thinnest current coverage +
+    /// lightest recent ingest. Callers pick the top entry + kick off an
+    /// ingest for its matching corpus via /api/ingest/start.
+    async fn ingest_gaps_handler(
+        State(state): State<Arc<AppState>>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> impl IntoResponse {
+        let limit: i64 = params.get("limit")
+            .and_then(|s| s.parse().ok()).unwrap_or(10).min(100);
+        let rows = state.db.domain_gap_rank(limit);
+        let items: Vec<serde_json::Value> = rows.into_iter()
+            .map(|(domain, fact_count, recent, score)| json!({
+                "domain": domain,
+                "fact_count": fact_count,
+                "recent_ingest_7d": recent,
+                "gap_score": (score * 10000.0).round() / 10000.0,
+            })).collect();
+        // Sort desc by gap_score so highest-priority gap is first.
+        let mut sorted = items;
+        sorted.sort_by(|a, b| {
+            let a_s = a["gap_score"].as_f64().unwrap_or(0.0);
+            let b_s = b["gap_score"].as_f64().unwrap_or(0.0);
+            b_s.partial_cmp(&a_s).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        axum::Json(json!({
+            "gaps": sorted,
+            "count": sorted.len(),
+            "scoring": {
+                "formula": "1 / ln(fact_count + 1) - recent_7d / 10000",
+                "note": "higher gap_score = more under-represented",
+            },
+        }))
+    }
+
     // ---- Capability tokens (#303) ----
 
     /// POST /api/capability/tokens (authenticated-only)
@@ -5031,6 +5068,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/ingest/progress", post(ingest_progress_handler))
         .route("/api/ingest/finish", post(ingest_finish_handler))
         .route("/api/ingest/list", get(ingest_list_handler))
+        .route("/api/ingest/gaps", get(ingest_gaps_handler))
         .route("/api/capability/tokens",
                get(capability_token_list_handler)
                .post(capability_token_issue_handler))

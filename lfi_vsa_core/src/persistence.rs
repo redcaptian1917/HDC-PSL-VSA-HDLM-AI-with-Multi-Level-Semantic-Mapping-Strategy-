@@ -820,6 +820,78 @@ impl BrainDb {
         ))).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     }
 
+    // ---- Domain-gap-driven ingest scheduler (#308) ----
+    //
+    // Heuristic: pick the next corpus by which domain is thinnest in
+    // the fact base, weighted against recent-ingest activity so we
+    // don't compound over-representation. Replaces the old
+    // curriculum scheduler that ranked by training loss.
+    //
+    // The handler layer can read this list, filter by corpora it
+    // actually knows how to ingest, and kick off the next one.
+
+    /// Top-N domain gaps. Returns (domain, current_fact_count,
+    /// recent_ingest_count_7d, gap_score) where gap_score is
+    /// higher = more under-represented. Uses a read-only scan to
+    /// avoid blocking ingest writers.
+    pub fn domain_gap_rank(&self, limit: i64)
+        -> Vec<(String, i64, i64, f64)>
+    {
+        // Use the read-only connection so we don't serialize behind the
+        // writer. If the RO open fails, bail out rather than contending
+        // — the caller can retry.
+        let conn = match self.read_only() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+
+        // Current fact counts per domain. Sample recent 50k to keep
+        // the scan bounded on the 58M-row prod table.
+        let mut stmt = match conn.prepare(
+            "WITH sample AS ( \
+               SELECT COALESCE(domain, 'unknown') AS d \
+               FROM facts ORDER BY rowid DESC LIMIT 50000 \
+             ) \
+             SELECT d, COUNT(*) FROM sample GROUP BY d \
+             ORDER BY COUNT(*) ASC LIMIT ?1"
+        ) { Ok(s) => s, Err(_) => return Vec::new() };
+        let current: Vec<(String, i64)> = stmt.query_map(
+            params![limit],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        ).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        drop(stmt);
+
+        // Recent ingest pressure per corpus — the corpus is a proxy
+        // for domain here. We treat the ingest_batches started in the
+        // last 7 days as "recently worked on" and penalise those
+        // domains so we don't bias the schedule toward what just ran.
+        let mut rstmt = match conn.prepare(
+            "SELECT corpus, SUM(tuples_ingested) FROM ingest_batches \
+             WHERE started_at >= datetime('now', '-7 day') \
+             GROUP BY corpus"
+        ) { Ok(s) => s, Err(_) => return current.into_iter()
+                                              .map(|(d, c)| (d, c, 0, 1.0 / (c + 1) as f64))
+                                              .collect() };
+        let recent: std::collections::HashMap<String, i64> = rstmt.query_map(
+            [], |r| Ok((r.get::<_, String>(0)?,
+                        r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
+        ).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        drop(rstmt);
+
+        current.into_iter().map(|(domain, count)| {
+            // Guess the matching corpus key: lower-case hyphenation of
+            // domain. Callers should override if needed (domain↔corpus
+            // isn't strictly 1:1).
+            let corpus_guess = domain.to_lowercase();
+            let recent_ct = recent.get(&corpus_guess).copied().unwrap_or(0);
+            // Gap score: inverse of current count, penalised by recent
+            // activity. Higher = thinner + less-recently-ingested.
+            let gap = 1.0 / ((count + 1) as f64).ln()
+                    - (recent_ct as f64 / 10000.0).min(1.0);
+            (domain, count, recent_ct, gap)
+        }).collect()
+    }
+
     // ---- Ingest batch registry (#326) ----
 
     /// Register a new ingest run. Idempotent on run_id — re-registering
