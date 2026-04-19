@@ -3682,6 +3682,62 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Combined health + drift + proof + contradictions (#355) ----
+
+    /// GET /api/health/extended
+    /// One-call bundle for dashboards that hydrate multiple live
+    /// metrics at mount time — avoids 4-5 parallel fetches + their
+    /// partial-result race conditions. Every sub-section is
+    /// individually bounded (sampled where needed) so the endpoint
+    /// returns in < 500 ms on the 58M-row prod DB.
+    async fn health_extended_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        // Health basics.
+        let tier = {
+            let agent = state.agent.lock();
+            format!("{:?}", agent.current_tier)
+        };
+
+        // Drift snapshot (sampled, ~10 ms).
+        let drift = state.db.drift_snapshot();
+        let drift_json: serde_json::Value = drift.into_iter()
+            .map(|(k, v)| (k, json!(v)))
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+
+        // Proof stats (partial-index, ~1 ms + one sample scan).
+        let (proved, rejected, pending_sample) = state.db.proof_stats();
+
+        // Contradictions pending (small table, exact count cheap).
+        let contradictions_pending = state.db.contradiction_pending_count();
+
+        // Tuple count (small table, exact).
+        let tuples_total = state.db.tuple_count();
+
+        // HDC cache coverage (sample-based).
+        let (hdc_cached, hdc_sample) = state.db.hdc_cache_stats();
+
+        axum::Json(json!({
+            "tier": tier,
+            "drift": drift_json,
+            "proof": {
+                "proved": proved,
+                "rejected": rejected,
+                "pending_sample": pending_sample,
+            },
+            "contradictions_pending": contradictions_pending,
+            "tuples_total": tuples_total,
+            "hdc_cache": {
+                "cached_in_sample": hdc_cached,
+                "sample_size": hdc_sample,
+                "coverage": if hdc_sample > 0 {
+                    (hdc_cached as f64 / hdc_sample as f64 * 10000.0).round() / 10000.0
+                } else { 0.0 },
+            },
+        }))
+    }
+
     // ---- Proof-carrying inference (#354) ----
 
     /// POST /api/proof/verify
@@ -5349,6 +5405,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/proof/verify", post(proof_verify_handler))
         .route("/api/proof/status/:key", get(proof_status_handler))
         .route("/api/proof/stats", get(proof_stats_handler))
+        .route("/api/health/extended", get(health_extended_handler))
         .route("/api/capability/tokens",
                get(capability_token_list_handler)
                .post(capability_token_issue_handler))
