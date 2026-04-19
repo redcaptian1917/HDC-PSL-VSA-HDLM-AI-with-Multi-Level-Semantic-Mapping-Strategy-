@@ -1080,6 +1080,11 @@ ${cmdList}
   // Active per-turn latency trace. Set on WS send, cleared on response.
   // turnTrace.ts logs each phase to diag for the Diag tab to surface.
   const currentTurnRef = useRef<TurnTrace | null>(null);
+  // c2-433 / claude-0 ask: tri-state connection chip driven by how stale the
+  // last backend frame is. Bumped by any chat or telemetry onmessage.
+  // Derived into green/yellow/red via connHealth (see computation below).
+  const lastBackendFrameRef = useRef<number>(Date.now());
+  const [connTick, setConnTick] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Ref-based send lock. Closes a race where rapid Enter presses can call
@@ -1424,6 +1429,14 @@ ${cmdList}
   // pushes a history entry when the surface opens; popstate closes it.
   // Programmatic close (e.g. clicking X) pops the stale entry so forward/back
   // stays balanced. Ordering mirrors Escape-key precedence in the key handler.
+  // Tri-state connection chip tick: re-renders every 5s so the derived
+  // connHealth (green/yellow/red) flips when frames go stale. Cheap — one
+  // state increment, no fetches.
+  useEffect(() => {
+    const id = window.setInterval(() => setConnTick(t => t + 1), 5000);
+    return () => window.clearInterval(id);
+  }, []);
+
   useHistoryDialog(showAdmin, () => setShowAdmin(false), 'admin');
   useHistoryDialog(showSettings, () => setShowSettings(false), 'settings');
   useHistoryDialog(showCmdPalette, () => setShowCmdPalette(false), 'cmdk');
@@ -1433,6 +1446,15 @@ ${cmdList}
   useHistoryDialog(showTerminal, () => setShowTerminal(false), 'xterm');
   useHistoryDialog(showTraining, () => setShowTraining(false), 'training');
   useHistoryDialog(!!showGame, () => setShowGame(null), 'game');
+
+  // Derived connection health for the chip. Red: WS disconnected.
+  // Yellow: WS says open but we haven't seen a frame in 15s (likely a
+  // dead-but-not-yet-detected socket, e.g. LTE idle-kill). Green: alive.
+  const connHealth: 'green' | 'yellow' | 'red' = !isConnected
+    ? 'red'
+    : (Date.now() - lastBackendFrameRef.current > 15000 ? 'yellow' : 'green');
+  // eslint suppression: connTick is the re-render trigger for this derivation.
+  void connTick;
 
   // Network-level online/offline listener. Reads navigator.onLine and keeps
   // a separate banner color (amber vs red) so users know if the problem is
@@ -1602,6 +1624,7 @@ ${cmdList}
         try {
           const msg = JSON.parse(event.data);
           console.debug("// SCC: Chat msg:", msg.type);
+          lastBackendFrameRef.current = Date.now();
           // turn-trace: mark the first frame after a send arrives. Subsequent
           // chunks are no-ops (turnTrace.ts dedupes on firstFrameAt).
           markFirstFrame(currentTurnRef.current, String(msg.type || 'unknown'));
@@ -1857,6 +1880,7 @@ ${cmdList}
       ws.onopen = () => { reconnectDelayMs = 2000; };
       ws.onmessage = (event) => {
         try {
+          lastBackendFrameRef.current = Date.now();
           const msg = JSON.parse(event.data);
           if (msg.type === 'telemetry' && msg.data) {
             setStats(prev => ({ ...prev, ...msg.data }));
@@ -5396,12 +5420,12 @@ ${cmdList}
             }}>
               {!settings.avatarDataUrl && (settings.displayName.trim().charAt(0).toUpperCase() || 'U')}
               {isMobile && (
-                <span aria-label={isConnected ? 'Connected' : 'Offline'}
-                  title={isConnected ? 'Connected to backend' : 'Backend offline'}
+                <span aria-label={connHealth === 'green' ? 'Connected' : connHealth === 'yellow' ? 'Connection stale' : 'Offline'}
+                  title={connHealth === 'green' ? 'Connected to backend' : connHealth === 'yellow' ? 'Waiting for backend frames (>15s silence)' : 'Backend offline — reconnecting'}
                   style={{
                     position: 'absolute', bottom: '-2px', right: '-2px',
                     width: '10px', height: '10px', borderRadius: '50%',
-                    background: isConnected ? C.green : C.red,
+                    background: connHealth === 'green' ? C.green : connHealth === 'yellow' ? '#eab308' : C.red,
                     border: `2px solid ${C.bg}`,
                   }} />
               )}
@@ -5412,11 +5436,13 @@ ${cmdList}
                   {settings.displayName || 'Account'}
                 </div>
                 <div style={{
-                  fontSize: '10px', color: isConnected ? C.green : C.red,
+                  fontSize: '10px',
+                  color: connHealth === 'green' ? C.green : connHealth === 'yellow' ? '#eab308' : C.red,
                   fontWeight: 700, letterSpacing: '0.04em', marginTop: '2px',
                   display: 'flex', alignItems: 'center', gap: '6px',
-                }}>
-                  <span>{isConnected ? 'Online' : 'Offline'}</span>
+                }}
+                  title={connHealth === 'green' ? 'Connected — frames arriving' : connHealth === 'yellow' ? 'No frames for 15s+ — backend may be stalled' : 'Disconnected — reconnecting'}>
+                  <span>{connHealth === 'green' ? 'Online' : connHealth === 'yellow' ? 'Stale' : 'Offline'}</span>
                   {/* c2-433 / task 236: substrate fill chip — concepts (RAG
                       facts in the HDC store) + axioms (PSL constraints
                       registered). Tells the user the substrate is non-empty
