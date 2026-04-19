@@ -17,7 +17,7 @@
 // mid-flight refactors. The activate handler already drops any key that
 // isn't the current CACHE_VERSION so this single string change wipes
 // whatever stale build was serving.
-const CACHE_VERSION = 'plausiden-v6';
+const CACHE_VERSION = 'plausiden-v7';
 const PRECACHE_URLS = ['/'];
 const SAME_ORIGIN_STATIC = /\.(?:js|mjs|css|woff2?|ttf|otf|png|jpg|jpeg|svg|webp|ico)(?:\?.*)?$/i;
 
@@ -38,6 +38,14 @@ self.addEventListener('activate', (event) => {
     await Promise.all(keys.filter(k => k !== CACHE_VERSION).map(k => caches.delete(k)));
     await self.clients.claim();
   })());
+});
+
+// Listen for SKIP_WAITING from the page so a freshly-installed SW can
+// take over immediately without waiting for all tabs to close.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 // Return true for top-level HTML navigation requests. Covers both the

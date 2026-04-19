@@ -142,6 +142,59 @@ fn source_label(key: &str) -> String {
 
 /// Strip a leading copy of the key from the value (some ingesters prefix
 /// facts like "foo DerivedFrom bar" where 'foo' is the key).
+/// #378 Extract the subject of a query so the active-question response
+/// can address it specifically. Matches common question shapes:
+///   "what is X"               → X
+///   "tell me about X"         → X
+///   "why does X cause Y"      → X
+///   "how does X work"         → X
+///   "describe X"              → X
+///
+/// Returns None when nothing obvious is present — caller falls back to the
+/// generic "try one of these query shapes" message.
+///
+/// REGRESSION-GUARD: When it's wrong it still just produces an awkward
+/// "Teach me: what do you know about …" which is at worst slightly
+/// off-topic, not factually incorrect. Conservative prefix matching
+/// avoids guessing.
+pub fn extract_query_subject(lower: &str) -> Option<String> {
+    let s = lower.trim().trim_end_matches('?').trim();
+    if s.is_empty() || s.len() > 200 { return None; }
+
+    for prefix in &[
+        "what is a ", "what is an ", "what is the ", "what is ",
+        "what are the ", "what are ", "what's a ", "what's the ", "what's ",
+        "whats a ", "whats the ", "whats ",
+        "tell me about the ", "tell me about a ", "tell me about an ", "tell me about ",
+        "describe the ", "describe a ", "describe an ", "describe ",
+        "explain the ", "explain a ", "explain ",
+        "who is ", "who was ", "who are ",
+        "how does the ", "how does a ", "how does an ", "how does ",
+        "how do ", "how is ", "how are ",
+        "why does ", "why is ", "why are ", "why do ",
+        "define ", "tell me ",
+    ] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            let subj: String = rest
+                .chars()
+                .take_while(|c| !matches!(c, ',' | '.' | '!' | '?' | '\n'))
+                .collect();
+            let subj = subj.trim();
+            // Drop trailing action words that are usually NOT part of the subject:
+            //   "X work", "X cause Y" → "X"
+            for tail in &[" work", " works", " cause", " causes", " happen", " happens"] {
+                if let Some(head) = subj.strip_suffix(tail) {
+                    return Some(head.trim().to_string());
+                }
+            }
+            if !subj.is_empty() && subj.len() <= 80 {
+                return Some(subj.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn strip_key_prefix(key: &str, value: &str) -> String {
     if let Some(rest) = value.strip_prefix(key) {
         rest.trim_start_matches([':', ' ', '\t']).to_string()
@@ -1712,26 +1765,42 @@ impl CognitiveCore {
             None => true,
         };
         if weak_casual {
-            // Short, honest, grounded message — no canned pleasantry,
-            // no fabricated friendliness. Tells the user what LFI can
-            // actually do + invites a substrate-shaped question.
-            let q = crate::truncate_str(input.trim(), 80);
+            // #378 Active question generation. Instead of a static refusal,
+            // try to extract the subject of the query and ask the user to
+            // fill the gap — every answer becomes a training signal that
+            // #376 auto-ingest then persists. This is the self-improvement
+            // loop user directive pointed at: "turn every response into a
+            // teaching opportunity."
+            let trimmed = input.trim();
+            let lower = trimmed.to_lowercase();
+            let subject = extract_query_subject(&lower);
+
             let top_snippet = top.map(|(_, v, s)| {
                 let short = crate::truncate_str(v, 60).replace('\n', " ");
                 format!(" (closest hit similarity {:.0}%: \"{}…\")", s * 100.0, short)
             }).unwrap_or_default();
-            return format!(
-                "I'm a post-LLM system grounded in an ingested fact base — \
-                 nothing clears the 0.70 trust threshold for \"{}\"{}.\n\n\
-                 I answer best when you ask about something in the corpus. Try:\n\
-                 • what is X\n\
-                 • tell me about X\n\
-                 • why does X cause Y\n\
-                 • how does X work\n\
-                 • what's related to X\n\n\
-                 Or ingest a corpus that covers the topic you want to chat about.",
-                q, top_snippet,
-            );
+
+            return match subject {
+                Some(subj) if !subj.is_empty() => format!(
+                    "I don't have grounded facts about \"{}\"{}.\n\n\
+                     Teach me: what do you know about {}? Say \
+                     \"remember that {} is …\" and I'll ingest it as a 0.80-confidence \
+                     fact for future turns. Or upload a corpus covering the topic.",
+                    subj, top_snippet, subj, subj,
+                ),
+                _ => format!(
+                    "I'm a post-LLM system grounded in an ingested fact base — \
+                     nothing clears the 0.70 trust threshold for \"{}\"{}.\n\n\
+                     I answer best when you ask about something in the corpus. Try:\n\
+                     • what is X\n\
+                     • tell me about X\n\
+                     • why does X cause Y\n\
+                     • how does X work\n\
+                     • what's related to X\n\n\
+                     Or teach me: say \"remember that X is Y\" and I'll persist it.",
+                    crate::truncate_str(trimmed, 80), top_snippet,
+                ),
+            };
         }
         hdc_retrieval_response_shaped(input, &self.rag_context, act)
     }

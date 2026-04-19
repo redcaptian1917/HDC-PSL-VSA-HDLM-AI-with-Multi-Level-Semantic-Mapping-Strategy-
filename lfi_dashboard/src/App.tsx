@@ -888,23 +888,9 @@ ${cmdList}
   const markTourSeen = (k: TourKey) => {
     try { localStorage.setItem(`lfi_tour_seen_${k}_v2`, '1'); } catch { /* silent */ }
   };
-  // When the user first lands on each view (after consent + welcome
-  // dismissed), auto-launch that view's tour once. Separate effects per
-  // dep so a chat-view visit doesn't retrigger admin-tour logic.
-  useEffect(() => {
-    if (!isAuthenticated || !tosAccepted || showWelcome) return;
-    let targetKey: TourKey | null = null;
-    if (showAdmin && !tourSeen('admin')) targetKey = 'admin';
-    else if (activeView === 'classroom' && !tourSeen('classroom')) targetKey = 'classroom';
-    else if (activeView === 'fleet' && !tourSeen('fleet')) targetKey = 'fleet';
-    else if (activeView === 'library' && !tourSeen('library')) targetKey = 'library';
-    else if (activeView === 'auditorium' && !tourSeen('auditorium')) targetKey = 'auditorium';
-    else if (activeView === 'chat' && !showAdmin && !tourSeen('chat')) targetKey = 'chat';
-    if (!targetKey) return;
-    diag.info('tour', `autolaunch per-view tour: ${targetKey}`);
-    const id = window.setTimeout(() => setActiveTour(targetKey), 1500);
-    return () => window.clearTimeout(id);
-  }, [isAuthenticated, tosAccepted, showWelcome, activeView, showAdmin]);
+  // autolaunch effect moved below activeView's useState (to avoid TDZ on
+  // the deps array reading activeView before initialization). See where
+  // it's actually wired further down.
   const [teachText, setTeachText] = useState('');
   const [teachSending, setTeachSending] = useState(false);
   const teachDialogRef = useRef<HTMLDivElement>(null);
@@ -1470,6 +1456,24 @@ ${cmdList}
     if (h === 'auditorium') return 'auditorium';
     return 'chat';
   });
+
+  // Per-view tour autolaunch. Must live HERE (below activeView useState)
+  // to avoid a TDZ error — the deps array reads activeView during render,
+  // and React effects don't defer deps evaluation.
+  useEffect(() => {
+    if (!isAuthenticated || !tosAccepted || showWelcome) return;
+    let targetKey: TourKey | null = null;
+    if (showAdmin && !tourSeen('admin')) targetKey = 'admin';
+    else if (activeView === 'classroom' && !tourSeen('classroom')) targetKey = 'classroom';
+    else if (activeView === 'fleet' && !tourSeen('fleet')) targetKey = 'fleet';
+    else if (activeView === 'library' && !tourSeen('library')) targetKey = 'library';
+    else if (activeView === 'auditorium' && !tourSeen('auditorium')) targetKey = 'auditorium';
+    else if (activeView === 'chat' && !showAdmin && !tourSeen('chat')) targetKey = 'chat';
+    if (!targetKey) return;
+    diag.info('tour', `autolaunch per-view tour: ${targetKey}`);
+    const id = window.setTimeout(() => setActiveTour(targetKey), 1500);
+    return () => window.clearTimeout(id);
+  }, [isAuthenticated, tosAccepted, showWelcome, activeView, showAdmin]);
 
   // URL hash <-> activeView sync. First mount replaceState (no history
   // balloon); subsequent view changes pushState so the browser Back button

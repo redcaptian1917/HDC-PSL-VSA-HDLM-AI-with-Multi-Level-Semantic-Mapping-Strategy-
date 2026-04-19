@@ -9,9 +9,10 @@
     "typecheck": "tsc --noEmit",
     "typecheck:summary": "bash scripts/typecheck-summary.sh",
     "stale-refs": "bash scripts/stale-refs.sh",
+    "hoist-audit": "bash scripts/hoist-audit.sh",
     "mobile-lint": "bash scripts/mobile-lint.sh",
     "mobile-smoke": "echo 'Paste scripts/mobile-smoke.js into DevTools console at mobile emulation sizes — this is a runtime harness, not a CLI test.' && exit 0",
-    "audit": "npm run mobile-lint && npm run stale-refs && npm run typecheck:summary",
+    "audit": "npm run mobile-lint && npm run stale-refs && npm run hoist-audit && npm run typecheck:summary",
     "prebuild": "npm run audit",
     "ci": "npm run audit && npm run build"
   },
