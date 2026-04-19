@@ -4624,54 +4624,50 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             }
         }
 
+        // #380 Scoped conn acquisition via try_lock so the privacy
+        // endpoint can never wedge the server. Previous version held
+        // state.db.conn.lock() which — under cache refresher contention
+        // — hung 30s+ per request and starved every other endpoint.
         let (profile, ui_prefs, feedback_count, trainer_count, adv_count) = {
-            let conn = match state.db.conn.lock() {
-                Ok(c) => c,
-                Err(_) => return axum::Json(json!({"ok": false, "error": "db lock"})),
-            };
-
-            // 1. Identity + preferences the user has told LFI (or which
-            // auto-learn extracted from chat). Category != ui_pref so
-            // cosmetic settings don't bloat the personal summary.
-            let mut profile = Vec::new();
-            if let Ok(mut stmt) = conn.prepare(
-                "SELECT key, value, category, learned_at FROM user_profile \
-                 WHERE category != 'ui_pref' ORDER BY learned_at DESC LIMIT 200"
-            ) {
-                profile = stmt.query_map([], |r| Ok(json!({
-                    "key": r.get::<_, String>(0).unwrap_or_default(),
-                    "value": r.get::<_, String>(1).unwrap_or_default(),
-                    "category": r.get::<_, String>(2).unwrap_or_default(),
-                    "learned_at": r.get::<_, String>(3).unwrap_or_default(),
-                }))).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+            match state.db.conn.try_lock() {
+                Ok(conn) => {
+                    let mut profile = Vec::new();
+                    if let Ok(mut stmt) = conn.prepare(
+                        "SELECT key, value, category, learned_at FROM user_profile \
+                         WHERE category != 'ui_pref' ORDER BY learned_at DESC LIMIT 200"
+                    ) {
+                        profile = stmt.query_map([], |r| Ok(json!({
+                            "key": r.get::<_, String>(0).unwrap_or_default(),
+                            "value": r.get::<_, String>(1).unwrap_or_default(),
+                            "category": r.get::<_, String>(2).unwrap_or_default(),
+                            "learned_at": r.get::<_, String>(3).unwrap_or_default(),
+                        }))).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+                    }
+                    let mut ui_prefs = Vec::new();
+                    if let Ok(mut stmt) = conn.prepare(
+                        "SELECT key, value, learned_at FROM user_profile \
+                         WHERE category = 'ui_pref' ORDER BY learned_at DESC"
+                    ) {
+                        ui_prefs = stmt.query_map([], |r| Ok(json!({
+                            "key": r.get::<_, String>(0).unwrap_or_default(),
+                            "value": r.get::<_, String>(1).unwrap_or_default(),
+                            "set_at": r.get::<_, String>(2).unwrap_or_default(),
+                        }))).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
+                    }
+                    let fc: i64 = conn.query_row(
+                        "SELECT COUNT(*) FROM user_feedback", [], |r| r.get(0),
+                    ).unwrap_or(0);
+                    let tc: i64 = conn.query_row(
+                        "SELECT COUNT(DISTINCT conversation_id) FROM user_feedback \
+                         WHERE conversation_id LIKE 'trainer_%'", [], |r| r.get(0),
+                    ).unwrap_or(0);
+                    (profile, ui_prefs, fc, tc, adv_count_from_cache)
+                }
+                Err(_) => {
+                    // DB busy — return partial report. Better than hanging.
+                    (Vec::new(), Vec::new(), -1, -1, adv_count_from_cache)
+                }
             }
-
-            // 2. UI prefs — separately tagged so the user can tell them
-            // apart from substantive personal data.
-            let mut ui_prefs = Vec::new();
-            if let Ok(mut stmt) = conn.prepare(
-                "SELECT key, value, learned_at FROM user_profile \
-                 WHERE category = 'ui_pref' ORDER BY learned_at DESC"
-            ) {
-                ui_prefs = stmt.query_map([], |r| Ok(json!({
-                    "key": r.get::<_, String>(0).unwrap_or_default(),
-                    "value": r.get::<_, String>(1).unwrap_or_default(),
-                    "set_at": r.get::<_, String>(2).unwrap_or_default(),
-                }))).map(|i| i.filter_map(|r| r.ok()).collect::<Vec<_>>()).unwrap_or_default();
-            }
-
-            // 3. Aggregate counts — thumbs-up/down + trainer sessions.
-            // user_feedback is small so these are fast. adversarial count
-            // comes from the lock-free stats_cache above.
-            let feedback_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM user_feedback", [], |r| r.get(0),
-            ).unwrap_or(0);
-            let trainer_count: i64 = conn.query_row(
-                "SELECT COUNT(DISTINCT conversation_id) FROM user_feedback \
-                 WHERE conversation_id LIKE 'trainer_%'", [], |r| r.get(0),
-            ).unwrap_or(0);
-
-            (profile, ui_prefs, feedback_count, trainer_count, adv_count_from_cache)
         };
 
         // Rights surface. Plain-language, no legalese.
