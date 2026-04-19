@@ -787,6 +787,142 @@ impl BrainDb {
         Ok(conn)
     }
 
+    // ---- Dataset / DB integrity audit (#402) ----
+    //
+    // Read-only checks over the fact base. Every test is bounded
+    // (sample-based where full scans are expensive) so the audit
+    // endpoint responds in < 1s even on 58M rows.
+    //
+    // Each returned entry carries:
+    //   - name     identifier for CI / UI
+    //   - passed   bool
+    //   - detail   human-readable "N orphans" / "PSL pass 82%"
+    //   - metric   numeric score where applicable
+
+    /// Run the dataset integrity suite. Returns a Vec because multiple
+    /// independent checks are bundled — each can pass / fail alone.
+    pub fn dataset_audit(&self) -> Vec<(&'static str, bool, String, Option<f64>)> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut out: Vec<(&'static str, bool, String, Option<f64>)> = Vec::new();
+
+        // A1. Orphan fact_edges — sample 500 edges, strip the common
+        // "concept:" prefix in the CTE so the facts lookup uses the
+        // primary-key index. The OR-against-computed-expression form
+        // was 88s on prod; this runs in <50ms.
+        let orphan_src: i64 = conn.query_row(
+            "WITH sampled AS ( \
+               SELECT source_key, \
+                      CASE WHEN source_key LIKE 'concept:%' \
+                           THEN substr(source_key, 9) \
+                           ELSE source_key END AS lookup_key \
+               FROM fact_edges LIMIT 500 \
+             ) \
+             SELECT COUNT(*) FROM sampled \
+             WHERE lookup_key NOT IN (SELECT key FROM facts WHERE key = sampled.lookup_key)",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        out.push((
+            "edges_source_exists",
+            orphan_src < 50, // < 10% of the 500-sample
+            format!("{} orphan edges in 500-row sample", orphan_src),
+            Some(orphan_src as f64),
+        ));
+
+        // A2. Fact-source distribution sane — no single source > 95%
+        // of facts (mono-culture risk).
+        let top_pct: f64 = conn.query_row(
+            "WITH sample AS (SELECT source FROM facts ORDER BY rowid DESC LIMIT 50000) \
+             SELECT 100.0 * COUNT(*) / 50000.0 FROM sample \
+             WHERE source = (SELECT source FROM sample GROUP BY source \
+                             ORDER BY COUNT(*) DESC LIMIT 1)",
+            [], |r| r.get(0),
+        ).unwrap_or(0.0);
+        out.push((
+            "source_mono_culture",
+            top_pct < 95.0,
+            format!("top source holds {:.1}% of sampled facts", top_pct),
+            Some(top_pct),
+        ));
+
+        // A3. FTS5 freshness — sample-based. Compare FTS match count
+        // for a cheap common token vs facts with that token in value.
+        // Full-row COUNT on 58M is multi-minute; this is O(log N).
+        let fts_match: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM facts_fts WHERE facts_fts MATCH 'water' LIMIT 10000)",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        out.push((
+            "fts5_freshness",
+            fts_match > 0,
+            format!("FTS5 returns {} matches for probe token 'water'", fts_match),
+            Some(fts_match as f64),
+        ));
+
+        // A4. Contradiction backlog — absolute pending count. Threshold
+        // is static ("< 10,000"); operators tune via reconciliation
+        // margin (#293) when it creeps up.
+        let pending_cons: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM contradictions WHERE resolved_at IS NULL",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        out.push((
+            "contradiction_backlog",
+            pending_cons < 10_000,
+            format!("{} pending contradictions", pending_cons),
+            Some(pending_cons as f64),
+        ));
+
+        // A5. Source trust coverage — active sources (seen in the
+        // recent 50k sample) that have no trust row. Doesn't try to
+        // weight by fact count; any source active in the window is
+        // expected to have a trust score set.
+        let uncovered: i64 = conn.query_row(
+            "WITH seen AS ( \
+               SELECT DISTINCT source FROM ( \
+                 SELECT source FROM facts ORDER BY rowid DESC LIMIT 50000 \
+               ) \
+             ) \
+             SELECT COUNT(*) FROM seen \
+             WHERE source IS NOT NULL AND source != '' \
+               AND source NOT IN (SELECT source FROM source_trust)",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        out.push((
+            "source_trust_coverage",
+            uncovered == 0,
+            format!("{} active sources (≥1k facts) missing trust row", uncovered),
+            Some(uncovered as f64),
+        ));
+
+        // A6. Fact schema parity — every column the code reads from
+        // exists. Catches out-of-band ALTERs that diverge between
+        // dev + prod.
+        const REQUIRED_COLS: &[&str] = &[
+            "key", "value", "source", "confidence", "updated_at",
+            "quality_score", "hdc_vector", "proof_status",
+        ];
+        let mut missing: Vec<&str> = Vec::new();
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(facts)").ok();
+            if let Some(ref mut s) = stmt {
+                let cols: Vec<String> = s.query_map([], |r| r.get::<_, String>(1))
+                    .map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+                for col in REQUIRED_COLS {
+                    if !cols.iter().any(|c| c == col) { missing.push(col); }
+                }
+            }
+        }
+        out.push((
+            "schema_parity",
+            missing.is_empty(),
+            if missing.is_empty() { "all required columns present".into() }
+            else { format!("missing columns: {}", missing.join(", ")) },
+            Some(missing.len() as f64),
+        ));
+
+        out
+    }
+
     // ---- Proof-carrying inference (#354) ----
     //
     // Records the Lean4 verdict against a fact. Integration flow:

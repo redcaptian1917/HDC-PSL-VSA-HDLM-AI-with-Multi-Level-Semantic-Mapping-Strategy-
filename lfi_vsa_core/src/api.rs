@@ -3793,6 +3793,30 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Dataset / DB integrity audit (#402) ----
+
+    /// GET /api/audit/datasets
+    /// Returns every doctrine check with its verdict.
+    async fn audit_datasets_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let results = state.db.dataset_audit();
+        let items: Vec<serde_json::Value> = results.iter()
+            .map(|(name, passed, detail, metric)| json!({
+                "name": name,
+                "passed": passed,
+                "detail": detail,
+                "metric": metric,
+            })).collect();
+        let passed = results.iter().filter(|r| r.1).count();
+        axum::Json(json!({
+            "checks": items,
+            "total": results.len(),
+            "passed": passed,
+            "failed": results.len() - passed,
+        }))
+    }
+
     // ---- Proof-carrying inference (#354) ----
 
     /// POST /api/proof/verify
@@ -5460,6 +5484,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/proof/verify", post(proof_verify_handler))
         .route("/api/proof/status/:key", get(proof_status_handler))
         .route("/api/proof/stats", get(proof_stats_handler))
+        .route("/api/audit/datasets", get(audit_datasets_handler))
         .route("/api/health/extended", get(health_extended_handler))
         .route("/api/settings/workspace",
                get(settings_workspace_get_handler)
