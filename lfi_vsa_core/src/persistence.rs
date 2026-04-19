@@ -2300,33 +2300,48 @@ impl BrainDb {
             "SELECT edge_type, target_key, strength FROM fact_edges \
              WHERE source_key = ?1 ORDER BY strength DESC LIMIT 200"
         ) { Ok(s) => s, Err(_) => return None };
-        let outbound: Vec<(String, String)> = stmt.query_map(
+        // #358 Include strength so sentences can hedge based on
+        // per-filler confidence.
+        let outbound: Vec<(String, String, f64)> = stmt.query_map(
             params![&concept_key], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, f64>(2)?,
             ))).map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default();
         drop(stmt);
         if outbound.is_empty() { return None; }
 
         use std::collections::BTreeMap;
-        let mut groups: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-        for (et, t) in outbound {
+        let mut groups: BTreeMap<String, Vec<(String, String, f64)>> = BTreeMap::new();
+        for (et, t, s) in outbound {
             let tgt = t.strip_prefix("concept:").unwrap_or(&t).to_string();
-            groups.entry(et).or_default().push((t, tgt));
+            groups.entry(et).or_default().push((t, tgt, s));
+        }
+
+        /// #358 Confidence-calibrated hedging. PSL-style threshold table.
+        /// Highest → bare assertion. Mid → "generally" / "typically".
+        /// Low → "likely" / "sometimes". Below threshold doesn't prefix
+        /// — the caller already refuses.
+        fn hedge_for(strength: f64) -> &'static str {
+            if strength >= 0.9 { "" }
+            else if strength >= 0.7 { "typically " }
+            else if strength >= 0.5 { "often " }
+            else { "sometimes " }
         }
 
         // Sentence template per predicate. The template takes the
-        // subject + a list of (key, filler) pairs and returns prose.
+        // subject + a list of (key, filler, strength) tuples and
+        // returns prose with per-filler hedging folded in.
         fn sentence(
-            pred: &str, subj: &str, fillers: &[(String, String)], cap: usize,
+            pred: &str, subj: &str, fillers: &[(String, String, f64)], cap: usize,
         ) -> String {
-            let limited: Vec<&(String, String)> = fillers.iter().take(cap).collect();
+            let limited: Vec<&(String, String, f64)> = fillers.iter().take(cap).collect();
+            if limited.is_empty() { return String::new(); }
             let article = article_for(subj);
-            let chips: Vec<String> = limited.iter().map(|(k, f)| {
-                // Fact-style chip pointing at the concept: row.
+            // Per-filler chip with inline fact link.
+            let chips: Vec<String> = limited.iter().map(|(k, f, _s)| {
                 format!("{} [fact:{}]", f, k)
             }).collect();
             let list = match chips.len() {
-                0 => return String::new(),
                 1 => chips[0].clone(),
                 2 => format!("{} and {}", chips[0], chips[1]),
                 _ => {
@@ -2334,17 +2349,23 @@ impl BrainDb {
                     format!("{}, and {}", rest.join(", "), last)
                 }
             };
+            // #358 Clause hedge — derived from the MEAN strength so
+            // "strong IsA with one weak outlier" still reads confident,
+            // while a group of all-weak fillers gets the softer frame.
+            let mean_s = limited.iter().map(|(_,_,s)| *s).sum::<f64>()
+                / limited.len() as f64;
+            let h = hedge_for(mean_s);
             match pred {
-                "IsA" => format!("{} {} is a {}.", article, subj, list),
-                "UsedFor" => format!("It is used for {}.", list),
-                "Causes" => format!("It can cause {}.", list),
-                "HasPrerequisite" => format!("It requires {}.", list),
-                "HasSubevent" => format!("It involves {}.", list),
-                "PartOf" => format!("It is part of {}.", list),
-                "CapableOf" => format!("It is capable of {}.", list),
-                "HasProperty" => format!("It has the property of being {}.", list),
-                "MotivatedByGoal" => format!("It is motivated by {}.", list),
-                "CausesDesire" => format!("It makes one want {}.", list),
+                "IsA" => format!("{} {} is {}a {}.", article, subj, h, list),
+                "UsedFor" => format!("It is {}used for {}.", h, list),
+                "Causes" => format!("It can {}cause {}.", h, list),
+                "HasPrerequisite" => format!("It {}requires {}.", h, list),
+                "HasSubevent" => format!("It {}involves {}.", h, list),
+                "PartOf" => format!("It is {}part of {}.", h, list),
+                "CapableOf" => format!("It is {}capable of {}.", h, list),
+                "HasProperty" => format!("It {}has the property of being {}.", h, list),
+                "MotivatedByGoal" => format!("It is {}motivated by {}.", h, list),
+                "CausesDesire" => format!("It {}makes one want {}.", h, list),
                 _ => format!("Related ({}): {}.", pred, list),
             }
         }
