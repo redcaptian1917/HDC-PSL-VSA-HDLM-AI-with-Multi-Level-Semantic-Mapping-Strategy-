@@ -5767,8 +5767,26 @@ ${cmdList}
         // Bible §6.1: all tap targets ≥44px on mobile
         touchAction: 'manipulation',
       }}>
-        {/* Left: sidebar toggle + status/inline stats */}
+        {/* Left: wordmark + sidebar toggle + status/inline stats.
+            2026-04-19 reshuffle: PlausiDen AI title moved to the very
+            left (was wedged between the sidebar toggle and the New
+            Chat button). Title is now the anchor, controls follow. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {!isMobile && (
+            <div style={{
+              fontSize: T.typography.sizeLg, fontWeight: 800,
+              letterSpacing: '0.02em', color: C.text,
+              display: 'flex', alignItems: 'center', gap: '6px',
+              marginRight: '4px',
+            }}>
+              PlausiDen <span style={{ color: C.accent }}>AI</span>
+              {isCurrentIncognito && (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label='Incognito mode active'>
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              )}
+            </div>
+          )}
           <button onClick={() => setShowConvoSidebar(v => !v)}
             data-tour="chats-toggle"
             title={showConvoSidebar ? 'Hide chats sidebar (⌘B)' : 'Show chats sidebar (⌘B)'}
@@ -5814,20 +5832,9 @@ ${cmdList}
               </svg>
             </button>
           )}
-          {/* c2-415 / BIG #218 mobile: the "PlausiDen AI" wordmark eats ~90px
-              on narrow viewports; tabs + hamburger + avatar already identify
-              the app. Keep the incognito shield indicator — it's a security
-              tell users need to see regardless of viewport. */}
-          {!isMobile && (
-            <div style={{ fontSize: T.typography.sizeMd, fontWeight: 800, letterSpacing: '0.02em', color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
-              PlausiDen <span style={{ color: C.accent }}>AI</span>
-              {isCurrentIncognito && (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" title="Incognito mode active">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                </svg>
-              )}
-            </div>
-          )}
+          {/* Wordmark moved to the far left of this group above. Keep
+              the mobile incognito chip here since mobile skips the
+              wordmark entirely. */}
           {isMobile && isCurrentIncognito && (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" title="Incognito mode active">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
