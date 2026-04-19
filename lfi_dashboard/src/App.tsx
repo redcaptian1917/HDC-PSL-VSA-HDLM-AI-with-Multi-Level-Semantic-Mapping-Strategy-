@@ -697,6 +697,8 @@ const SovereignCommandConsole: React.FC = () => {
 
   type SlashCmd = { cmd: string; label: string; desc: string; run: () => void };
   const slashCommands: SlashCmd[] = [
+    { cmd: '/teach', label: 'Teach LFI', desc: 'Add a fact to the substrate',
+      run: () => setShowTeach(true) },
     { cmd: '/new', label: 'New chat', desc: 'Start a fresh conversation',
       run: () => createNewConversation() },
     { cmd: '/clear', label: 'Clear chat', desc: 'Erase current messages',
@@ -871,6 +873,12 @@ ${cmdList}
     logEvent('welcome_dismissed', {});
   };
   const [showKnowledge, setShowKnowledge] = useState(false);
+  // Direct Teach-LFI modal (user directive: 'must be able to train LFI
+  // proactively'). Standalone from the refusal-flow Teach CTA so users
+  // can add facts without first hitting a refusal.
+  const [showTeach, setShowTeach] = useState(false);
+  const [teachText, setTeachText] = useState('');
+  const [teachSending, setTeachSending] = useState(false);
   const [showTraining, setShowTraining] = useState(false);
   const [trainingLog, setTrainingLog] = useState<Array<{ ts: string; domain: string; batch: number; sessions: number }>>([]);
   const fetchTrainingLog = async () => {
@@ -1470,6 +1478,7 @@ ${cmdList}
   useHistoryDialog(showTerminal, () => setShowTerminal(false), 'xterm');
   useHistoryDialog(showTraining, () => setShowTraining(false), 'training');
   useHistoryDialog(!!showGame, () => setShowGame(null), 'game');
+  useHistoryDialog(showTeach, () => setShowTeach(false), 'teach');
 
   // Derived connection health for the chip. Red: WS disconnected.
   // Yellow: WS says open but we haven't seen a frame in 15s (likely a
@@ -3667,6 +3676,127 @@ ${cmdList}
           feedback queue surfaces these for ingestion. The user's prior
           query + the AI reply are echoed in the modal so the user knows
           which exchange they're correcting (chat may have scrolled). */}
+      {/* ========== TEACH-LFI MODAL (#347) ========== */}
+      {/* Direct teach entry — standalone from the refusal-flow Teach CTA
+          and from correct-this (which targets a specific message). Users
+          can proactively add a fact without first getting a refusal.
+          POSTs to /api/feedback with rating='correct' + no conclusion_id. */}
+      {showTeach && (
+        <div onClick={() => { setShowTeach(false); setTeachText(''); }}
+          role='presentation'
+          style={{
+            position: 'fixed', inset: 0, zIndex: T.z.modal + 60,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: isMobile ? T.spacing.sm : T.spacing.lg,
+          }}>
+          <div onClick={(e) => e.stopPropagation()}
+            role='dialog' aria-modal='true' aria-labelledby='scc-teach-title'
+            style={{
+              width: '100%', maxWidth: '560px',
+              background: C.bgCard, border: `1px solid ${C.border}`,
+              borderRadius: T.radii.xl, padding: isMobile ? T.spacing.md : T.spacing.xl,
+              boxShadow: T.shadows.modal,
+              display: 'flex', flexDirection: 'column', gap: T.spacing.md,
+              maxHeight: '90dvh', overflow: 'auto',
+            }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 id='scc-teach-title' style={{
+                margin: 0, fontSize: T.typography.sizeXl,
+                fontWeight: T.typography.weightBlack,
+                letterSpacing: '0.06em', textTransform: 'uppercase', color: C.text,
+              }}>Teach LFI</h2>
+              <button onClick={() => { setShowTeach(false); setTeachText(''); }}
+                aria-label='Close teach modal'
+                style={{
+                  background: 'transparent', border: 'none', color: C.textMuted,
+                  fontSize: T.typography.size2xl, cursor: 'pointer', padding: '0 6px',
+                }}>{'\u2715'}</button>
+            </div>
+            <p style={{
+              margin: 0, fontSize: T.typography.sizeSm, color: C.textMuted, lineHeight: 1.55,
+            }}>
+              Write a fact or piece of knowledge you want LFI to remember. Plain English is fine —
+              the substrate will extract tuples. Examples: <em>"The Eiffel Tower is 330m tall."</em>{' '}
+              or <em>"My dog's name is Maya."</em>
+            </p>
+            <textarea
+              value={teachText}
+              onChange={(e) => setTeachText(e.target.value)}
+              autoFocus
+              placeholder='e.g. Water boils at 100°C at sea level.'
+              rows={5}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  (e.currentTarget.closest('[role=dialog]')?.querySelector('[data-teach-submit]') as HTMLButtonElement | null)?.click();
+                }
+              }}
+              style={{
+                width: '100%', minHeight: '120px', resize: 'vertical',
+                padding: T.spacing.md,
+                background: C.bgInput, color: C.text,
+                border: `1px solid ${C.border}`, borderRadius: T.radii.md,
+                fontFamily: 'inherit', fontSize: T.typography.sizeMd,
+                lineHeight: 1.5, boxSizing: 'border-box',
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: T.spacing.sm, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: T.typography.sizeXs, color: C.textDim, fontFamily: T.typography.fontMono }}>
+                {teachText.length} chars · Cmd/Ctrl+Enter to send
+              </span>
+              <div style={{ display: 'flex', gap: T.spacing.sm }}>
+                <button onClick={() => { setShowTeach(false); setTeachText(''); }}
+                  disabled={teachSending}
+                  style={{
+                    padding: '8px 16px', background: 'transparent', color: C.textMuted,
+                    border: `1px solid ${C.border}`, borderRadius: T.radii.md,
+                    cursor: teachSending ? 'wait' : 'pointer',
+                    fontFamily: 'inherit', fontSize: T.typography.sizeMd,
+                  }}>Cancel</button>
+                <button
+                  data-teach-submit
+                  disabled={teachSending || !teachText.trim()}
+                  onClick={async () => {
+                    const txt = teachText.trim();
+                    if (!txt) return;
+                    setTeachSending(true);
+                    try {
+                      const r = await fetch(`http://${getHost()}:3000/api/feedback`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          conversation_id: currentConversationId,
+                          rating: 'correct',
+                          comment: `Teach: ${txt}`,
+                          correction: txt,
+                        }),
+                      });
+                      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                      showToast('Sent to LFI for ingestion');
+                      logEvent('teach_fact', { len: txt.length });
+                      setShowTeach(false);
+                      setTeachText('');
+                    } catch (e: any) {
+                      showToast(`Teach failed: ${String(e?.message || e || 'unknown')}`);
+                    } finally {
+                      setTeachSending(false);
+                    }
+                  }}
+                  style={{
+                    padding: '8px 18px', background: teachSending || !teachText.trim() ? C.bgInput : C.accent,
+                    color: teachSending || !teachText.trim() ? C.textMuted : '#fff',
+                    border: 'none', borderRadius: T.radii.md,
+                    cursor: teachSending ? 'wait' : teachText.trim() ? 'pointer' : 'not-allowed',
+                    fontFamily: 'inherit', fontSize: T.typography.sizeMd,
+                    fontWeight: T.typography.weightSemibold,
+                  }}>
+                  {teachSending ? 'Sending…' : 'Teach'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {correctFeedbackFor && (
         <div onClick={() => fb.closeCorrectFeedback()}
           style={{
@@ -4770,6 +4900,8 @@ ${cmdList}
       {/* ========== COMMAND PALETTE (Cmd+K) ========== */}
       {showCmdPalette && (() => {
         const items: CmdPaletteItem[] = [
+          { id: 'teach-lfi', label: 'Teach LFI a fact', hint: 'Add knowledge to the substrate', group: 'Actions',
+            onRun: () => { setShowTeach(true); } },
           { id: 'new-chat', label: 'New chat', hint: 'Start a fresh conversation', group: 'Actions',
             shortcut: '$mod+N',
             onRun: () => { createNewConversation(); } },
