@@ -1621,6 +1621,12 @@ ${cmdList}
     // handler can distinguish "initial connect" (silent) from "reconnect
     // after a drop" (toast). Plain ws.onopen fires for both cases.
     let hasDisconnected = false;
+    // #354 / claude-0 14:10 URGENT: debounce the "disconnected" UI flip
+    // by 3s. Most reconnects complete <2s; flipping the chip + banner
+    // immediately creates a flicker user reads as "connection is
+    // unstable." Timer is cleared on the next onopen, so a clean
+    // reconnect leaves no visible trace.
+    let pendingDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const RECONNECT_MAX_MS = 30000;
 
     const connect = () => {
@@ -1632,6 +1638,12 @@ ${cmdList}
 
       ws.onopen = () => {
         console.debug("// SCC: Chat WS OPEN");
+        // #354: cancel any pending disconnect flip — fast reconnect
+        // should leave no visible UI flicker.
+        if (pendingDisconnectTimer) {
+          clearTimeout(pendingDisconnectTimer);
+          pendingDisconnectTimer = null;
+        }
         setIsConnected(true);
         setWsReconnectAt(null);
         // c2-433 / task 264: toast on reconnect-after-drop, silent on the
@@ -1870,9 +1882,21 @@ ${cmdList}
       };
 
       ws.onclose = (ev) => {
-        console.debug("// SCC: Chat WS CLOSED:", ev.code, 'reconnect in', reconnectDelayMs, 'ms');
-        setIsConnected(false);
+        console.debug("// SCC: Chat WS CLOSED:", ev.code, ev.reason || '', 'reconnect in', reconnectDelayMs, 'ms');
         hasDisconnected = true;
+        // #354 / claude-0 14:10: DO NOT flip isConnected immediately. A
+        // 3s debounce covers the common case where reconnect completes
+        // fast. Only if the socket is still down after 3s do we flap the
+        // chip, banner, and countdown.
+        if (pendingDisconnectTimer) clearTimeout(pendingDisconnectTimer);
+        pendingDisconnectTimer = setTimeout(() => {
+          pendingDisconnectTimer = null;
+          setIsConnected(false);
+          // Schedule the banner countdown only on the delayed flip so
+          // sub-3s drops don't spam the reconnect UI.
+          const jitter = Math.floor(Math.random() * 500);
+          setWsReconnectAt(Date.now() + reconnectDelayMs + jitter);
+        }, 3000);
         // turn-trace: socket died mid-turn — terminal frame for this turn.
         if (currentTurnRef.current) {
           markResponse(currentTurnRef.current, { error: `ws_close code=${ev.code}` });
@@ -1903,18 +1927,22 @@ ${cmdList}
         // Add 0-500ms jitter so a fleet of reconnecting clients doesn't stampede.
         const jitter = Math.floor(Math.random() * 500);
         reconnectTimer = setTimeout(connect, reconnectDelayMs + jitter);
-        setWsReconnectAt(Date.now() + reconnectDelayMs + jitter);
         reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_MS);
       };
 
       ws.onerror = (ev) => {
         console.error("// SCC: Chat WS ERROR:", ev);
-        setIsConnected(false);
+        // #354: onerror typically pairs with onclose; let the
+        // debounced onclose handler own the isConnected flip.
       };
     };
 
     connect();
-    return () => { clearTimeout(reconnectTimer); chatWsRef.current?.close(); };
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (pendingDisconnectTimer) clearTimeout(pendingDisconnectTimer);
+      chatWsRef.current?.close();
+    };
   }, [isAuthenticated]);
 
   // c2-254 / #116: tick every 500ms while wsReconnectAt is set so the
@@ -3842,7 +3870,20 @@ ${cmdList}
                         }),
                       });
                       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                      showToast('Sent to LFI for ingestion');
+                      // claude-0 14:20 #377: training_actions_applied on
+                      // /api/feedback response reports how many brain.db
+                      // writes the teach triggered. Show the count if > 0.
+                      try {
+                        const d: any = await r.json();
+                        const n = typeof d?.training_actions_applied === 'number' ? d.training_actions_applied : 0;
+                        if (n > 0) {
+                          showToast(`Taught — ${n} action${n === 1 ? '' : 's'} applied`);
+                        } else {
+                          showToast('Sent to LFI for ingestion');
+                        }
+                      } catch {
+                        showToast('Sent to LFI for ingestion');
+                      }
                       logEvent('teach_fact', { len: txt.length });
                       setShowTeach(false);
                       setTeachText('');
@@ -3965,8 +4006,20 @@ ${cmdList}
                       rating: 'correct',
                       correction,
                     }),
-                  }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
-                    .catch((e) => {
+                  }).then(async r => {
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    // claude-0 14:20 #377: server now applies TrainingActions
+                    // against brain.db and returns training_actions_applied.
+                    // Surface the count so the user sees real self-improvement.
+                    try {
+                      const d: any = await r.json();
+                      const n = typeof d?.training_actions_applied === 'number' ? d.training_actions_applied : 0;
+                      const kinds: string[] = Array.isArray(d?.training_action_kinds) ? d.training_action_kinds : [];
+                      if (n > 0) {
+                        showToast(`Correction applied → ${n} action${n === 1 ? '' : 's'}${kinds.length ? ' (' + kinds.slice(0, 3).join(', ') + ')' : ''}`);
+                      }
+                    } catch { /* body missing training_actions — no-op */ }
+                  }).catch((e) => {
                       console.warn('feedback (correct) POST failed', e);
                       showToast('Correction didn\u2019t reach the server');
                     });
