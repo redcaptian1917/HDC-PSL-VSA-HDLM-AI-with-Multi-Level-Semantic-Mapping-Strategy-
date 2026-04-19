@@ -61,6 +61,7 @@ pub mod data_quality;
 pub mod persistence;
 pub mod sealed;
 pub mod ingest;
+pub mod formal;
 
 // Re-export core public types
 pub use sealed::{Sealed, Sensitive, SecretBroker};
