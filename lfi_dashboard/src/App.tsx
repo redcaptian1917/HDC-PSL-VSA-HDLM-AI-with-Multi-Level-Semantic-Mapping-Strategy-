@@ -571,13 +571,32 @@ const SovereignCommandConsole: React.FC = () => {
       import('./ShortcutsModal');
       import('./SettingsModal');
     };
+    // Tier 2: heavier views — only preload AFTER first paint settles.
+    // User report: "switching tabs quickly goes blank, then back makes
+    // it load normally." Cause: lazy chunks hadn't been fetched before
+    // the click. 6s idle-delay loads them in the background without
+    // racing first-paint.
+    const tier2 = () => {
+      import('./AdminModal');
+      import('./ClassroomView');
+      import('./FleetView');
+      import('./LibraryView');
+      import('./AuditoriumView');
+      import('./KnowledgeBrowser');
+    };
     const ric: any = (window as any).requestIdleCallback;
     if (typeof ric === 'function') {
       const id1 = ric(tier1, { timeout: 4000 });
-      return () => { (window as any).cancelIdleCallback?.(id1); };
+      // Tier 2 after tier 1 finishes + a small gap.
+      const id2 = window.setTimeout(() => ric(tier2, { timeout: 8000 }), 6000);
+      return () => {
+        (window as any).cancelIdleCallback?.(id1);
+        window.clearTimeout(id2);
+      };
     }
     const id1 = window.setTimeout(tier1, 1500);
-    return () => { window.clearTimeout(id1); };
+    const id2 = window.setTimeout(tier2, 6000);
+    return () => { window.clearTimeout(id1); window.clearTimeout(id2); };
   }, []);
 
   // Persistent settings (localStorage-backed). A single object keeps storage
@@ -594,6 +613,11 @@ const SovereignCommandConsole: React.FC = () => {
     avatarGradient: string;
     erudaMode: 'auto' | 'on' | 'off';
     developerMode: boolean;        // Gate telemetry, workstation ID, PLAN reasoning
+    /** Where to render the substrate/dev telemetry when developerMode is on.
+     *  topbar → thin strip under the header (compact, linear).
+     *  sidebar → right-side panel with full cards.
+     *  off → hide entirely even in developer mode. */
+    devUi: 'topbar' | 'sidebar' | 'off';
     defaultTier: 'Pulse' | 'Bridge' | 'BigBrain'; // Persistent model default
     compactMode: boolean;          // TUI-density mode for power users
     autoTheme: boolean;            // Follow OS prefers-color-scheme dynamically
@@ -610,6 +634,7 @@ const SovereignCommandConsole: React.FC = () => {
     avatarGradient: 'linear-gradient(135deg, #8b7bf7, #a88dff)',
     erudaMode: 'auto',
     developerMode: false,   // Telemetry + PLAN hidden by default
+    devUi: 'topbar',        // User said "I kind of like the bar under the header"
     defaultTier: 'Pulse',   // Persistent model default the user controls in Settings
     compactMode: false,
     autoTheme: false,
@@ -5780,26 +5805,9 @@ ${cmdList}
         // Bible §6.1: all tap targets ≥44px on mobile
         touchAction: 'manipulation',
       }}>
-        {/* Left: wordmark + sidebar toggle + status/inline stats.
-            2026-04-19 reshuffle: PlausiDen AI title moved to the very
-            left (was wedged between the sidebar toggle and the New
-            Chat button). Title is now the anchor, controls follow. */}
+        {/* Left: chats toggle + new chat + wordmark. 2026-04-19 reshuffle
+            per user spec — controls first, title anchors the group. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {!isMobile && (
-            <div style={{
-              fontSize: T.typography.sizeLg, fontWeight: 800,
-              letterSpacing: '0.02em', color: C.text,
-              display: 'flex', alignItems: 'center', gap: '6px',
-              marginRight: '4px',
-            }}>
-              PlausiDen <span style={{ color: C.accent }}>AI</span>
-              {isCurrentIncognito && (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label='Incognito mode active'>
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                </svg>
-              )}
-            </div>
-          )}
           <button onClick={() => setShowConvoSidebar(v => !v)}
             data-tour="chats-toggle"
             title={showConvoSidebar ? 'Hide chats sidebar (⌘B)' : 'Show chats sidebar (⌘B)'}
@@ -5845,22 +5853,34 @@ ${cmdList}
               </svg>
             </button>
           )}
-          {/* Wordmark moved to the far left of this group above. Keep
-              the mobile incognito chip here since mobile skips the
-              wordmark entirely. */}
+          {/* Wordmark — desktop only. Order is: Chats → New Chat → AI title. */}
+          {!isMobile && (
+            <div style={{
+              fontSize: T.typography.sizeLg, fontWeight: 800,
+              letterSpacing: '0.02em', color: C.text,
+              display: 'flex', alignItems: 'center', gap: '6px',
+              marginLeft: '6px',
+            }}>
+              PlausiDen <span style={{ color: C.accent }}>AI</span>
+              {isCurrentIncognito && (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label='Incognito mode active'>
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              )}
+            </div>
+          )}
           {isMobile && isCurrentIncognito && (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" title="Incognito mode active">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
           )}
-          {/* Inline stats — developer-only per design review. */}
-          {isDesktop && settings.developerMode && (
+          {/* Inline dev stats moved to a dedicated topbar strip below the
+              header (or the right sidebar, by Settings > devUi). Keeping
+              them here duplicated with the sidebar was the user's
+              complaint. */}
+          {false && isDesktop && settings.developerMode && (
             <div style={{ display: 'flex', gap: T.spacing.lg, marginLeft: '8px', fontSize: T.typography.sizeSm, color: C.textDim }}>
-              <span title={`Used ${ramUsedFmt.value} ${ramUsedFmt.unit} of ${ramTotalFmt.value} ${ramTotalFmt.unit} total`}>
-                {ramTotal > 0 ? `${ramUsedFmt.value}/${ramTotalFmt.value} ${ramTotalFmt.unit}` : `${ramFmt.value} ${ramFmt.unit}`}
-              </span>
-              <span>{stats.cpu_temp_c.toFixed(0)}{'\u00B0'}C</span>
-              <span style={{ color: tierColor(currentTier) }}>{currentTier}</span>
+              <span />
             </div>
           )}
         </div>
@@ -6400,6 +6420,43 @@ ${cmdList}
             );
           })}
         </nav>
+      )}
+
+      {/* Dev telemetry topbar strip — renders below the header when
+          developerMode is on AND devUi === 'topbar'. Replaces the
+          duplicated inline stats + right-sidebar pair. User picks the
+          style in Settings → Behavior → Dev UI. */}
+      {isDesktop && settings.developerMode && settings.devUi === 'topbar' && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: T.spacing.lg,
+          padding: `6px ${T.spacing.lg}`,
+          background: C.bgInput, borderBottom: `1px solid ${C.borderSubtle}`,
+          fontSize: T.typography.sizeXs, color: C.textDim,
+          fontFamily: T.typography.fontMono, flexShrink: 0,
+          overflowX: 'auto', whiteSpace: 'nowrap',
+        }}>
+          <span>RAM <strong style={{ color: C.text }}>
+            {ramTotal > 0 ? `${ramUsedFmt.value}/${ramTotalFmt.value} ${ramTotalFmt.unit}` : `${ramFmt.value} ${ramFmt.unit}`}
+          </strong></span>
+          <span>CPU temp <strong style={{ color: stats.cpu_temp_c > 65 ? C.red : C.green }}>
+            {stats.cpu_temp_c.toFixed(0)}°C
+          </strong></span>
+          {typeof stats.cpu_usage_pct === 'number' && (
+            <span>CPU use <strong style={{ color: stats.cpu_usage_pct >= 90 ? C.red : stats.cpu_usage_pct >= 70 ? C.yellow : C.green }}>
+              {stats.cpu_usage_pct.toFixed(0)}%
+            </strong></span>
+          )}
+          <span>Model <strong style={{ color: tierColor(currentTier) }}>{currentTier}</strong></span>
+          <span>Facts <strong style={{ color: C.text }}>{kg.facts ? compactNum(kg.facts) : '—'}</strong></span>
+          <span>Sources <strong style={{ color: C.text }}>{kg.sources || '—'}</strong></span>
+          <div style={{ flex: 1 }} />
+          <button onClick={() => setSettings(s => ({ ...s, devUi: 'off' }))}
+            title='Hide this strip (Settings → Behavior → Dev UI to re-enable)'
+            style={{
+              background: 'transparent', border: 'none', color: C.textMuted,
+              cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px',
+            }}>{'\u2715'}</button>
+        </div>
       )}
 
       {/* ========== BODY: Conversation sidebar + Chat + Right sidebar ========== */}
@@ -9114,7 +9171,7 @@ ${cmdList}
             was defined but never called — orphaned during an earlier refactor.
             Gated on isDesktop so the chat column gets full width on mobile;
             mobile users can reach admin via Cmd+K / Activity modal. */}
-        {isDesktop && renderSidebar()}
+        {isDesktop && settings.developerMode && settings.devUi === 'sidebar' && renderSidebar()}
 
         {/* RIGHT: Plan / Tasks sidebar — only when the latest assistant turn
             produced a plan, and user hasn't collapsed it. Matches the left

@@ -218,17 +218,20 @@ export const TourOverlay: React.FC<TourOverlayProps> = ({ C, isMobile, open, ste
   // use a MUCH lighter dim (0.32 vs 0.68) so the underlying content is
   // still legible — previously the user read the 68%-dimmed view as
   // a blank page.
+  // When no target resolves (step has no selector, or target isn't in the
+  // DOM yet because of lazy-loaded view), render the tooltip without any
+  // dim overlay at all — the user can still read/click the view behind
+  // it. Previously the full-viewport dim blocked the view and read as a
+  // "blank page / sitting loading" while the lazy chunk hydrated.
   const dimFocused = 'rgba(0,0,0,0.68)';
-  const dimAmbient = 'rgba(0,0,0,0.32)';
-  const dim = rect ? dimFocused : dimAmbient;
   const dimPanels: React.CSSProperties[] = rect
     ? [
-        { position: 'fixed', top: 0, left: 0, right: 0, height: rect.top, background: dim, zIndex: T.z.modal + 150 },
-        { position: 'fixed', top: rect.top, left: 0, width: rect.left, height: rect.height, background: dim, zIndex: T.z.modal + 150 },
-        { position: 'fixed', top: rect.top, left: rect.left + rect.width, right: 0, height: rect.height, background: dim, zIndex: T.z.modal + 150 },
-        { position: 'fixed', top: rect.top + rect.height, left: 0, right: 0, bottom: 0, background: dim, zIndex: T.z.modal + 150 },
+        { position: 'fixed', top: 0, left: 0, right: 0, height: rect.top, background: dimFocused, zIndex: T.z.modal + 150 },
+        { position: 'fixed', top: rect.top, left: 0, width: rect.left, height: rect.height, background: dimFocused, zIndex: T.z.modal + 150 },
+        { position: 'fixed', top: rect.top, left: rect.left + rect.width, right: 0, height: rect.height, background: dimFocused, zIndex: T.z.modal + 150 },
+        { position: 'fixed', top: rect.top + rect.height, left: 0, right: 0, bottom: 0, background: dimFocused, zIndex: T.z.modal + 150 },
       ]
-    : [{ position: 'fixed', inset: 0, background: dim, zIndex: T.z.modal + 150 }];
+    : [];
 
   return (
     <>
