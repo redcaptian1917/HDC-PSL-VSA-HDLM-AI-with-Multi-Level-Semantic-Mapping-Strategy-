@@ -5142,6 +5142,124 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
 
     // ---- Ingest batch control surface (#326) ----
 
+    /// POST /api/ingest/paste
+    /// Body: { title, body, source?, tag?, min_len? }
+    ///
+    /// #406 Paste-to-ingest. Splits the pasted body into sentences, up-
+    /// serts each as a fact with source='paste' (or the provided name),
+    /// returns a per-sentence report with the generated keys.
+    ///
+    /// Use case: user pastes a wikipedia article, a documentation block,
+    /// notes from a meeting, etc. — LFI absorbs it directly without
+    /// requiring a full ingest job or corpus parser. Gateway to #373
+    /// PDF/DOCX/HTML ingest (those pipelines will route through here
+    /// once they've extracted text).
+    ///
+    /// Bounds: body ≤ 200_000 chars (paste cap), title ≤ 200 chars,
+    /// each sentence capped 10..=1000 chars before upsert (too short =
+    /// noise, too long = likely an unsegmented paragraph). Confidence
+    /// 0.75 — lower than user_correction (0.95) because paste hasn't
+    /// been validated beyond the act of pasting.
+    async fn ingest_paste_handler(
+        State(state): State<Arc<AppState>>,
+        Json(body): Json<serde_json::Value>,
+    ) -> impl IntoResponse {
+        let title = body.get("title").and_then(|v| v.as_str())
+            .unwrap_or("paste").trim();
+        let txt = body.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let source_name = body.get("source").and_then(|v| v.as_str())
+            .unwrap_or("paste").trim();
+        let tag = body.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+        let min_len = body.get("min_len").and_then(|v| v.as_u64())
+            .unwrap_or(10).clamp(5, 200) as usize;
+
+        if title.len() > 200 {
+            return axum::Json(json!({"ok": false, "error": "title > 200 chars"}));
+        }
+        if source_name.is_empty() || source_name.len() > 40 {
+            return axum::Json(json!({"ok": false, "error": "source name must be 1..=40 chars"}));
+        }
+        if tag.len() > 40 {
+            return axum::Json(json!({"ok": false, "error": "tag > 40 chars"}));
+        }
+        if txt.is_empty() || txt.len() > 200_000 {
+            return axum::Json(json!({"ok": false, "error": "body must be 1..=200000 chars"}));
+        }
+
+        // SECURITY: scrub secrets from the pasted body before persistence.
+        use crate::intelligence::secret_scanner::SecretScanner;
+        let scanner = SecretScanner::new();
+        let cleaned = scanner.redact(txt);
+        let had_secret = cleaned != txt;
+        if had_secret {
+            info!("// PASTE-INGEST: scrubbed secrets from pasted body (title={:?})",
+                crate::truncate_str(title, 60));
+        }
+
+        // Split on sentence terminators — simple regex-free split to avoid
+        // a regex dep. Handles '.', '!', '?', and newlines. Keeps the
+        // terminator on the sentence so "Mr. Smith." stays readable.
+        let mut sentences: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for ch in cleaned.chars() {
+            current.push(ch);
+            if matches!(ch, '.' | '!' | '?' | '\n') {
+                let trimmed = current.trim().to_string();
+                if trimmed.len() >= min_len && trimmed.len() <= 1000 {
+                    sentences.push(trimmed);
+                }
+                current.clear();
+            }
+        }
+        let trimmed_tail = current.trim().to_string();
+        if trimmed_tail.len() >= min_len && trimmed_tail.len() <= 1000 {
+            sentences.push(trimmed_tail);
+        }
+
+        if sentences.is_empty() {
+            return axum::Json(json!({
+                "ok": false,
+                "error": format!("no sentences extracted (min_len={}, max=1000)", min_len),
+            }));
+        }
+
+        // Generate per-sentence keys + persist. Cap total ingested at
+        // 2000 rows per paste so a pathological body can't spam the
+        // facts table in one request.
+        let cap = sentences.len().min(2000);
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+        let slug: String = title.chars()
+            .take(24)
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+            .collect();
+        let mut keys: Vec<String> = Vec::with_capacity(cap);
+        let tag_suffix = if tag.is_empty() { String::new() } else { format!("_{}", tag) };
+        for (i, sentence) in sentences.iter().take(cap).enumerate() {
+            let key = format!("paste_{}_{}_{:04}{}", slug, secs, i, tag_suffix);
+            state.db.upsert_fact(&key, sentence, source_name, 0.75);
+            keys.push(key);
+        }
+        let _ = state.db.audit_chain_append(
+            "ingest", "Info", "paste",
+            "paste_ingested",
+            &format!("title={} count={} source={} had_secret={}",
+                crate::truncate_str(title, 80), cap, source_name, had_secret),
+        );
+
+        axum::Json(json!({
+            "ok": true,
+            "ingested_count": cap,
+            "skipped": sentences.len().saturating_sub(cap),
+            "title": title,
+            "source": source_name,
+            "tag": tag,
+            "secrets_scrubbed": had_secret,
+            "sample_keys": keys.iter().take(5).cloned().collect::<Vec<_>>(),
+        }))
+    }
+
     /// POST /api/ingest/start
     /// Body: { run_id, corpus, tuples_requested?, pid? }
     async fn ingest_start_handler(
@@ -6398,6 +6516,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         .route("/api/audit/chain/verify", get(audit_chain_verify_handler))
         .route("/api/corpus/marketplace", get(corpus_marketplace_handler))
         .route("/api/library/quality", get(library_quality_handler))
+        .route("/api/ingest/paste", post(ingest_paste_handler))
         .route("/api/ingest/start", post(ingest_start_handler))
         .route("/api/ingest/progress", post(ingest_progress_handler))
         .route("/api/ingest/finish", post(ingest_finish_handler))
