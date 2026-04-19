@@ -5845,6 +5845,24 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         let limit: i64 = params.get("limit")
             .and_then(|s| s.parse().ok()).unwrap_or(50).min(500);
 
+        // #403 5-minute response cache. The sample-50k + GROUP BY + JOIN
+        // takes 5-10s in prod — too slow for the Library tab's
+        // AbortController. Cache the full payload and serve it from
+        // memory; refresh lazily when stale. Serves stale-while-revalidate
+        // in the warming window if a request arrives during refresh.
+        static MARKETPLACE_CACHE: std::sync::OnceLock<
+            parking_lot::Mutex<Option<(std::time::Instant, serde_json::Value)>>
+        > = std::sync::OnceLock::new();
+        let cache = MARKETPLACE_CACHE.get_or_init(|| parking_lot::Mutex::new(None));
+        {
+            let guard = cache.lock();
+            if let Some((t, value)) = guard.as_ref() {
+                if t.elapsed() < std::time::Duration::from_secs(300) {
+                    return axum::Json(value.clone());
+                }
+            }
+        }
+
         let conn = match state.db.conn.lock() {
             Ok(c) => c,
             Err(_) => return axum::Json(json!({"error": "db lock"})),
@@ -5919,7 +5937,7 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
             b_s.partial_cmp(&a_s).unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        axum::Json(json!({
+        let value = json!({
             "sources": items,
             "count": items.len(),
             "sample_size": 50_000,
@@ -5931,7 +5949,10 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
                 "size_weight": 0.1,
                 "size_normalization": "log10(count+1) / 7.0 clamped to [0, 1]",
             },
-        }))
+        });
+        // Store in the cache for the next 5 minutes.
+        *cache.lock() = Some((std::time::Instant::now(), value.clone()));
+        axum::Json(value)
     }
 
     // ---- Merkle-chained security audit (#305) ----
