@@ -47,11 +47,12 @@ import { useMessageEdit } from './useMessageEdit';
 import { useChatStreaming } from './useChatStreaming';
 // c2-433: TrainingDashboardContent only renders inside the showTraining
 // modal — lazy so the chat-only paint doesn't pay the chart bytes.
-const TrainingDashboardContent = React.lazy(() => import('./TrainingDashboard').then(m => ({ default: m.TrainingDashboardContent })));
+import { lazyWithRetry } from './lazyWithRetry';
+const TrainingDashboardContent = lazyWithRetry(() => import('./TrainingDashboard').then(m => ({ default: m.TrainingDashboardContent })), 'TrainingDashboard');
 import { AppErrorBoundary } from './AppErrorBoundary';
 // c2-433: LoginScreen only renders on the unauth path (passwordless mode
 // keeps isAuthenticated=true by default). Lazy so the common case skips it.
-const LoginScreen = React.lazy(() => import('./LoginScreen').then(m => ({ default: m.LoginScreen })));
+const LoginScreen = lazyWithRetry(() => import('./LoginScreen').then(m => ({ default: m.LoginScreen })), 'LoginScreen');
 import { SKILLS, AVATAR_PRESETS, type Skill as CatalogSkill } from './catalogs';
 import { SystemMessage, WebMessage, ToolMessage, UserMessage, AssistantMessage } from './MessageBubble';
 // Code-splitting: the overlays below are only rendered on user action, so we
@@ -61,50 +62,50 @@ import { DARK, THEMES } from './themes';
 import { T } from './tokens';
 // c2-433: WelcomeScreen lazy — only renders when there are zero messages
 // in the current convo. First-paint of an existing convo doesn't pay for it.
-const WelcomeScreen = React.lazy(() => import('./WelcomeScreen').then(m => ({ default: m.WelcomeScreen })));
+const WelcomeScreen = lazyWithRetry(() => import('./WelcomeScreen').then(m => ({ default: m.WelcomeScreen })), 'WelcomeScreen');
 // c2-433: 4 telemetry-sidebar panels are desktop-sidebar-only. Mobile +
 // non-developer-mode visits don't render them — lazy so the initial paint
 // doesn't pay for the DataTable + chart bytes they pull in. They render
 // inside renderSidebar() which is gated on isDesktop, and the parent
 // React.Suspense boundary catches the chunk loads.
-const FactsPanel = React.lazy(() => import('./FactsPanel').then(m => ({ default: m.FactsPanel })));
-const QosPanel = React.lazy(() => import('./QosPanel').then(m => ({ default: m.QosPanel })));
-const DomainsPanel = React.lazy(() => import('./DomainsPanel').then(m => ({ default: m.DomainsPanel })));
-const AccuracyPanel = React.lazy(() => import('./AccuracyPanel').then(m => ({ default: m.AccuracyPanel })));
+const FactsPanel = lazyWithRetry(() => import('./FactsPanel').then(m => ({ default: m.FactsPanel })), 'FactsPanel');
+const QosPanel = lazyWithRetry(() => import('./QosPanel').then(m => ({ default: m.QosPanel })), 'QosPanel');
+const DomainsPanel = lazyWithRetry(() => import('./DomainsPanel').then(m => ({ default: m.DomainsPanel })), 'DomainsPanel');
+const AccuracyPanel = lazyWithRetry(() => import('./AccuracyPanel').then(m => ({ default: m.AccuracyPanel })), 'AccuracyPanel');
 // Full-screen admin console (c0-017). Lazy because it bundles 6 tabs of
 // panels that are only seen when the user clicks the Admin entry.
-const AdminModal = React.lazy(() => import('./AdminModal').then(m => ({ default: m.AdminModal })));
+const AdminModal = lazyWithRetry(() => import('./AdminModal').then(m => ({ default: m.AdminModal })), 'AdminModal');
 import type { AdminTab } from './AdminModal';
 // Classroom full page (c0-027). Lazy — not visited until user switches view.
-const ClassroomView = React.lazy(() => import('./ClassroomView').then(m => ({ default: m.ClassroomView })));
+const ClassroomView = lazyWithRetry(() => import('./ClassroomView').then(m => ({ default: m.ClassroomView })), 'ClassroomView');
 // c0-037 #2 / c2-328: dedicated Fleet page. Lazy so the orchestrator SDK
 // payload doesn't bloat the initial chat bundle.
-const FleetView = React.lazy(() => import('./FleetView').then(m => ({ default: m.FleetView })));
+const FleetView = lazyWithRetry(() => import('./FleetView').then(m => ({ default: m.FleetView })), 'FleetView');
 // c0-037 #3 / c2-329: dedicated Library page for the 365-source inventory.
-const LibraryView = React.lazy(() => import('./LibraryView').then(m => ({ default: m.LibraryView })));
+const LibraryView = lazyWithRetry(() => import('./LibraryView').then(m => ({ default: m.LibraryView })), 'LibraryView');
 // c0-037 #12 / c2-331: Auditorium — AVP-2 audit state surface.
-const AuditoriumView = React.lazy(() => import('./AuditoriumView').then(m => ({ default: m.AuditoriumView })));
+const AuditoriumView = lazyWithRetry(() => import('./AuditoriumView').then(m => ({ default: m.AuditoriumView })), 'AuditoriumView');
 import { TelemetryCard } from './TelemetryCards';
 // c2-433: 3 more telemetry-sidebar components, lazy for the same reason
 // as the panels above. All render inside renderSidebar() (isDesktop only).
-const SidebarStatus = React.lazy(() => import('./SidebarStatus').then(m => ({ default: m.SidebarStatus })));
-const SubstrateTelemetry = React.lazy(() => import('./SubstrateTelemetry').then(m => ({ default: m.SubstrateTelemetry })));
-const AdminActions = React.lazy(() => import('./AdminActions').then(m => ({ default: m.AdminActions })));
+const SidebarStatus = lazyWithRetry(() => import('./SidebarStatus').then(m => ({ default: m.SidebarStatus })), 'SidebarStatus');
+const SubstrateTelemetry = lazyWithRetry(() => import('./SubstrateTelemetry').then(m => ({ default: m.SubstrateTelemetry })), 'SubstrateTelemetry');
+const AdminActions = lazyWithRetry(() => import('./AdminActions').then(m => ({ default: m.AdminActions })), 'AdminActions');
 import { renderMessageBody as renderMdBody, type MarkdownCtx } from './markdown';
 import { useTicTacToe } from './useTicTacToe';
 import { useStatusPoll, useQualityPoll, useSysInfoPoll } from './usePolls';
 import { ChatView, type ChatViewHandle } from './ChatView';
-const ShortcutsModal = React.lazy(() => import('./ShortcutsModal').then(m => ({ default: m.ShortcutsModal })));
+const ShortcutsModal = lazyWithRetry(() => import('./ShortcutsModal').then(m => ({ default: m.ShortcutsModal })), 'ShortcutsModal');
 
-const TicTacToeModal = React.lazy(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })));
+const TicTacToeModal = lazyWithRetry(() => import('./TicTacToeModal').then(m => ({ default: m.TicTacToeModal })), 'TicTacToeModal');
 // c2-356 / task #67: in-browser xterm.js terminal. Lazy because xterm is
 // ~200 KB and most sessions never open it.
-const XTermModal = React.lazy(() => import('./XTermModal').then(m => ({ default: m.XTermModal })));
-const KnowledgeBrowser = React.lazy(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })));
+const XTermModal = lazyWithRetry(() => import('./XTermModal').then(m => ({ default: m.XTermModal })), 'XTermModal');
+const KnowledgeBrowser = lazyWithRetry(() => import('./KnowledgeBrowser').then(m => ({ default: m.KnowledgeBrowser })), 'KnowledgeBrowser');
 import type { KnowledgeDue } from './KnowledgeBrowser';
-const ActivityModal = React.lazy(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })));
-const CommandPalette = React.lazy(() => import('./CommandPalette').then(m => ({ default: m.CommandPalette })));
-const SettingsModal = React.lazy(() => import('./SettingsModal').then(m => ({ default: m.SettingsModal })));
+const ActivityModal = lazyWithRetry(() => import('./ActivityModal').then(m => ({ default: m.ActivityModal })), 'ActivityModal');
+const CommandPalette = lazyWithRetry(() => import('./CommandPalette').then(m => ({ default: m.CommandPalette })), 'CommandPalette');
+const SettingsModal = lazyWithRetry(() => import('./SettingsModal').then(m => ({ default: m.SettingsModal })), 'SettingsModal');
 
 // ---- Responsive hook ----
 type Breakpoint = 'mobile' | 'tablet' | 'desktop';
@@ -538,24 +539,36 @@ const SovereignCommandConsole: React.FC = () => {
   // polling hooks defined later (useStatusPoll / useQualityPoll / useSysInfoPoll).
   // Nothing else ever writes to these, so no local state is needed.
 
-  // c2-419: preload the frequently-opened modals while the browser is idle.
-  // React.lazy fetches the chunk on first render of the lazy element, which
-  // adds a visible stall on mobile when you tap the Ctrl+K palette affordance.
-  // Warming the module cache on idle makes the first open feel instant —
-  // the chunk is already downloaded and parsed. Skipped for the heavy ones
-  // (AdminModal, XTermModal, ClassroomView) which stay pay-on-demand.
+  // c2-419 / c2-501: preload chunks during browser idle so first open feels
+  // instant. Two tiers — Tier 1 fires asap (small + likely-needed: palette,
+  // shortcuts, settings). Tier 2 fires after first idle window completes
+  // (heavier destinations: Admin, Classroom, Activity, KB). XTermModal
+  // (~340 KB) stays pay-on-demand. lazyWithRetry survives the rare case
+  // where the chunk hash rotated mid-session.
   useEffect(() => {
-    const preload = () => {
+    const tier1 = () => {
       import('./CommandPalette');
       import('./ShortcutsModal');
       import('./SettingsModal');
     };
-    if (typeof (window as any).requestIdleCallback === 'function') {
-      const id = (window as any).requestIdleCallback(preload, { timeout: 4000 });
-      return () => (window as any).cancelIdleCallback?.(id);
+    const tier2 = () => {
+      import('./AdminModal');
+      import('./ClassroomView');
+      import('./ActivityModal');
+      import('./KnowledgeBrowser');
+    };
+    const ric: any = (window as any).requestIdleCallback;
+    if (typeof ric === 'function') {
+      const id1 = ric(tier1, { timeout: 4000 });
+      const id2 = ric(() => ric(tier2, { timeout: 8000 }), { timeout: 6000 });
+      return () => {
+        (window as any).cancelIdleCallback?.(id1);
+        (window as any).cancelIdleCallback?.(id2);
+      };
     }
-    const id = window.setTimeout(preload, 2000);
-    return () => window.clearTimeout(id);
+    const id1 = window.setTimeout(tier1, 1500);
+    const id2 = window.setTimeout(tier2, 4000);
+    return () => { window.clearTimeout(id1); window.clearTimeout(id2); };
   }, []);
 
   // Persistent settings (localStorage-backed). A single object keeps storage
@@ -4934,7 +4947,9 @@ ${cmdList}
         // Local error boundary: if any Admin panel throws (bad shape from
         // /api/admin/dashboard, unexpected field, etc.) we only lose the
         // modal's contents, not the whole chat UI.
-        <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
+        <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}
+          inlineMode label="AdminModal"
+          onReset={() => { setShowAdmin(false); setAdminInitialTab('dashboard'); }}>
           <AdminModal
             C={C}
             host={host}
@@ -4942,6 +4957,7 @@ ${cmdList}
             sourcesCount={kg.sources}
             localEvents={localEvents}
             initialTab={adminInitialTab}
+            isMobile={isMobile}
             onClose={() => { setShowAdmin(false); setAdminInitialTab('dashboard'); }}
           />
         </AppErrorBoundary>
@@ -6428,7 +6444,7 @@ ${cmdList}
             {/* Local boundary — Classroom is data-heavy and renders third-
                 party-shaped JSON from /api/admin/dashboard. A malformed field
                 should scope to the Classroom pane, not the whole app. */}
-            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
+            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent} inlineMode label="ClassroomView">
               <ClassroomView C={C} host={host} isDesktop={isDesktop} localEvents={localEvents} onOpenFactKey={openFactKey} initialSub={classroomInitialSub} />
             </AppErrorBoundary>
           </React.Suspense>
@@ -6442,7 +6458,7 @@ ${cmdList}
               Loading fleet…
             </div>
           }>
-            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
+            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent} inlineMode label="FleetView">
               <FleetView C={C} host={host} isDesktop={isDesktop} />
             </AppErrorBoundary>
           </React.Suspense>
@@ -6456,7 +6472,7 @@ ${cmdList}
               Loading library…
             </div>
           }>
-            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
+            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent} inlineMode label="LibraryView">
               <LibraryView C={C} host={host} isDesktop={isDesktop} />
             </AppErrorBoundary>
           </React.Suspense>
@@ -6471,7 +6487,7 @@ ${cmdList}
               Loading auditorium…
             </div>
           }>
-            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent}>
+            <AppErrorBoundary themeBg={C.bg} themeText={C.text} themeAccent={C.accent} inlineMode label="AuditoriumView">
               <AuditoriumView C={C} host={host} isDesktop={isDesktop} />
             </AppErrorBoundary>
           </React.Suspense>

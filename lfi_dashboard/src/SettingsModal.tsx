@@ -78,16 +78,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       position: 'fixed', inset: 0, zIndex: T.z.modal,
       background: 'rgba(0,0,0,0.55)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: T.spacing.lg,
+      // c2-433 mobile-fix: smaller backdrop padding on mobile so the
+      // dialog gets the full viewport width minus an 8px gutter each
+      // side instead of ~32px each side.
+      padding: isMobile ? T.spacing.xs : T.spacing.lg,
     }}>
     <div ref={dialogRef} role='dialog' aria-modal='true' aria-labelledby='scc-settings-title'
       onClick={(e) => e.stopPropagation()}
       style={{
-        width: '100%', maxWidth: '520px',
+        // c2-433 mobile-fix: dialog padding dropped from T.spacing.xl to
+        // T.spacing.md on mobile — the old padding ate 64px of a 320px
+        // viewport, leaving < 256px for content (tabs row + tier picker
+        // overflowed). minWidth: 0 ensures the dialog can shrink under
+        // its intrinsic width.
+        width: '100%', maxWidth: '520px', minWidth: 0,
         background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: T.radii.xxl,
-        padding: isMobile ? T.spacing.xl : '28px', color: C.text,
+        padding: isMobile ? T.spacing.md : '28px', color: C.text,
         boxShadow: T.shadows.modal,
         maxHeight: '90dvh', overflowY: 'auto',
+        boxSizing: 'border-box',
       }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
         <h2 id='scc-settings-title' style={{ margin: 0, fontSize: '15px', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Settings</h2>
@@ -118,7 +127,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         };
         return (
           <div role='tablist' aria-label='Settings sections' onKeyDown={onTabKey}
-            style={{ display: 'flex', gap: '4px', borderBottom: `1px solid ${C.borderSubtle}`, marginBottom: '18px' }}>
+            style={{ display: 'flex', gap: '4px', borderBottom: `1px solid ${C.borderSubtle}`, marginBottom: '18px', flexWrap: 'wrap' }}>
             {TABS.map(t => {
               const active = tab === t.id;
               return (
@@ -205,7 +214,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: T.spacing.md,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(60px, 1fr))',
+              gap: T.spacing.md,
               marginTop: '14px',
             }}>
               {AVATAR_PRESETS.map((g, i) => {
@@ -258,7 +269,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             Theme {settings.autoTheme && '(auto mode active)'}
           </label>
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: T.spacing.md, marginTop: '10px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: T.spacing.md, marginTop: '10px',
             opacity: settings.autoTheme ? 0.55 : 1, pointerEvents: settings.autoTheme ? 'none' : 'auto',
           }}>
             {([
@@ -460,7 +473,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
             <label style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Default Model</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: T.spacing.sm, marginTop: '8px' }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))',
+              gap: T.spacing.sm, marginTop: '8px',
+            }}>
               {(['Pulse','Bridge','BigBrain'] as const).map(tier => {
                 const picked = settings.defaultTier === tier;
                 return (
@@ -512,7 +529,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       {tab === 'data' && (
         <div role='tabpanel' aria-label='Data'>
           <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>Export</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: T.spacing.sm }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: T.spacing.sm }}>
             <button onClick={onExportEvents}
               style={{
                 padding: T.spacing.md, background: C.accentBg, border: `1px solid ${C.accentBorder}`,
@@ -570,7 +587,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           <div style={{ marginTop: '22px', paddingTop: '16px', borderTop: `1px solid ${C.borderSubtle}` }}>
             <div style={{ fontSize: T.typography.sizeXs, fontWeight: 700, color: C.red, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>Danger zone</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: T.spacing.sm }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: T.spacing.sm }}>
               <button onClick={onClearHistory}
                 style={{
                   padding: T.spacing.md, background: C.redBg, border: `1px solid ${C.redBorder}`,

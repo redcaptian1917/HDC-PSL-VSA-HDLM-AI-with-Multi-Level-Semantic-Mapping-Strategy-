@@ -93,6 +93,10 @@ export interface AdminModalProps {
   // Optional client-side event log. Used as a fallback source in the Logs
   // tab when /api/admin/logs is unavailable, so users still see something.
   localEvents?: Array<{ t: number; kind: string; data?: any }>;
+  // c2-433 mobile-fix: when true, backdrop padding collapses + header
+  // padding halves so the 10-tab TabBar + dashboard grid get maximum
+  // viewport width.
+  isMobile?: boolean;
 }
 
 const fmtBytes = (n?: number): string => {
@@ -114,7 +118,7 @@ const pctNorm = (raw: number | undefined): number | null => {
 };
 
 export const AdminModal: React.FC<AdminModalProps> = ({
-  C, host, onClose, factsCount, sourcesCount, initialTab = 'dashboard', localEvents = [],
+  C, host, onClose, factsCount, sourcesCount, initialTab = 'dashboard', localEvents = [], isMobile = false,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(true, dialogRef);
@@ -384,7 +388,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         position: 'fixed', inset: 0, zIndex: T.z.modal + 40,
         background: C.overlayBg,
         display: 'flex', alignItems: 'stretch', justifyContent: 'center',
-        padding: T.spacing.lg,
+        // c2-433 mobile: zero backdrop padding on mobile so the admin
+        // body fills the viewport. Desktop keeps the 16-24px gutter.
+        padding: isMobile ? 0 : T.spacing.lg,
       }}>
       <div ref={dialogRef} role='dialog' aria-modal='true' aria-labelledby='scc-admin-title'
         onClick={(e) => e.stopPropagation()}
