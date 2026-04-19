@@ -20,7 +20,7 @@ import { TabBar } from './components/TabBar';
 import { DataTable } from './components';
 import type { Column } from './components';
 // c2-433: diag ring buffer — consumed by the Diag tab.
-import { diag } from './diag';
+import { diag, reportUiError } from './diag';
 import type { DiagEntry, DiagLevel } from './diag';
 
 // Full-screen admin modal per c0-017. Six tabs: Dashboard / Domains /
@@ -186,8 +186,37 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [lastLoadedAt, setLastLoadedAt] = useState<Partial<Record<AdminTab, number>>>({});
 
   const fetchJson = async <T,>(path: string, signal: AbortSignal, port: number = 3000): Promise<T> => {
-    const res = await fetch(`http://${host}:${port}${path}`, { signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const url = `http://${host}:${port}${path}`;
+    let res: Response;
+    try {
+      res = await fetch(url, { signal });
+    } catch (e: any) {
+      // c0-ask-2 / #403: network-level failures (backend down, CORS,
+      // DNS) should notify backend *if* we have another route. When the
+      // backend is down entirely this POST also fails silently — fine.
+      // Don't report on abort: the caller canceled intentionally.
+      if (e?.name !== 'AbortError') {
+        try {
+          reportUiError({
+            source: 'fetchJson',
+            message: String(e?.message || e),
+            url, method: 'GET',
+            stack: e?.stack,
+          });
+        } catch { /* never break */ }
+      }
+      throw e;
+    }
+    if (!res.ok) {
+      try {
+        reportUiError({
+          source: 'fetchJson',
+          message: `HTTP ${res.status}`,
+          url, method: 'GET', status: res.status,
+        });
+      } catch { /* never break */ }
+      throw new Error(`HTTP ${res.status}`);
+    }
     // Guard against an SPA catch-all that returns index.html on an
     // unknown API path — .json() would throw "Unexpected token '<',
     // '<!DOCTYPE ...'". Surface a friendlier message so the user knows
@@ -195,6 +224,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     const ct = res.headers.get('content-type') || '';
     if (!ct.includes('json')) {
       const preview = (await res.text()).slice(0, 80).replace(/\s+/g, ' ');
+      try {
+        reportUiError({
+          source: 'fetchJson',
+          message: `non-JSON response (${ct || 'unknown'})`,
+          url, method: 'GET', status: res.status,
+          extra: { preview },
+        });
+      } catch { /* never break */ }
       throw new Error(`Endpoint returned ${ct || 'non-JSON'} (preview: ${preview}…) — route likely not registered on backend.`);
     }
     return res.json() as Promise<T>;

@@ -1897,15 +1897,35 @@ ${cmdList}
             const t = currentTurnRef.current;
             requestAnimationFrame(() => { markRendered(t); });
             currentTurnRef.current = null;
-            applyToStreamingConvo(prev => [...prev, {
-              id: msgId(), role: 'assistant',
-              content: msg.content || '',
-              mode: msg.mode, confidence: msg.confidence,
-              tier: msg.tier, intent: msg.intent,
-              reasoning: msg.reasoning, plan: msg.plan,
-              conclusion_id: msg.conclusion_id,
-              timestamp: Date.now(),
-            }]);
+            // c0-382 / #384: frame order is chat_chunk (0..N) → chat_response
+            // → chat_done. When chunks already seeded a _streaming:true bubble
+            // we must REPLACE it with the canonical full content + metadata,
+            // not append a new one (that duplicates the bubble). If no
+            // streaming bubble exists (short replies skip streaming by the
+            // 40-char / 6-word gate), fall through to append.
+            applyToStreamingConvo(prev => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === 'assistant' && (last as any)._streaming) {
+                const { _streaming, ...clean } = last as any;
+                return [...prev.slice(0, -1), {
+                  ...clean,
+                  content: msg.content || clean.content,
+                  mode: msg.mode, confidence: msg.confidence,
+                  tier: msg.tier, intent: msg.intent,
+                  reasoning: msg.reasoning, plan: msg.plan,
+                  conclusion_id: msg.conclusion_id,
+                }];
+              }
+              return [...prev, {
+                id: msgId(), role: 'assistant',
+                content: msg.content || '',
+                mode: msg.mode, confidence: msg.confidence,
+                tier: msg.tier, intent: msg.intent,
+                reasoning: msg.reasoning, plan: msg.plan,
+                conclusion_id: msg.conclusion_id,
+                timestamp: Date.now(),
+              }];
+            });
             // Don't sync tier from chat replies — user's selection in the
             // input-bar model dropdown is authoritative. Syncing here caused
             // the "snaps back" bug because the backend was reporting the tier

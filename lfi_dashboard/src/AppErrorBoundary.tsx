@@ -1,6 +1,6 @@
 import React from 'react';
 import { T } from './tokens';
-import { diag, sendDiagReport } from './diag';
+import { diag, sendDiagReport, reportUiError } from './diag';
 import { clearChunkReloadFlag } from './lazyWithRetry';
 
 // Lighten the fg color for success-state button label (avoids pink-on-
@@ -73,6 +73,20 @@ export class AppErrorBoundary extends React.Component<
         retryCount: this.state.retryCount,
       });
     } catch { /* diag must never break the boundary */ }
+    // c0-ask-2 / #403: notify backend so operators see the broken surface.
+    try {
+      reportUiError({
+        source: 'error-boundary',
+        message: `${label} caught: ${error.message || error}`,
+        stack: error.stack,
+        extra: {
+          label,
+          inlineMode: !!this.props.inlineMode,
+          componentStack: info?.componentStack,
+          retryCount: this.state.retryCount,
+        },
+      });
+    } catch { /* never break */ }
     this.setState({ componentStack: info?.componentStack ?? null });
   }
   reset = () => {

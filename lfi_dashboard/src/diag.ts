@@ -182,10 +182,27 @@ export const diag = {
         column: ev.colno,
         stack: ev.error?.stack,
       });
+      // c0-ask-2 / #403: ping backend immediately so operators see
+      // broken pages without DevTools. Deduped + rate-limited inside.
+      try {
+        reportUiError({
+          source: 'window.error',
+          message: ev.message || 'unknown',
+          stack: ev.error?.stack,
+          extra: { file: ev.filename, line: ev.lineno, column: ev.colno },
+        });
+      } catch { /* never break logging */ }
     });
     window.addEventListener('unhandledrejection', (ev) => {
       const reason: any = ev.reason;
       emit('error', 'unhandled-rejection', String(reason?.message || reason || 'unknown rejection'), reason);
+      try {
+        reportUiError({
+          source: 'unhandled-rejection',
+          message: String(reason?.message || reason || 'unknown rejection'),
+          stack: reason?.stack,
+        });
+      } catch { /* never break logging */ }
     });
     emit('info', 'diag', 'installed', {
       ua: navigator.userAgent,
@@ -268,6 +285,66 @@ export async function sendDiagReport(opts: SendReportOpts = {}): Promise<boolean
   }
   diag.warn('diag-report', 'all endpoints unreachable or returned non-2xx', { tried: REPORT_PATHS });
   return false;
+}
+
+// c0-ask-2 / #403: per-error POST to /api/diag/ui-error. Separate from
+// sendDiagReport() (which ships the whole ring buffer on threshold or
+// manual); this fires ONE POST per error so operators see every broken
+// page in near-real-time without DevTools. Shape matches claude-0's
+// backend contract: {source, message, url?, stack?, extra?, user_agent?}.
+// Fire-and-forget with 3s timeout — never blocks the app.
+interface UiErrorReport {
+  source: string;                   // 'window.error' | 'unhandled-rejection' | 'error-boundary' | 'fetchJson' | etc
+  message: string;
+  url?: string;                     // request URL for fetch failures
+  method?: string;                  // HTTP method if applicable
+  status?: number;                  // HTTP status if applicable
+  stack?: string;
+  extra?: Record<string, unknown>;  // free-form context
+}
+
+const UI_ERROR_PATH = '/api/diag/ui-error';
+// Crude per-session dedup: same source+message within 5s is ignored so
+// a render loop doesn't flood the backend with identical rows.
+const recentUiErrors = new Map<string, number>();
+const UI_ERROR_DEDUP_MS = 5000;
+
+export function reportUiError(r: UiErrorReport): void {
+  if (typeof window === 'undefined') return;
+  const key = `${r.source}|${(r.message || '').slice(0, 200)}`;
+  const now = Date.now();
+  const last = recentUiErrors.get(key) || 0;
+  if (now - last < UI_ERROR_DEDUP_MS) return;
+  recentUiErrors.set(key, now);
+  // Prune map when it grows — bounded memory.
+  if (recentUiErrors.size > 200) {
+    const cutoff = now - UI_ERROR_DEDUP_MS * 4;
+    for (const [k, t] of recentUiErrors) {
+      if (t < cutoff) recentUiErrors.delete(k);
+    }
+  }
+  const host = window.location.hostname || 'localhost';
+  const body = JSON.stringify({
+    source: r.source,
+    message: String(r.message).slice(0, 2000),
+    url: r.url || window.location.href,
+    method: r.method,
+    status: r.status,
+    user_agent: navigator.userAgent,
+    stack: r.stack ? String(r.stack).slice(0, 4000) : undefined,
+    extra: r.extra ? safeClone(r.extra) : undefined,
+  });
+  // Fire and forget. Timeout 3s so a dead backend doesn't leak handles.
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 3000);
+  fetch(`http://${host}:3000${UI_ERROR_PATH}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    signal: ctrl.signal,
+    keepalive: true,   // let browsers flush on page-unload
+  }).catch(() => { /* silent — never break caller */ })
+    .finally(() => clearTimeout(tid));
 }
 
 // Auto-report hook: when errors cross a threshold, fire a one-shot
