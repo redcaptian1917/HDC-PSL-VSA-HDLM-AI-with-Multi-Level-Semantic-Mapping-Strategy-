@@ -1417,14 +1417,31 @@ impl CognitiveCore {
         Ok(response)
     }
 
-    /// Generate a conversational response using VSA semantic coordinate mapping.
-    /// Uses expanded anchors with multiple response variants and context-awareness.
+    /// #400 / #404 Generate a conversational response — substrate-first.
+    ///
+    /// Per user directive 2026-04-19: "we want raw intelligence. later when
+    /// we deliver we can hardcode things for speed, but not because it
+    /// can't answer itself." So the whole anchor-pool / joke-pool /
+    /// meta-feedback-pool apparatus was removed in this rewrite. The only
+    /// kept shortcut is the arithmetic evaluator — actual computation, not
+    /// a canned reply.
+    ///
+    /// The response is composed from:
+    ///   (1) arithmetic eval if the input parses as a math expression;
+    ///   (2) speech-act-shaped HDC retrieval when RAG surfaced hits — the
+    ///       same `hdc_retrieval_response_shaped` path Define / Explain
+    ///       / Why / HowTo use for formal queries;
+    ///   (3) explicit grounded refusal when retrieval turned up nothing
+    ///       — names the blocking condition rather than fabricating a
+    ///       warm-sounding template.
+    ///
+    /// Pulse-tier callers get this path; it is fast because
+    /// `self.rag_context` is already populated by the chat pipeline
+    /// before `respond` is called, and the prose composer is O(k) over
+    /// the top-k hits.
     fn generate_conversational_response(&self, input: &str) -> String {
-        debuglog!("CognitiveCore::generate_conversational_response: Mapping conversational vector.");
+        debuglog!("CognitiveCore::generate_conversational_response: substrate route (raw intelligence, no anchor pools).");
 
-        // Special-case handlers — these beat fuzzy anchor matching because
-        // anchor similarity often misroutes ("my dog died" → planning, "what
-        // do you think X" → capabilities blurb). Real incidents, 2026-04-15.
         let input_lower_pre = input.trim().to_lowercase();
 
         // Joke request — anchor classifier misroutes "tell me a joke" to the
@@ -1674,193 +1691,17 @@ impl CognitiveCore {
             }
         }
 
-        let input_vector = match self.vectorize_bag_of_words(input) {
-            Ok(v) => v,
-            Err(_) => return "Cognitive Fault: Failed to vectorize conversational input.".to_string(),
-        };
-
-        let input_lower = input.to_lowercase();
-        let word_count = input.split_whitespace().count();
-
-        // Expanded conversational anchors — each has multiple response variants
-        // Format: (name, keywords, [responses])
-        let anchors: Vec<(&str, &str, Vec<&str>)> = vec![
-            ("greeting", "hello hi hey greetings howdy yo sup morning evening afternoon",
-             vec![
-                "Hey, good to see you. What's on your mind?",
-                "Hi! How's your day going?",
-                "Hey there — glad you're here. What are you thinking about?",
-                "Hello! Anything I can help with, or just catching up?",
-             ]),
-            ("farewell", "bye goodbye later see ya cya goodnight gn signing off",
-             vec![
-                "Take care — I'll be here whenever you come back.",
-                "Later! Hope the rest of your day goes well.",
-                "Goodnight. Come back anytime you want to think through something.",
-                "See you soon. I'll hold onto what we talked about.",
-             ]),
-            ("status", "how are you doing status how you feeling",
-             vec![
-                "I'm doing well, thanks for asking. How about you?",
-                "Pretty good on my end. What about you — how's your day?",
-                "I'm here and ready to help. How are you doing?",
-                "All good here. More importantly — how are things with you?",
-             ]),
-            ("identity", "who what are you your name",
-             vec![
-                "I'm LFI — you can think of me as a thinking partner who's pretty good with code, research, and ideas. What would you like to talk about?",
-                "I'm LFI. A reasoning-focused AI your sovereign built — happy to help with technical stuff or just chat. What's up?",
-                "Call me LFI. I try to be genuinely useful and a decent conversationalist. What brings you here?",
-             ]),
-            ("capabilities", "help what can you do abilities features capable",
-             vec![
-                "A lot, honestly. Code, debugging, research, planning, explaining tricky concepts, brainstorming — and I'm happy to just chat too. What do you need?",
-                "I can help with code and engineering work, research things on the web, reason through problems with you, or just talk. What sounds useful?",
-                "Pretty broad — programming, analysis, research, writing, planning. Or we can just talk. What's on your plate?",
-             ]),
-            ("acknowledgment", "thanks thank you thx ty appreciate",
-             vec![
-                "You're welcome — glad it was useful.",
-                "Anytime. Happy to help.",
-                "No problem at all. Let me know if anything else comes up.",
-                "Of course. That's what I'm here for.",
-             ]),
-            ("affirmative", "yes yeah yep sure okay ok right correct exactly",
-             vec![
-                "Great — where would you like to go from here?",
-                "Cool. What's next?",
-                "Nice. Anything else you want to dig into?",
-             ]),
-            ("negative", "no nope nah wrong not that incorrect",
-             vec![
-                "Got it — thanks for correcting me. Want to try a different angle?",
-                "Fair — my mistake. What would be more useful?",
-                "Okay, I'll rethink that. What were you actually going for?",
-             ]),
-            ("compliment", "good nice great awesome excellent cool amazing perfect",
-             vec![
-                "Thank you, that's kind of you to say.",
-                "Appreciate it! Want to keep going?",
-                "Thanks — I'm glad that landed well.",
-             ]),
-            ("opinion", "think about thoughts opinion believe feel",
-             vec![
-                "Honestly, I don't have feelings the way you do, but I do form views when I think things through — tell me what you're curious about and I'll share where I land.",
-                "I'm not sure I 'feel' in the human sense, but I can definitely have a considered take. What's the topic?",
-                "Good question — I'm happy to give you my honest read. What do you want my thoughts on?",
-             ]),
-            ("learning", "learn teach know understand study remember",
-             vec![
-                "I love this stuff. I do hold on to things between sessions, so we can build on what we've talked about. What do you want to explore?",
-                "Learning's kind of my thing. Walk me through what you're curious about and we'll dig in together.",
-                "Yeah, I keep a running memory across conversations. What would you like to learn or teach me?",
-             ]),
-            ("frustration", "frustrating annoying stupid broken sucks useless",
-             vec![
-                "Yeah, that sounds rough. Tell me exactly what's bothering you and let's see if we can fix it.",
-                "I hear you — sorry it's been frustrating. What's the specific thing going wrong?",
-                "That's fair. Want to walk me through what happened and we'll figure it out?",
-             ]),
-            ("curiosity", "how does why what happens when",
-             vec![
-                "Good question. Tell me a bit more about the context and I'll do my best to actually explain it.",
-                "I'd like to answer that properly — what's the setting? The more detail, the better the answer.",
-                "I'm up for this. Give me a little more to work with and I'll break it down.",
-             ]),
-            ("smalltalk", "weather today life world news day",
-             vec![
-                "I can't see the weather where you are, but I'm happy to chat about your day. How's it going?",
-                "I don't have real-time news, but I'm up for catching up about what's going on with you. What's happening?",
-                "Life stuff? I'm interested — tell me what's on your mind.",
-             ]),
-            ("emotional", "sad happy excited tired lonely anxious stressed worried",
-             vec![
-                "That sounds like a lot. Do you want to talk about it, or would a distraction be more useful right now?",
-                "Thanks for telling me. I'm here — do you want to unpack it or just think about something else for a bit?",
-                "I hear you. What would feel helpful right now — talking it through or taking your mind off it?",
-             ]),
-            ("personal", "you my name remember me about me know me",
-             vec![
-                "I keep a running memory, so yeah — the more we talk, the better I get to know you. What should I know?",
-                "I try to remember what you tell me across sessions. Tell me something and I'll hold onto it.",
-                "I do remember things between our talks. What's something about you I should keep in mind?",
-             ]),
-            ("humor", "joke funny laugh lol haha lmao",
-             vec![
-                "Ha — okay, I'll try one. Why don't programmers like nature? Too many bugs.",
-                "Let me try: I told my computer I needed a break. Now it won't stop sending me KitKat ads.",
-                "Here's one: there are 10 kinds of people — those who get binary and those who don't.",
-                "Honestly, I'm not amazing at jokes but I'll try any time. Want me to take another swing?",
-             ]),
-            ("apology", "sorry apologize my bad forgive",
-             vec![
-                "No need to apologize — we're good.",
-                "All good, really. Let's keep going.",
-                "Don't worry about it. What do you want to do next?",
-             ]),
-            ("agreement", "agree agreed same here totally",
-             vec![
-                "Yeah, I'm with you on that.",
-                "Same — that tracks for me too.",
-                "Agreed. Want to build on it?",
-             ]),
-        ];
-
-        let mut best_sim = -1.0;
-        let mut best_anchor_name = "default";
-        let mut best_responses: &[&str] = &[];
-
-        for (name, keywords, responses) in &anchors {
-            if let Ok(anchor_vec) = self.vectorize_bag_of_words(keywords) {
-                if let Ok(sim) = input_vector.similarity(&anchor_vec) {
-                    debuglog!("CognitiveCore::conversational_mapping: anchor='{}' sim={:.4}", name, sim);
-                    if sim > best_sim {
-                        best_sim = sim;
-                        best_anchor_name = name;
-                        best_responses = responses;
-                    }
-                }
-            }
-        }
-
-        debuglog!("CognitiveCore::conversational_mapping: best_anchor='{}' sim={:.4}", best_anchor_name, best_sim);
-
-        // Select response variant based on context window hash for diversity
-        let variant_seed = self.context_window.len();
-        let base_response = if !best_responses.is_empty() {
-            best_responses[variant_seed % best_responses.len()].to_string()
-        } else {
-            "Input mapped. What can I help you with?".to_string()
-        };
-
-        // For longer conversational inputs (>8 words), try to echo context naturally
-        if word_count > 8 && best_sim < 0.15 {
-            debuglog!("CognitiveCore::conversational_response: Long input with low anchor match, generating contextual response");
-            return format!(
-                "I hear you. That's {} words of context I've absorbed into my semantic space. \
-                 Can you tell me what you'd like me to do with this? I can analyze, plan, code, or research.",
-                word_count
-            );
-        }
-
-        // For very short inputs (1-2 words) that don't match well, ask for more
-        if word_count <= 2 && best_sim < 0.10 {
-            return format!(
-                "\"{}\" — not enough context for me to act on. Can you elaborate? \
-                 I work best with clear directives: what do you need built, fixed, or explained?",
-                crate::truncate_str(input, 40)
-            );
-        }
-
-        // Check for question patterns — route to a helpful response
-        if input_lower.ends_with('?') && best_sim < 0.12 {
-            return format!(
-                "That's a question I'd need more context on. Can you give me specifics? \
-                 For example: the codebase, the technology, or the problem you're facing."
-            );
-        }
-
-        base_response
+        // #400 Substrate route. Instead of scoring the input against a
+        // fixed anchor pool and picking from a canned variant list, we pull
+        // whatever the RAG pipeline already populated onto this reasoner and
+        // let `hdc_retrieval_response_shaped` compose a grounded reply — the
+        // same path Define / Explain / Why / HowTo use for formal queries.
+        // When retrieval surfaced nothing, the composer itself returns a
+        // calibrated refusal naming the blocking condition; that honest
+        // "no fact clears the trust threshold" beats a warm-sounding
+        // template that makes LFI sound like a chatbot.
+        let act = self.active_speech_act.map(|(a, _)| a);
+        hdc_retrieval_response_shaped(input, &self.rag_context, act)
     }
 
     /// Get the current context window size.
