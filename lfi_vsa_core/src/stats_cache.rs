@@ -37,6 +37,19 @@ pub struct StatsCache {
     pub adversarial_count: AtomicI64,
     pub last_refresh_secs: AtomicU64,
     pub refresh_inflight: AtomicBool,
+    /// Per-source summary for the Library tab. Refreshed on the same
+    /// 60s cadence as the counts. Reading is lock-free-ish via a
+    /// parking_lot RwLock; writers are only the background refresher.
+    pub sources_summary: parking_lot::RwLock<Vec<SourceRow>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceRow {
+    pub source: String,
+    pub fact_count: i64,
+    pub avg_quality: f64,
+    pub domain: Option<String>,
+    pub vetted: bool,
 }
 
 impl StatsCache {
@@ -47,7 +60,14 @@ impl StatsCache {
             adversarial_count: AtomicI64::new(-1),
             last_refresh_secs: AtomicU64::new(0),
             refresh_inflight: AtomicBool::new(false),
+            sources_summary: parking_lot::RwLock::new(Vec::new()),
         }
+    }
+
+    /// Snapshot of the cached per-source summary. Returns a clone so the
+    /// caller can release the read lock immediately.
+    pub fn sources_snapshot(&self) -> Vec<SourceRow> {
+        self.sources_summary.read().clone()
     }
 
     pub fn facts(&self) -> i64 { self.facts_count.load(Ordering::Relaxed) }
@@ -93,6 +113,32 @@ impl StatsCache {
             [], |r| r.get(0),
         ) {
             self.adversarial_count.store(v, Ordering::Relaxed);
+        }
+
+        // Refresh sources_summary. The library endpoint used to run this
+        // query synchronously on the request path; with 500+ sources and
+        // 72M rows, it timed out 30s curls. Now it runs once per 60s in
+        // the background task and the handler reads the snapshot in μs.
+        // LIMIT 1000 caps the pathological case of a runaway ingester
+        // creating thousands of distinct source names.
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT source, COUNT(*) as cnt, \
+                    ROUND(AVG(COALESCE(quality_score, 0.5)), 3) as avg_q, \
+                    MIN(COALESCE(vetted, 0)) as vetted \
+             FROM facts GROUP BY source ORDER BY cnt DESC LIMIT 1000"
+        ) {
+            let rows: Vec<SourceRow> = stmt.query_map([], |r| {
+                Ok(SourceRow {
+                    source: r.get::<_, String>(0).unwrap_or_default(),
+                    fact_count: r.get::<_, i64>(1).unwrap_or(0),
+                    avg_quality: r.get::<_, f64>(2).unwrap_or(0.0),
+                    domain: None,
+                    vetted: r.get::<_, i64>(3).unwrap_or(0) == 1,
+                })
+            }).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+            if !rows.is_empty() {
+                *self.sources_summary.write() = rows;
+            }
         }
 
         let now = SystemTime::now()

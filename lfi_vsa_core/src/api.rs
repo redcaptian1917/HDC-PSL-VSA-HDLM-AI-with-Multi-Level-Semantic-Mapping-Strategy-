@@ -3523,38 +3523,46 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
     async fn library_sources_handler(
         State(state): State<Arc<AppState>>,
     ) -> impl IntoResponse {
-        let conn = match state.db.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return axum::Json(json!({"error": "db lock"})),
-        };
+        // #403 Read from the lock-free stats_cache snapshot. Prior version
+        // ran `SELECT ... FROM facts GROUP BY source` synchronously on the
+        // request path — 72M-row table, 3-30s typical latency, hung the
+        // Library tab entirely. Now the background refresher owns the
+        // expensive query; the handler just clones the Vec.
+        let snapshot = state.stats_cache.sources_snapshot();
+        if snapshot.is_empty() {
+            // Cache not yet populated — kick an async refresh + return
+            // an explicit 'warming' signal so the UI can retry.
+            let db = state.db.clone();
+            let cache = state.stats_cache.clone();
+            tokio::task::spawn_blocking(move || cache.refresh_blocking(&db));
+            return axum::Json(json!({
+                "sources": [],
+                "total_sources": 0,
+                "vetted_sources": 0,
+                "unvetted_sources": 0,
+                "status": "warming",
+                "retry_after_secs": 5,
+            }));
+        }
 
-        let mut stmt = match conn.prepare(
-            "SELECT source, COUNT(*) as cnt, ROUND(AVG(COALESCE(quality_score,0.5)),3) as avg_q, \
-             domain, MIN(COALESCE(vetted,0)) as vetted \
-             FROM facts GROUP BY source ORDER BY cnt DESC"
-        ) {
-            Ok(s) => s,
-            Err(_) => return axum::Json(json!({"sources": [], "error": "query failed"})),
-        };
-
-        let sources: Vec<serde_json::Value> = stmt.query_map([], |row| {
-            Ok(json!({
-                "source": row.get::<_,String>(0).unwrap_or_default(),
-                "fact_count": row.get::<_,i64>(1).unwrap_or(0),
-                "avg_quality": row.get::<_,f64>(2).unwrap_or(0.0),
-                "domain": row.get::<_,Option<String>>(3).unwrap_or(None),
-                "vetted": row.get::<_,i64>(4).unwrap_or(0) == 1,
-            }))
-        }).map(|iter| iter.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        let sources: Vec<serde_json::Value> = snapshot.iter().map(|r| json!({
+            "source": r.source,
+            "fact_count": r.fact_count,
+            "avg_quality": r.avg_quality,
+            "domain": r.domain,
+            "vetted": r.vetted,
+        })).collect();
 
         let total_sources = sources.len();
-        let vetted_count = sources.iter().filter(|s| s["vetted"].as_bool().unwrap_or(false)).count();
+        let vetted_count = sources.iter()
+            .filter(|s| s["vetted"].as_bool().unwrap_or(false)).count();
 
         axum::Json(json!({
             "sources": sources,
             "total_sources": total_sources,
             "vetted_sources": vetted_count,
             "unvetted_sources": total_sources - vetted_count,
+            "cache_age_secs": state.stats_cache.age_secs(),
         }))
     }
 
