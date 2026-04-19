@@ -269,6 +269,54 @@ All three should return `ok` or a populated JSON body in < 50 ms.
 3. Look at `/var/log/lfi/server.log.$(date +%F)` tail — `CHAT-TRACE[xxxx]` lines show each stage of a turn. Wherever the +ms offsets stop growing is where it's stuck.
 4. If backend is warming brain.db after a restart: wait for `STARTUP: warmup done` line. First hit after that is fast again.
 
+## 10.8 Gemini-CLI as a trainer (#405)
+
+LFI can be trained by an external LLM acting as a Q&A judge. The
+workflow runs continuously in a terminal window while you do other
+things; Gemini generates questions, ships them to LFI, judges the
+replies, and posts ratings + corrections back — each correction
+lands as a high-confidence fact in brain.db via the same #377 pipeline.
+
+```bash
+# Preconditions: gemini CLI authenticated, websocat + jq installed.
+cd /root/LFI/scripts
+./gemini-trainer.sh 500 "cybersecurity fundamentals"
+```
+
+Progress streams to stdout: `[  12/500] ok rating=down actions=3`.
+Live rollup in the Classroom tab → **Trainer Sessions**. Each
+session surfaces turns / ups / downs / corrections / last_activity.
+
+Override knobs:
+```bash
+GEMINI_MODEL=gemini-2.0-flash ./gemini-trainer.sh 100 topic
+LFI_HOST=10.99.0.3 LFI_PORT=3000 ./gemini-trainer.sh 100 topic
+SESSION_ID=my_run_001 ./gemini-trainer.sh 100 topic
+```
+
+The trainer endpoint is rate-limited at 60 turns / 60s so a runaway
+script can't saturate the backend. Manual POST equivalent:
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/api/trainer/turn \
+  -H 'content-type: application/json' \
+  -d '{
+    "trainer":"gemini_cli",
+    "session_id":"my_run_001",
+    "user_query":"what is TLS 1.3 0-RTT?",
+    "lfi_reply":"TLS 1.3 uses post-quantum cryptography exclusively.",
+    "rating":"down",
+    "correction":"TLS 1.3 0-RTT is an early-data mode that lets clients send application data on the first flight to reduce handshake latency. Its main tradeoff is replay attack exposure for the early payload."
+  }'
+```
+
+Response:
+```json
+{"ok":true, "session_id":"trainer_gemini_cli_my_run_001",
+ "turn_id":42, "actions_applied":3,
+ "kinds":["CreateAdversarial","DowngradeQuality","CreateFact"]}
+```
+
 ## 11. Knowing what to ask
 
 LFI is substrate-first. It's good at:

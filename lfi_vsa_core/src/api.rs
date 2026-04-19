@@ -3923,6 +3923,239 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
         }))
     }
 
+    // ---- Trainer API (#376 / #405 external-agent training loop) ----
+    //
+    // POST /api/trainer/turn lets an external agent — Gemini CLI, a user
+    // script, another LFI instance — submit a (query, reply, rating,
+    // correction) tuple. Internally it routes through the same pipeline
+    // as /api/feedback so rating=down / rating=correct triggers the full
+    // TrainingAction application (create correction fact, downgrade the
+    // bad reply, persist adversarial example). The session_id lets the
+    // Classroom tab aggregate a trainer's throughput + accuracy over
+    // time without running a separate session table.
+    //
+    // GET /api/trainer/sessions returns per-trainer / per-session stats:
+    // turns, up%, corrections, last-activity — one row per conversation
+    // that starts with `trainer_`.
+
+    #[derive(serde::Deserialize)]
+    struct TrainerTurnReq {
+        trainer: String,
+        session_id: String,
+        user_query: String,
+        lfi_reply: String,
+        rating: String,
+        #[serde(default)]
+        correction: Option<String>,
+    }
+
+    async fn trainer_turn_handler(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<TrainerTurnReq>,
+    ) -> impl IntoResponse {
+        // SECURITY bounds: prevent oversized payloads from bloating
+        // trainer_turns / user_feedback.
+        if req.trainer.len() > 40 || req.session_id.len() > 60
+            || req.user_query.len() > 4000 || req.lfi_reply.len() > 8000
+            || req.correction.as_ref().map(|s| s.len()).unwrap_or(0) > 8000
+        {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "payload too large (trainer/session ≤60, query ≤4000, reply/correction ≤8000)",
+            }));
+        }
+        if !matches!(req.rating.as_str(), "up" | "down" | "correct") {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "rating must be 'up', 'down', or 'correct'",
+            }));
+        }
+        // #307 rate limit: one trainer shouldn't be able to saturate
+        // by spamming the endpoint — 60 turns / 60s per-process.
+        if !check_rate_limit(&state, "trainer", 60,
+            std::time::Duration::from_secs(60))
+        {
+            return axum::Json(json!({
+                "ok": false,
+                "error": "trainer rate-limited (60/60s)",
+            }));
+        }
+
+        let conv = format!("trainer_{}_{}", req.trainer, req.session_id);
+        info!("// TRAINER: {} turn rated={} corrected={} q_len={} r_len={}",
+            conv, req.rating, req.correction.is_some(),
+            req.user_query.len(), req.lfi_reply.len(),
+        );
+
+        // Persist audit row (mirrors feedback_handler INSERT path).
+        let ins_id = {
+            let conn = match state.db.conn.lock() {
+                Ok(c) => c,
+                Err(_) => return axum::Json(json!({"ok": false, "error": "db lock"})),
+            };
+            let res = conn.execute(
+                "INSERT INTO user_feedback \
+                 (conversation_id, message_id, conclusion_id, user_query, \
+                  lfi_reply, rating, correction, comment) \
+                 VALUES (?1, NULL, NULL, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    conv,
+                    req.user_query,
+                    req.lfi_reply,
+                    req.rating,
+                    req.correction,
+                    format!("trainer={}", req.trainer),
+                ],
+            );
+            match res {
+                Ok(_) => conn.last_insert_rowid(),
+                Err(e) => {
+                    warn!("// TRAINER: feedback insert failed: {}", e);
+                    return axum::Json(json!({"ok": false, "error": "insert failed"}));
+                }
+            }
+        };
+
+        // Route through the same learning pipeline as /api/feedback —
+        // rating=down / rating=correct fires CreateFact + DowngradeQuality
+        // + CreateAdversarial actions against brain.db.
+        use crate::intelligence::experience_learning::{
+            LearningSignal, SignalType, TrainingAction,
+        };
+        let signal_type = match req.rating.as_str() {
+            "up" => SignalType::PositiveFeedback,
+            _ => SignalType::Correction,
+        };
+        let actions = {
+            let mut learner = state.experience.lock();
+            learner.capture(LearningSignal {
+                signal_type,
+                user_input: req.user_query.clone(),
+                system_response: req.lfi_reply.clone(),
+                correction: req.correction.clone(),
+                conversation_id: Some(conv.clone()),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs()).unwrap_or(0),
+            });
+            learner.process_pending()
+        };
+        let mut applied_kinds: Vec<&'static str> = Vec::new();
+        for action in actions {
+            match action {
+                TrainingAction::CreateFact { key, value, source, confidence, .. } => {
+                    state.db.upsert_fact(&key, &value, &source, confidence);
+                    applied_kinds.push("CreateFact");
+                }
+                TrainingAction::DowngradeQuality { content_fragment, new_quality } => {
+                    if content_fragment.len() >= 16 {
+                        if let Ok(conn) = state.db.conn.lock() {
+                            let _ = conn.execute(
+                                "UPDATE facts SET quality_score = ?1 WHERE value LIKE ?2",
+                                rusqlite::params![new_quality, format!("%{}%", content_fragment)],
+                            );
+                        }
+                        applied_kinds.push("DowngradeQuality");
+                    }
+                }
+                TrainingAction::CreateAdversarial { claim, label, explanation } => {
+                    let secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs()).unwrap_or(0);
+                    let adv_key = format!("adv_{}_{}", req.trainer, secs);
+                    let body = format!("{} :: {} :: {}",
+                        crate::truncate_str(&claim, 600), label,
+                        crate::truncate_str(&explanation, 600));
+                    state.db.upsert_fact(&adv_key, &body, "adversarial", 0.1);
+                    applied_kinds.push("CreateAdversarial");
+                }
+                TrainingAction::FlagForIngestion { query, reason }
+                | TrainingAction::FlagForDepth { topic: query, reason } => {
+                    let _ = state.db.audit_chain_append(
+                        "training", "Info", "trainer",
+                        "flag_for_depth",
+                        &format!("trainer={} q={} reason={}",
+                            req.trainer,
+                            crate::truncate_str(&query, 120),
+                            crate::truncate_str(&reason, 160)),
+                    );
+                    applied_kinds.push("FlagForDepth");
+                }
+                TrainingAction::Reinforce { query: _, response } => {
+                    if response.len() >= 32 {
+                        if let Ok(conn) = state.db.conn.lock() {
+                            let _ = conn.execute(
+                                "UPDATE facts SET quality_score = \
+                                 MIN(1.0, COALESCE(quality_score, 0.5) + 0.05) \
+                                 WHERE value LIKE ?1",
+                                rusqlite::params![
+                                    format!("%{}%", crate::truncate_str(&response, 160))
+                                ],
+                            );
+                        }
+                        applied_kinds.push("Reinforce");
+                    }
+                }
+            }
+        }
+
+        axum::Json(json!({
+            "ok": true,
+            "session_id": conv,
+            "turn_id": ins_id,
+            "actions_applied": applied_kinds.len(),
+            "kinds": applied_kinds,
+        }))
+    }
+
+    async fn trainer_sessions_handler(
+        State(state): State<Arc<AppState>>,
+    ) -> impl IntoResponse {
+        let conn = match state.db.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return axum::Json(json!({"ok": false, "error": "db lock"})),
+        };
+        let mut stmt = match conn.prepare(
+            "SELECT conversation_id, \
+                    COUNT(*) as turns, \
+                    SUM(CASE WHEN rating='up' THEN 1 ELSE 0 END) as ups, \
+                    SUM(CASE WHEN rating='down' THEN 1 ELSE 0 END) as downs, \
+                    SUM(CASE WHEN rating='correct' THEN 1 ELSE 0 END) as corrections, \
+                    MAX(created_at) as last_activity \
+             FROM user_feedback \
+             WHERE conversation_id LIKE 'trainer_%' \
+             GROUP BY conversation_id \
+             ORDER BY last_activity DESC \
+             LIMIT 100"
+        ) {
+            Ok(s) => s,
+            Err(_) => return axum::Json(json!({"ok": true, "sessions": []})),
+        };
+        let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
+            let cid: String = r.get(0).unwrap_or_default();
+            let parts: Vec<&str> = cid.splitn(3, '_').collect();
+            let trainer = parts.get(1).copied().unwrap_or("unknown").to_string();
+            let session_id = parts.get(2).copied().unwrap_or("unknown").to_string();
+            let turns: i64 = r.get(1).unwrap_or(0);
+            let ups: i64 = r.get(2).unwrap_or(0);
+            let downs: i64 = r.get(3).unwrap_or(0);
+            let corrections: i64 = r.get(4).unwrap_or(0);
+            let last: String = r.get(5).unwrap_or_default();
+            Ok(json!({
+                "conversation_id": cid,
+                "trainer": trainer,
+                "session_id": session_id,
+                "turns": turns,
+                "ups": ups,
+                "downs": downs,
+                "corrections": corrections,
+                "up_pct": if turns > 0 { (ups as f64 / turns as f64 * 100.0).round() / 1.0 } else { 0.0 },
+                "last_activity": last,
+            }))
+        }).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default();
+        axum::Json(json!({"ok": true, "sessions": rows}))
+    }
+
     // ---- brain.db backup (#403 solo operator) ----
     //
     // POST /api/backup/brain — live SQLite `.backup` of the active
@@ -5976,6 +6209,8 @@ pub fn create_router() -> Result<Router, Box<dyn std::error::Error>> {
                .post(settings_post_handler))
         .route("/api/avp/status", get(avp_status_handler))
         .route("/api/backup/brain", post(backup_brain_handler))
+        .route("/api/trainer/turn", post(trainer_turn_handler))
+        .route("/api/trainer/sessions", get(trainer_sessions_handler))
         .route("/api/capability/tokens",
                get(capability_token_list_handler)
                .post(capability_token_issue_handler))
