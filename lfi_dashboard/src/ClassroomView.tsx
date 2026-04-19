@@ -2736,6 +2736,18 @@ const DriftTab: React.FC<{ C: any; host: string; onJumpTo?: (sub: string) => voi
           borderRadius: T.radii.md, fontSize: T.typography.sizeSm,
         }}>Could not load drift snapshot: {err}. The endpoint <code style={{ fontFamily: T.typography.fontMono }}>/api/drift/snapshot</code> may not be exposed yet.</div>
       )}
+      {/* claude-0 13:12 ask: 'Server won't start' inline runbook. Mirrors
+          manager_guide.md §10.5 — shown when the drift fetch errored OR
+          when history has zero samples after ≥1 attempt (likely server
+          down). Click-to-expand so the default state is a single chip. */}
+      {(err || (lastFetched != null && history.length === 0)) && (
+        <ServerWontStartHelp C={C} />
+      )}
+
+      {/* claude-0 13:12 ask: one-click ops so solo-training users don't need
+          to leave the Drift tab to push a corpus ingest, warm the HDC cache,
+          or clean up the contradictions queue. Shared toast-based UX. */}
+      <DriftQuickActions C={C} host={host} />
 
       <div style={{
         display: 'grid', gap: T.spacing.md,
@@ -3348,6 +3360,146 @@ const IngestRunsTab: React.FC<{ C: any; host: string }> = ({ C, host }) => {
             {finished.map((r, i) => renderRow(r, i, 'finished'))}
           </div>
         </section>
+      )}
+    </div>
+  );
+};
+
+// claude-0 13:12 ask: 'Server won't start' inline runbook. Mirrors
+// manager_guide.md §10.5 so users have the recovery steps on the same
+// page where they see the drift-fetch failure. Collapsed by default.
+const ServerWontStartHelp: React.FC<{ C: any }> = ({ C }) => {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div style={{
+      padding: T.spacing.sm + ' ' + T.spacing.md,
+      background: (C.yellowBg || `${C.yellow}18`),
+      border: `1px solid ${C.yellow}55`,
+      borderRadius: T.radii.md,
+      fontSize: T.typography.sizeSm,
+    }}>
+      <button onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+        style={{
+          background: 'transparent', border: 'none', color: C.yellow,
+          fontFamily: 'inherit', fontWeight: T.typography.weightBold,
+          cursor: 'pointer', padding: 0, textAlign: 'left',
+          fontSize: T.typography.sizeSm,
+        }}>
+        {open ? '▾' : '▸'} Server won't start? — recovery runbook
+      </button>
+      {open && (
+        <div style={{ marginTop: T.spacing.sm, color: C.text, lineHeight: 1.55 }}>
+          <p style={{ margin: `0 0 ${T.spacing.sm}`, color: C.textMuted }}>
+            Run these from a shell. Full reference: <code style={{ fontFamily: T.typography.fontMono }}>docs/manager_guide.md</code> §10.5 or the Docs tab in Admin.
+          </p>
+          <ol style={{ margin: 0, paddingLeft: '20px' }}>
+            <li><strong>Check if it's actually up:</strong><br />
+              <code style={{ fontFamily: T.typography.fontMono, background: C.bgInput, padding: '1px 6px', borderRadius: 3 }}>curl -sS http://localhost:3000/api/health | head</code>
+            </li>
+            <li style={{ marginTop: T.spacing.sm }}><strong>Check for a stuck PID on port 3000:</strong><br />
+              <code style={{ fontFamily: T.typography.fontMono, background: C.bgInput, padding: '1px 6px', borderRadius: 3 }}>lsof -i :3000 || ss -ltnp 'sport = :3000'</code>
+            </li>
+            <li style={{ marginTop: T.spacing.sm }}><strong>Tail the log for the failure reason:</strong><br />
+              <code style={{ fontFamily: T.typography.fontMono, background: C.bgInput, padding: '1px 6px', borderRadius: 3 }}>journalctl -u lfi --since '10 min ago' --no-pager | tail -60</code>
+            </li>
+            <li style={{ marginTop: T.spacing.sm }}><strong>If brain.db is locked (WAL checkpoint hung):</strong><br />
+              <code style={{ fontFamily: T.typography.fontMono, background: C.bgInput, padding: '1px 6px', borderRadius: 3 }}>fuser ~/LFI-data/brain.db</code> then kill the holder and restart.
+            </li>
+            <li style={{ marginTop: T.spacing.sm }}><strong>Restart:</strong><br />
+              <code style={{ fontFamily: T.typography.fontMono, background: C.bgInput, padding: '1px 6px', borderRadius: 3 }}>systemctl --user restart lfi</code> or the equivalent run command.
+            </li>
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// claude-0 13:12 ask: three one-click ops on the Drift tab so solo-training
+// users can run the most common maintenance from one surface. Each button
+// POSTs a known endpoint, shows inline status, and surfaces errors in a
+// scoped message without taking down the tab.
+const DriftQuickActions: React.FC<{ C: any; host: string }> = ({ C, host }) => {
+  type Op = 'ingest' | 'encode' | 'resolve';
+  const [running, setRunning] = React.useState<Op | null>(null);
+  const [message, setMessage] = React.useState<{ op: Op; text: string; ok: boolean } | null>(null);
+  const run = async (op: Op) => {
+    setRunning(op); setMessage(null);
+    const paths: Record<Op, string> = {
+      ingest: '/api/ingest/start',
+      encode: '/api/hdc/cache/encode',
+      resolve: '/api/contradictions/auto-resolve',
+    };
+    try {
+      const r = await fetch(`http://${host}:3000${paths[op]}`, { method: 'POST' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d: any = await r.json().catch(() => ({}));
+      const summary = op === 'ingest'
+        ? `Ingest kicked — run_id ${d?.run_id || d?.id || 'pending'}`
+        : op === 'encode'
+          ? `HDC cache encode started — ${d?.queued ?? d?.count ?? '?'} tuples queued`
+          : `Auto-resolved ${d?.resolved ?? d?.count ?? '?'} contradictions`;
+      setMessage({ op, text: summary, ok: true });
+    } catch (e: any) {
+      setMessage({ op, text: `Failed: ${String(e?.message || e || 'unknown')}`, ok: false });
+    } finally {
+      setRunning(null);
+    }
+  };
+  const btn = (op: Op, label: string, hint: string) => {
+    const isRun = running === op;
+    const anyRun = running !== null;
+    return (
+      <button onClick={() => run(op)} disabled={anyRun}
+        title={hint}
+        style={{
+          flex: '1 1 160px', minWidth: 0,
+          padding: '10px 14px',
+          background: isRun ? C.accentBg : C.bgCard,
+          color: isRun ? C.accent : C.text,
+          border: `1px solid ${isRun ? C.accent : C.borderSubtle}`,
+          borderRadius: T.radii.md,
+          fontFamily: 'inherit',
+          fontSize: T.typography.sizeSm,
+          fontWeight: T.typography.weightBold,
+          cursor: anyRun ? (isRun ? 'wait' : 'not-allowed') : 'pointer',
+          textAlign: 'left', lineHeight: 1.3,
+          opacity: anyRun && !isRun ? 0.5 : 1,
+        }}>
+        <div style={{ fontWeight: T.typography.weightBlack, marginBottom: 2 }}>
+          {isRun ? `${label}…` : label}
+        </div>
+        <div style={{ fontSize: '10px', color: C.textMuted, fontWeight: 500 }}>{hint}</div>
+      </button>
+    );
+  };
+  return (
+    <div style={{
+      padding: T.spacing.md,
+      border: `1px solid ${C.borderSubtle}`,
+      borderRadius: T.radii.md,
+      background: C.bgInput,
+    }}>
+      <div style={{
+        fontSize: T.typography.sizeXs, fontWeight: T.typography.weightBold,
+        color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.10em',
+        marginBottom: T.spacing.sm,
+      }}>Quick actions</div>
+      <div style={{ display: 'flex', gap: T.spacing.sm, flexWrap: 'wrap' }}>
+        {btn('ingest', 'Kick ingest', 'POST /api/ingest/start — corpus run')}
+        {btn('encode', 'Encode HDC cache', 'POST /api/hdc/cache/encode — warm embeddings')}
+        {btn('resolve', 'Auto-resolve ledger', 'POST /api/contradictions/auto-resolve')}
+      </div>
+      {message && (
+        <div role='status' style={{
+          marginTop: T.spacing.sm, padding: '6px 10px',
+          background: message.ok ? (C.greenBg || `${C.green}18`) : C.redBg,
+          color: message.ok ? C.green : C.red,
+          border: `1px solid ${message.ok ? C.green : C.red}55`,
+          borderRadius: T.radii.sm,
+          fontSize: T.typography.sizeXs, lineHeight: 1.4,
+        }}>{message.text}</div>
       )}
     </div>
   );

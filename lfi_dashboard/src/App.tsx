@@ -4436,6 +4436,42 @@ ${cmdList}
                         textTransform: 'uppercase',
                         opacity: factVerifying ? 0.6 : 1,
                       }}>{factVerifying ? 'Verifying…' : 'Verify now'}</button>
+                    {/* claude-0 13:12 ask: Dismiss fact — flags the fact as
+                        wrong via /api/feedback so the ingestion pipeline
+                        drops/downweights it. No modal — one click + toast. */}
+                    <button disabled={factVerifying}
+                      onClick={async () => {
+                        const key = factPopover.key;
+                        try {
+                          const r = await fetch(`http://${getHost()}:3000/api/feedback`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              conversation_id: currentConversationId,
+                              rating: 'down',
+                              correction: `fact wrong: ${key}`,
+                              comment: `Dismiss fact ${key}`,
+                            }),
+                          });
+                          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                          showToast(`Dismissed ${key}`);
+                          logEvent('fact_dismissed', { fact_key: key });
+                          setFactPopover(null);
+                        } catch (e: any) {
+                          showToast(`Dismiss failed: ${String(e?.message || e || 'unknown')}`);
+                        }
+                      }}
+                      title={`Mark "${factPopover.key}" as wrong — sends a down-vote + correction to /api/feedback`}
+                      style={{
+                        padding: '3px 10px', fontSize: '10px',
+                        fontWeight: T.typography.weightBold,
+                        background: C.redBg, color: C.red,
+                        border: `1px solid ${C.redBorder || `${C.red}55`}`, borderRadius: T.radii.sm,
+                        cursor: factVerifying ? 'wait' : 'pointer',
+                        fontFamily: 'inherit', letterSpacing: '0.04em',
+                        textTransform: 'uppercase',
+                        opacity: factVerifying ? 0.6 : 1,
+                      }}>Dismiss</button>
                   </div>
                 );
               })()}
