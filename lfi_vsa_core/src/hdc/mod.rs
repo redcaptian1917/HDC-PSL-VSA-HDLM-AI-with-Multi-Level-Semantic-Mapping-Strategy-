@@ -29,6 +29,7 @@ pub mod tier_weighted_bundle;
 pub mod tensor_train;
 pub mod role_binding;
 pub mod resonator;
+pub mod precision;
 #[cfg(test)]
 mod proptest_vector;
 
