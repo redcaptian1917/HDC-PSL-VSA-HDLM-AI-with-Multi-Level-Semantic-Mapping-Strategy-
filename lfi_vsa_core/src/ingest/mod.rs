@@ -4,3 +4,4 @@
 
 pub mod wikidata;
 pub mod causenet;
+pub mod atomic;
